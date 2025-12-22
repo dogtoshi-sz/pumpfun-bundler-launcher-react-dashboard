@@ -61,3 +61,15 @@ export const VOLUME_MAKER_WALLET_COUNT = Number(process.env.VOLUME_MAKER_WALLET_
 export const WEBSOCKET_TRACKING_ENABLED = (process.env.WEBSOCKET_TRACKING_ENABLED || 'false').toLowerCase() === 'true'
 export const WEBSOCKET_EXTERNAL_BUY_THRESHOLD = Number(process.env.WEBSOCKET_EXTERNAL_BUY_THRESHOLD || '1.0') // SOL threshold
 export const WEBSOCKET_EXTERNAL_BUY_WINDOW = Number(process.env.WEBSOCKET_EXTERNAL_BUY_WINDOW || '60') // seconds
+// Ultra-fast WebSocket tracker (sub-500ms reaction time) - uses 'processed' commitment and pre-built transactions
+export const WEBSOCKET_ULTRA_FAST_MODE = (process.env.WEBSOCKET_ULTRA_FAST_MODE || 'false').toLowerCase() === 'true'
+
+// Priority fees for Jupiter swaps (in lamports) - higher = faster confirmation
+// HIGH priority: Used when WebSocket threshold is met (auto-sell) - must be fast!
+// Default: 5,000,000 lamports (0.005 SOL) - reduces confirmation from ~4s to ~1s
+// For extreme speed, can increase to 10,000,000 (0.01 SOL) or higher
+export const PRIORITY_FEE_LAMPORTS_HIGH = Number(process.env.PRIORITY_FEE_LAMPORTS_HIGH || '5000000')
+
+// LOW priority: Used for manual sells or when threshold isn't met - save money!
+// Default: 100,000 lamports (0.0001 SOL) - cheap but slower confirmation (~4-5s)
+export const PRIORITY_FEE_LAMPORTS_LOW = Number(process.env.PRIORITY_FEE_LAMPORTS_LOW || '100000')

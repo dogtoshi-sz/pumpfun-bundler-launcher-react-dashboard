@@ -64,8 +64,12 @@ export const createAndSendV0Tx = async (txInstructions: TransactionInstruction[]
     console.log('LUT transaction successfully confirmed!', '\n', `https://explorer.solana.com/tx/${txid}`);
     return confirmation.err == null
 
-  } catch (error) {
-    console.log(".....")
+  } catch (error: any) {
+    const errorMsg = error?.message || String(error)
+    console.log(`❌ LUT creation transaction failed: ${errorMsg}`)
+    if (error?.stack) {
+      console.log(`   Stack: ${error.stack.slice(0, 200)}`)
+    }
     return false
   }
 }
@@ -74,7 +78,7 @@ async function confirmTransaction(
   connection: Connection,
   signature: TransactionSignature,
   desiredConfirmationStatus: TransactionConfirmationStatus = 'confirmed',
-  timeout: number = 30000,
+  timeout: number = 60000, // Increased from 30s to 60s for LUT creation
   pollInterval: number = 1000,
   searchTransactionHistory: boolean = false
 ): Promise<SignatureStatus> {

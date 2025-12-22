@@ -5,6 +5,7 @@ import {
   Connection,
   VersionedTransaction
 } from '@solana/web3.js';
+import { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_LOW } from '../constants/constants';
 
 const SLIPPAGE = 9900 // 99% slippage - maximum to avoid error 6001 when multiple wallets sell simultaneously
 
@@ -79,7 +80,7 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
   throw lastError || new Error('Fetch failed after retries');
 };
 
-export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number) => {
+export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number) => {
   try {
     const publicKey = btoa(wallet.secretKey.toString())
     // Use new Jupiter API endpoint (old quote-api.jup.ag was deprecated)
@@ -101,7 +102,7 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
           userPublicKey: wallet.publicKey.toString(),
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
-          prioritizationFeeLamports: 1000000 // 0.001 SOL priority fee for faster inclusion0 // 0.001 SOL priority fee for faster inclusion
+          prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS_LOW // Low priority fee for manual sells (default: 0.0001 SOL) - cheap but slower
         }),
       })
     ).json();
@@ -120,7 +121,7 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
 };
 
 
-export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string) => {
+export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string, priorityFeeLamports?: number) => {
   try {
     // Get quote from Jupiter with timeout and retry (increased retries for network resilience)
     // Using new Jupiter API endpoint (old quote-api.jup.ag was deprecated)
@@ -150,7 +151,7 @@ export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey,
         userPublicKey: wallet.publicKey.toString(),
         wrapAndUnwrapSol: true,
         dynamicComputeUnitLimit: true,
-        prioritizationFeeLamports: 1000000 // Higher priority fee for faster inclusion (0.001 SOL)
+        prioritizationFeeLamports: priorityFeeLamports ?? PRIORITY_FEE_LAMPORTS_LOW // Use provided priority fee or default to LOW (cheap)
       }),
     }, 20000, 5);
     

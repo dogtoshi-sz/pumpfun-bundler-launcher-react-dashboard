@@ -294,22 +294,14 @@ const main = async () => {
       const ADDITIONAL_BUFFER = 10_000 // Small additional buffer for safety
       const MIN_FEE_RESERVE = MIN_RENT_EXEMPT + ADDITIONAL_BUFFER // ~0.0009 SOL total
       
-      if (isDevWallet) {
-        const MIN_DEV_BALANCE = 100_000_000 // 0.1 SOL
-        transferAmount = solBal > MIN_DEV_BALANCE + MIN_FEE_RESERVE ? solBal - MIN_DEV_BALANCE - MIN_FEE_RESERVE : 0
-        if (transferAmount > 0) {
-          console.log(`[${index + 1}/${total}]   ⚠️  DEV wallet: Leaving ${(MIN_DEV_BALANCE / 1e9).toFixed(4)} SOL minimum + ${(MIN_FEE_RESERVE / 1e9).toFixed(6)} SOL for rent`)
-        } else {
-          console.log(`[${index + 1}/${total}]   ⚠️  DEV wallet: Balance too low (${(solBal / 1e9).toFixed(6)} SOL < ${((MIN_DEV_BALANCE + MIN_FEE_RESERVE) / 1e9).toFixed(6)} SOL), skipping transfer`)
-        }
+      // For ALL wallets (including DEV), only leave rent-exempt balance (can't drain to zero)
+      // Gather maximum SOL - only leave what's required for rent exemption
+      transferAmount = solBal > MIN_FEE_RESERVE ? solBal - MIN_FEE_RESERVE : 0
+      if (transferAmount <= 0) {
+        console.log(`[${index + 1}/${total}]   ⚠️  Balance too low (${(solBal / 1e9).toFixed(6)} SOL <= ${(MIN_FEE_RESERVE / 1e9).toFixed(6)} SOL rent-exempt minimum), skipping transfer`)
       } else {
-        // For bundler wallets, leave rent-exempt balance (can't drain to zero)
-        transferAmount = solBal > MIN_FEE_RESERVE ? solBal - MIN_FEE_RESERVE : 0
-        if (transferAmount <= 0) {
-          console.log(`[${index + 1}/${total}]   ⚠️  Balance too low (${(solBal / 1e9).toFixed(6)} SOL <= ${(MIN_FEE_RESERVE / 1e9).toFixed(6)} SOL rent-exempt minimum), skipping transfer`)
-        } else {
-          console.log(`[${index + 1}/${total}]   💸 Will transfer ${(transferAmount / 1e9).toFixed(6)} SOL, leaving ${(MIN_FEE_RESERVE / 1e9).toFixed(6)} SOL for rent exemption`)
-        }
+        const walletType = isDevWallet ? 'DEV wallet' : 'Bundler wallet'
+        console.log(`[${index + 1}/${total}]   💸 ${walletType}: Will transfer ${(transferAmount / 1e9).toFixed(6)} SOL, leaving ${(MIN_FEE_RESERVE / 1e9).toFixed(6)} SOL for rent exemption`)
       }
       
       if (transferAmount > 0) {
@@ -360,12 +352,8 @@ const main = async () => {
               const RETRY_BUFFER = 20_000 // Additional buffer
               const RETRY_FEE_RESERVE = RETRY_RENT_EXEMPT + RETRY_BUFFER // ~0.00091 SOL
               
-              if (isDevWallet) {
-                const MIN_DEV_BALANCE = 100_000_000
-                transferAmount = newBal > MIN_DEV_BALANCE + RETRY_FEE_RESERVE ? newBal - MIN_DEV_BALANCE - RETRY_FEE_RESERVE : 0
-              } else {
-                transferAmount = newBal > RETRY_FEE_RESERVE ? newBal - RETRY_FEE_RESERVE : 0
-              }
+              // For ALL wallets (including DEV), only leave rent-exempt balance
+              transferAmount = newBal > RETRY_FEE_RESERVE ? newBal - RETRY_FEE_RESERVE : 0
               
               if (transferAmount <= 0) {
                 console.log(`[${index + 1}/${total}]   ❌ Not enough balance after recalculation (need ${(RETRY_FEE_RESERVE / 1e9).toFixed(6)} SOL for rent exemption), skipping`)
