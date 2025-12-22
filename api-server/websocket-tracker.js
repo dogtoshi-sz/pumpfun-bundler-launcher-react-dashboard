@@ -566,12 +566,37 @@ class WebSocketTracker {
       
       // Check all account keys for our mint
       for (const key of accountKeys) {
-        const address = typeof key === 'string' ? key : (key.pubkey || key.toString());
-        if (address && this.currentMintAddress && 
-            address.toLowerCase() === this.currentMintAddress.toLowerCase()) {
-          mintAddress = address;
-          mintInTransaction = true;
-          break;
+        let addressStr;
+        try {
+          if (typeof key === 'string') {
+            addressStr = key;
+          } else if (key && typeof key === 'object') {
+            // Handle PublicKey object or object with pubkey property
+            if (key.pubkey) {
+              // If pubkey exists, it might be a PublicKey object or string
+              addressStr = typeof key.pubkey === 'string' ? key.pubkey : (key.pubkey.toString ? key.pubkey.toString() : String(key.pubkey));
+            } else {
+              // Try toString() method
+              addressStr = key.toString ? key.toString() : String(key);
+            }
+          } else {
+            addressStr = String(key);
+          }
+          
+          // Ensure addressStr is a string before calling toLowerCase
+          if (typeof addressStr !== 'string') {
+            addressStr = String(addressStr);
+          }
+          
+          if (addressStr && this.currentMintAddress && 
+              addressStr.toLowerCase() === this.currentMintAddress.toLowerCase()) {
+            mintAddress = addressStr;
+            mintInTransaction = true;
+            break;
+          }
+        } catch (err) {
+          // Skip this key if we can't process it
+          continue;
         }
       }
 
@@ -598,22 +623,45 @@ class WebSocketTracker {
       }
 
       // Find the wallet that initiated the transaction (first signer)
-      let walletAddress = null;
+      let walletAddressStr = null;
       if (accountKeys.length > 0) {
-        const firstKey = accountKeys[0];
-        walletAddress = typeof firstKey === 'string' ? firstKey : (firstKey.pubkey || firstKey.toString());
+        try {
+          const firstKey = accountKeys[0];
+          if (typeof firstKey === 'string') {
+            walletAddressStr = firstKey;
+          } else if (firstKey && typeof firstKey === 'object') {
+            // Handle PublicKey object or object with pubkey property
+            if (firstKey.pubkey) {
+              // If pubkey exists, it might be a PublicKey object or string
+              walletAddressStr = typeof firstKey.pubkey === 'string' ? firstKey.pubkey : (firstKey.pubkey.toString ? firstKey.pubkey.toString() : String(firstKey.pubkey));
+            } else {
+              // Try toString() method
+              walletAddressStr = firstKey.toString ? firstKey.toString() : String(firstKey);
+            }
+          } else {
+            walletAddressStr = String(firstKey);
+          }
+          
+          // Ensure walletAddressStr is a string
+          if (typeof walletAddressStr !== 'string') {
+            walletAddressStr = String(walletAddressStr);
+          }
+        } catch (err) {
+          // Can't process first key, skip this transaction
+          return;
+        }
       }
 
-      if (!walletAddress) {
+      if (!walletAddressStr) {
         return;
       }
 
       // Check if this is one of our wallets
-      const isOurWallet = this.ourWalletAddresses.has(walletAddress.toLowerCase());
+      const isOurWallet = this.ourWalletAddresses.has(walletAddressStr.toLowerCase());
       
       // Log wallet detection for debugging (first few transactions)
       if (this.transactionsFetched < 5) {
-        console.log(`[WebSocket] 🔍 Wallet ${walletAddress.slice(0, 8)}... is ${isOurWallet ? 'OUR WALLET' : 'EXTERNAL'}`);
+        console.log(`[WebSocket] 🔍 Wallet ${walletAddressStr.slice(0, 8)}... is ${isOurWallet ? 'OUR WALLET' : 'EXTERNAL'}`);
       }
 
       // Determine buy/sell by analyzing token balance changes
@@ -623,15 +671,22 @@ class WebSocketTracker {
       let tokenAmount = 0;
 
       // Get wallet's token balance before and after
-      const preTokenBalance = this.getWalletTokenBalance(meta?.preTokenBalances, walletAddress, mintAddress);
-      const postTokenBalance = this.getWalletTokenBalance(meta?.postTokenBalances, walletAddress, mintAddress);
+      const preTokenBalance = this.getWalletTokenBalance(meta?.preTokenBalances, walletAddressStr, mintAddress);
+      const postTokenBalance = this.getWalletTokenBalance(meta?.postTokenBalances, walletAddressStr, mintAddress);
       
       // Get wallet's SOL balance before and after
       let walletIndex = -1;
       for (let i = 0; i < accountKeys.length; i++) {
         const key = accountKeys[i];
-        const addr = typeof key === 'string' ? key : (key.pubkey || key.toString());
-        if (addr && addr.toLowerCase() === walletAddress.toLowerCase()) {
+        let addr;
+        if (typeof key === 'string') {
+          addr = key;
+        } else if (key && typeof key === 'object') {
+          addr = key.pubkey ? (typeof key.pubkey === 'string' ? key.pubkey : (key.pubkey.toString ? key.pubkey.toString() : String(key.pubkey))) : (key.toString ? key.toString() : String(key));
+        } else {
+          addr = String(key);
+        }
+        if (addr && typeof addr === 'string' && addr.toLowerCase() === walletAddressStr.toLowerCase()) {
           walletIndex = i;
           break;
         }
@@ -745,12 +800,12 @@ class WebSocketTracker {
         const timestamp = Date.now();
         const simTag = this.simulationMode ? ' [SIM]' : '';
         
-        console.log(`[WebSocket] 🔔 ${tradeType} detected${simTag}: ${walletType} | ${walletAddress.slice(0, 8)}... | ${solAmount.toFixed(4)} SOL | Mint: ${mintAddress.slice(0, 8)}... | ${tokenAmount > 0 ? tokenAmount.toFixed(2) + ' tokens' : ''}`);
+        console.log(`[WebSocket] 🔔 ${tradeType} detected${simTag}: ${walletType} | ${walletAddressStr.slice(0, 8)}... | ${solAmount.toFixed(4)} SOL | Mint: ${mintAddress.slice(0, 8)}... | ${tokenAmount > 0 ? tokenAmount.toFixed(2) + ' tokens' : ''}`);
         
         // Emit transaction to frontend
         const txData = {
           type: tradeType.toLowerCase(),
-          walletAddress: walletAddress,
+          walletAddress: walletAddressStr,
           walletType: walletType,
           solAmount: solAmount,
           tokenAmount: tokenAmount,
@@ -762,7 +817,7 @@ class WebSocketTracker {
         
         // AGGREGATE EXTERNAL BUYS and trigger when cumulative threshold reached
         if (isBuy && !isOurWallet && this.autoSellEnabled && solAmount > 0) {
-          this.handleExternalBuy(solAmount, walletAddress, timestamp);
+          this.handleExternalBuy(solAmount, walletAddressStr, timestamp);
         }
       }
 
@@ -775,12 +830,20 @@ class WebSocketTracker {
   getWalletTokenBalance(balances, walletAddress, mintAddress) {
     if (!balances || !Array.isArray(balances)) return 0;
     
+    // Ensure walletAddress is a string
+    const walletAddressStr = typeof walletAddress === 'string' ? walletAddress : (walletAddress ? String(walletAddress) : '');
+    const mintAddressStr = typeof mintAddress === 'string' ? mintAddress : (mintAddress ? String(mintAddress) : '');
+    
     for (const balance of balances) {
       const owner = balance.owner;
       const mint = balance.mint;
       
-      if (mint && mint.toLowerCase() === mintAddress.toLowerCase() &&
-          owner && owner.toLowerCase() === walletAddress.toLowerCase()) {
+      // Ensure both are strings before comparing
+      const ownerStr = typeof owner === 'string' ? owner : (owner ? String(owner) : '');
+      const mintStr = typeof mint === 'string' ? mint : (mint ? String(mint) : '');
+      
+      if (mintStr && mintStr.toLowerCase() === mintAddressStr.toLowerCase() &&
+          ownerStr && ownerStr.toLowerCase() === walletAddressStr.toLowerCase()) {
         const uiAmount = balance.uiTokenAmount?.uiAmount || balance.uiTokenAmount?.amount || 0;
         return parseFloat(uiAmount) || 0;
       }
@@ -875,8 +938,8 @@ class WebSocketTracker {
     // 'rapid-sell-50-percent' = sell 50% of bundler wallets (AUTO_SELL_50_PERCENT)
     const sellType = this.autoSellType || 'rapid-sell'; // Default to rapid-sell
     
-    // Pass mint address directly to rapid-sell for instant execution
-    const command = `cd "${scriptDir}" && npm run ${sellType} "${mintAddress || ''}"`;
+    // Pass mint address and HIGH priority fee (threshold was met - need speed!)
+    const command = `cd "${scriptDir}" && npm run ${sellType} "${mintAddress || ''}" 0 high`;
     
     const sellTypeName = sellType === 'rapid-sell-50-percent' ? '50% of bundler wallets' : 'ALL wallets';
     console.log(`[WebSocket] 📍 Selling mint: ${mintAddress}`);

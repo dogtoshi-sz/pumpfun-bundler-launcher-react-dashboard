@@ -6,7 +6,7 @@ import { Connection, Keypair, VersionedTransaction, PublicKey } from "@solana/we
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk"
 import { getSellTxWithJupiter } from "./utils/swapOnlyAmm"
-import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY } from "./constants"
+import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_LOW } from "./constants"
 import { collectCreatorFees } from "./collect-fees"
 
 const connection = new Connection(RPC_ENDPOINT, {
@@ -17,8 +17,12 @@ const connection = new Connection(RPC_ENDPOINT, {
 // Rapid sell function - sells from ALL wallets in parallel (milliseconds speed)
 // Optimized to beat sniper bots - fires IMMEDIATELY, before bonding curve is even detected
 // Smart retry: if tokens not detected yet, keeps trying until they are
-const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0) => {
+// priorityFee: 'high' for WebSocket threshold triggers (fast!), 'low' for manual sells (cheap!)
+const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0, priorityFee: 'high' | 'low' = 'low') => {
+  const priorityFeeText = priorityFee === 'high' ? 'HIGH (WebSocket threshold met!)' : 'LOW (manual/cheap)'
+  const priorityFeeAmount = priorityFee === 'high' ? (PRIORITY_FEE_LAMPORTS_HIGH / 1e9).toFixed(4) : (PRIORITY_FEE_LAMPORTS_LOW / 1e9).toFixed(4)
   console.log("🚀🚀🚀 RACE MODE - INSTANT FIRE to beat sniper bots! 🚀🚀🚀")
+  console.log(`⚡ Priority Fee: ${priorityFeeText} (${priorityFeeAmount} SOL)`)
   console.log("⚡ Starting IMMEDIATELY - will retry until tokens detected...")
   const startTime = Date.now()
   
@@ -159,10 +163,11 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0) => {
   // Smart fallback: keeps checking for tokens until detected, then sells 100%
   // Each wallet sends its transaction via Helius RPC in parallel (not Jito bundling)
   // Higher priority fees ensure faster inclusion
+  // PRIORITY: DEV wallet (index 0) sends FIRST, then bundler wallets in parallel
+  // NO DELAYS - Maximum speed, but DEV wallet transaction is sent first
   const sellPromises = sellTasks.map(async ({ wallet, account, balance, walletAddr, mint }, index) => {
-    // Small stagger: 50ms delay per wallet to avoid simultaneous pool hits
-    // This prevents error 6001 when multiple wallets compete for same liquidity
-    await sleep(index * 50) // 0ms, 50ms, 100ms, 150ms, etc.
+    // NO DELAY - All wallets start checking immediately for maximum speed
+    // DEV wallet (index 0) will send its transaction first when ready
     let attempts = 0
     let success = false
     let localBondingCurveReady = false
@@ -249,7 +254,9 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0) => {
         }
         
         // Get sell transaction from Jupiter (100% of current balance)
-        const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance)
+        // Use HIGH priority fee if threshold was met (WebSocket auto-sell), LOW for manual sells
+        const priorityFeeLamports = priorityFee === 'high' ? PRIORITY_FEE_LAMPORTS_HIGH : PRIORITY_FEE_LAMPORTS_LOW
+        const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance, priorityFeeLamports)
         
         if (!sellTx) {
           // Tokens detected but bonding curve not ready yet OR Jupiter can't route
@@ -279,9 +286,10 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0) => {
           localBondingCurveReady = true
         }
         
-        // Send transaction IMMEDIATELY via Helius RPC (not Jito) - parallel execution
+        // PRIORITY: DEV wallet (index 0) sends FIRST - no delays, maximum speed
+        // Send transaction IMMEDIATELY via Helius RPC (not Jito)
         // This is the FASTEST possible method - beats all bots
-        // All wallets send simultaneously, not sequentially
+        // DEV wallet is first in array (index 0), so it processes and sends first
         // Higher priority fees (0.0001 SOL) ensure faster inclusion
         // Note: sendTransaction also counts as RPC, but it's critical so we allow it
         const signature = await rateLimitedRpc(() =>
@@ -364,8 +372,23 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0) => {
     }
   })
   
-  // Wait for all sells to complete (or timeout)
-  const results = await Promise.all(sellPromises)
+  // PRIORITY: Send DEV wallet transaction FIRST (if it exists), then bundler wallets in parallel
+  // NO DELAYS - Maximum speed, but DEV wallet goes first
+  let results;
+  if (sellTasks.length > 0 && sellTasks[0]) {
+    // DEV wallet is at index 0 - send it first
+    const devWalletResult = await sellPromises[0];
+    // Then send bundler wallets in parallel (if any)
+    if (sellPromises.length > 1) {
+      const bundlerResults = await Promise.all(sellPromises.slice(1));
+      results = [devWalletResult, ...bundlerResults];
+    } else {
+      results = [devWalletResult];
+    }
+  } else {
+    // No wallets (shouldn't happen, but safety)
+    results = await Promise.all(sellPromises);
+  }
   
   const successful = results.filter(r => r.success).length
   const failed = results.filter(r => !r.success).length

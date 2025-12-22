@@ -7,10 +7,19 @@ import fs from 'fs';
 import path from 'path';
 import base58 from 'bs58';
 import { Keypair } from '@solana/web3.js';
-import { PRIVATE_KEY } from './constants';
+import { PRIVATE_KEY, WEBSOCKET_ULTRA_FAST_MODE, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT } from './constants';
 
 // Import WebSocket tracker directly (no API server needed)
-const websocketTracker = require('./api-server/websocket-tracker');
+// Choose between standard and ultra-fast based on .env
+let websocketTracker;
+if (WEBSOCKET_ULTRA_FAST_MODE) {
+  console.log('🚀 Using ULTRA-FAST mode (sub-500ms reaction time)');
+  const { UltraFastWebSocketTracker } = require('./api-server/websocket-tracker-ultra-fast');
+  websocketTracker = new UltraFastWebSocketTracker();
+} else {
+  console.log('📊 Using STANDARD mode (reliable transaction fetching)');
+  websocketTracker = require('./api-server/websocket-tracker');
+}
 
 async function startTracking() {
   const mintAddress = process.argv[2];
@@ -67,6 +76,9 @@ async function startTracking() {
   console.log(`   📊 Total wallets to exclude (our wallets): ${ourWallets.length}`);
   console.log('');
 
+  // Determine auto-sell type
+  const autoSellType = AUTO_SELL_50_PERCENT ? 'rapid-sell-50-percent' : 'rapid-sell';
+  
   // Start tracking directly (no API server needed!)
   try {
     const success = websocketTracker.startTracking(
@@ -76,7 +88,8 @@ async function startTracking() {
       0.1, // threshold (not used for cumulative)
       externalBuyThreshold,
       windowSeconds * 1000, // Convert to milliseconds
-      simulationMode // Simulation mode flag
+      simulationMode, // Simulation mode flag
+      autoSellType // 'rapid-sell' or 'rapid-sell-50-percent'
     );
 
     if (success) {

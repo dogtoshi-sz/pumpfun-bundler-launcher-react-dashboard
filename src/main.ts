@@ -157,13 +157,31 @@ export const distributeSol = async (connection: Connection, mainKp: Keypair, dis
 }
 
 export const createLUT = async (mainKp: Keypair) => {
+  // Check SOL balance first - LUT creation needs ~0.01-0.02 SOL
+  const balance = await connection.getBalance(mainKp.publicKey)
+  const minBalance = 0.02 * 1e9 // 0.02 SOL minimum
+  if (balance < minBalance) {
+    console.log(`❌ Insufficient SOL balance for LUT creation: ${(balance / 1e9).toFixed(4)} SOL`)
+    console.log(`   Required: ${(minBalance / 1e9).toFixed(4)} SOL minimum`)
+    console.log("   Please fund your main wallet and try again")
+    return null
+  }
+  
   let i = 0
   while (true) {
     if (i > 5) {
-      console.log("LUT creation failed, Exiting...")
-      return
+      console.log("❌ LUT creation failed after 5 retries, Exiting...")
+      console.log("   Possible causes:")
+      console.log("   1. Network congestion - try again later")
+      console.log("   2. RPC rate limiting - wait a few minutes")
+      console.log("   3. Insufficient SOL for fees")
+      console.log("   4. Transaction confirmation timeout")
+      return null
     }
-    const slot = await connection.getSlot("confirmed")
+    // Get fresh slot right before creating LUT instruction to avoid stale slot errors
+    // Use "finalized" commitment for more reliable slot (less likely to be stale)
+    const slot = await connection.getSlot("finalized")
+    
     try {
       const [lookupTableInst, lookupTableAddress] =
         AddressLookupTableProgram.createLookupTable({
@@ -182,17 +200,23 @@ export const createLUT = async (mainKp: Keypair) => {
         lookupTableInst
       ], mainKp, connection);
 
-      if (!result)
-        throw new Error("Lut creation error")
+      if (!result) {
+        const errorMsg = "Transaction sent but confirmation failed or returned false"
+        console.log(`❌ ${errorMsg}`)
+        throw new Error(errorMsg)
+      }
 
       console.log("Lookup Table Address created successfully!")
       console.log("Please wait for about 15 seconds...")
       await sleep(15000)
 
       return lookupTableAddress
-    } catch (err) {
+    } catch (err: any) {
+      const errorMsg = err?.message || String(err)
+      console.log(`❌ LUT creation attempt ${i + 1}/5 failed: ${errorMsg}`)
       console.log("Retrying to create Lookuptable until it is created...")
       i++
+      await sleep(2000) // Wait 2 seconds before retry to avoid rate limiting
     }
   }
 }

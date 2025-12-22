@@ -5,7 +5,7 @@ import base58 from "bs58"
 import fs from "fs"
 import path from "path"
 
-import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT, AUTO_GATHER, AUTO_COLLECT_FEES, VOLUME_MAKER_ENABLED, VOLUME_MAKER_DURATION_MINUTES, VOLUME_MAKER_MIN_INTERVAL_SECONDS, VOLUME_MAKER_MAX_INTERVAL_SECONDS, VOLUME_MAKER_MIN_BUY_AMOUNT, VOLUME_MAKER_MAX_BUY_AMOUNT, VOLUME_MAKER_MIN_SELL_PERCENTAGE, VOLUME_MAKER_MAX_SELL_PERCENTAGE, VOLUME_MAKER_WALLET_COUNT, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW } from "./constants"
+import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT, AUTO_GATHER, AUTO_COLLECT_FEES, VOLUME_MAKER_ENABLED, VOLUME_MAKER_DURATION_MINUTES, VOLUME_MAKER_MIN_INTERVAL_SECONDS, VOLUME_MAKER_MAX_INTERVAL_SECONDS, VOLUME_MAKER_MIN_BUY_AMOUNT, VOLUME_MAKER_MAX_BUY_AMOUNT, VOLUME_MAKER_MIN_SELL_PERCENTAGE, VOLUME_MAKER_MAX_SELL_PERCENTAGE, VOLUME_MAKER_WALLET_COUNT, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE } from "./constants"
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
 import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend } from "./src/main";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
@@ -157,10 +157,18 @@ const main = async () => {
     }
     
     try {
-      // Import WebSocket tracker (it exports a singleton instance)
-      const websocketTrackerModule = require('./api-server/websocket-tracker');
-      // The module exports a singleton instance, so use it directly
-      websocketTrackerInstance = websocketTrackerModule;
+      // Import WebSocket tracker (choose between standard and ultra-fast)
+      if (WEBSOCKET_ULTRA_FAST_MODE) {
+        console.log("   🚀 ULTRA-FAST MODE: Sub-500ms reaction time");
+        console.log("   ⚡ Uses 'processed' commitment + pre-built transactions");
+        const { UltraFastWebSocketTracker } = require('./api-server/websocket-tracker-ultra-fast');
+        websocketTrackerInstance = new UltraFastWebSocketTracker();
+      } else {
+        console.log("   📊 STANDARD MODE: Reliable transaction fetching");
+        const websocketTrackerModule = require('./api-server/websocket-tracker');
+        // The module exports a singleton instance, so use it directly
+        websocketTrackerInstance = websocketTrackerModule;
+      }
       
       // Prepare our wallet addresses (DEV + bundler wallets)
       const ourWalletAddresses: string[] = [];
