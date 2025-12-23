@@ -129,5 +129,21 @@ async function startTracking() {
   }
 }
 
-startTracking();
+startTracking().then(() => {
+  // Keep process alive - WebSocket runs in background
+  // The process will exit when user presses Ctrl+C
+  process.on('SIGINT', () => {
+    console.log('\n\n🛑 Stopping WebSocket tracking...');
+    if (websocketTracker && typeof websocketTracker.stop === 'function') {
+      websocketTracker.stop();
+    }
+    process.exit(0);
+  });
+
+  // Keep process alive - prevent exit
+  console.log('\n💡 Process is running. Press Ctrl+C to stop.\n');
+}).catch((error) => {
+  console.error('❌ Failed to start tracking:', error);
+  process.exit(1);
+});
 

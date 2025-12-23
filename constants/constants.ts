@@ -1,3 +1,7 @@
+import dotenv from 'dotenv';
+// CRITICAL: Load .env BEFORE reading any process.env values
+dotenv.config();
+
 import { retrieveEnvVariable } from "../utils"
 import { PublicKey } from "@solana/web3.js";
 
