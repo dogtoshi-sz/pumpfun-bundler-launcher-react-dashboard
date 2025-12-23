@@ -9,7 +9,7 @@ import path from "path"
 import dotenv from 'dotenv';
 dotenv.config({ override: true }); // Force reload, don't use cached values
 
-import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT, AUTO_GATHER, AUTO_COLLECT_FEES, VOLUME_MAKER_ENABLED, VOLUME_MAKER_DURATION_MINUTES, VOLUME_MAKER_MIN_INTERVAL_SECONDS, VOLUME_MAKER_MAX_INTERVAL_SECONDS, VOLUME_MAKER_MIN_BUY_AMOUNT, VOLUME_MAKER_MAX_BUY_AMOUNT, VOLUME_MAKER_MIN_SELL_PERCENTAGE, VOLUME_MAKER_MAX_SELL_PERCENTAGE, VOLUME_MAKER_WALLET_COUNT, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE } from "./constants"
+import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT, AUTO_SELL_STAGED, AUTO_GATHER, AUTO_COLLECT_FEES, VOLUME_MAKER_ENABLED, VOLUME_MAKER_DURATION_MINUTES, VOLUME_MAKER_MIN_INTERVAL_SECONDS, VOLUME_MAKER_MAX_INTERVAL_SECONDS, VOLUME_MAKER_MIN_BUY_AMOUNT, VOLUME_MAKER_MAX_BUY_AMOUNT, VOLUME_MAKER_MIN_SELL_PERCENTAGE, VOLUME_MAKER_MAX_SELL_PERCENTAGE, VOLUME_MAKER_WALLET_COUNT, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, STAGED_SELL_STAGE1_THRESHOLD, STAGED_SELL_STAGE2_THRESHOLD, STAGED_SELL_STAGE3_THRESHOLD, STAGED_SELL_STAGE1_PERCENTAGE, STAGED_SELL_STAGE2_PERCENTAGE, STAGED_SELL_STAGE3_PERCENTAGE } from "./constants"
 
 // DEBUG: Log actual values being used
 console.log("\n📋 CONFIGURATION VALUES FROM .ENV:");
@@ -19,7 +19,8 @@ console.log(`   SWAP_AMOUNTS: ${SWAP_AMOUNTS.join(', ')}`);
 console.log(`   WEBSOCKET_TRACKING_ENABLED: ${WEBSOCKET_TRACKING_ENABLED}`);
 console.log(`   WEBSOCKET_ULTRA_FAST_MODE: ${WEBSOCKET_ULTRA_FAST_MODE}`);
 console.log(`   AUTO_RAPID_SELL: ${AUTO_RAPID_SELL}`);
-console.log(`   AUTO_SELL_50_PERCENT: ${AUTO_SELL_50_PERCENT}\n`);
+console.log(`   AUTO_SELL_50_PERCENT: ${AUTO_SELL_50_PERCENT}`);
+console.log(`   AUTO_SELL_STAGED: ${AUTO_SELL_STAGED}\n`);
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
 import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend } from "./src/main";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
@@ -159,11 +160,28 @@ const main = async () => {
     console.log(`   Aggregation Window: ${WEBSOCKET_EXTERNAL_BUY_WINDOW} seconds`);
     
     // Determine auto-sell type based on .env settings
-    // Priority: AUTO_SELL_50_PERCENT takes precedence over AUTO_RAPID_SELL
+    // Priority: AUTO_SELL_STAGED > AUTO_SELL_50_PERCENT > AUTO_RAPID_SELL
     let autoSellType = 'rapid-sell'; // Default
     let autoSellEnabled = false;
+    let stagedSellConfig = null;
     
-    if (AUTO_SELL_50_PERCENT) {
+    if (AUTO_SELL_STAGED) {
+      autoSellType = 'rapid-sell-staged';
+      autoSellEnabled = true;
+      stagedSellConfig = {
+        enabled: true,
+        stage1Threshold: STAGED_SELL_STAGE1_THRESHOLD,
+        stage2Threshold: STAGED_SELL_STAGE2_THRESHOLD,
+        stage3Threshold: STAGED_SELL_STAGE3_THRESHOLD,
+        stage1Percentage: STAGED_SELL_STAGE1_PERCENTAGE,
+        stage2Percentage: STAGED_SELL_STAGE2_PERCENTAGE,
+        stage3Percentage: STAGED_SELL_STAGE3_PERCENTAGE
+      };
+      console.log(`   Auto-Sell: STAGED SELL`);
+      console.log(`     Stage 1: ${STAGED_SELL_STAGE1_PERCENTAGE}% at ${STAGED_SELL_STAGE1_THRESHOLD} SOL`);
+      console.log(`     Stage 2: ${STAGED_SELL_STAGE2_PERCENTAGE}% at ${STAGED_SELL_STAGE2_THRESHOLD} SOL`);
+      console.log(`     Stage 3: ${STAGED_SELL_STAGE3_PERCENTAGE}% + DEV at ${STAGED_SELL_STAGE3_THRESHOLD} SOL`);
+    } else if (AUTO_SELL_50_PERCENT) {
       autoSellType = 'rapid-sell-50-percent';
       autoSellEnabled = true;
       console.log(`   Auto-Sell: 50% of bundler wallets (DEV wallet excluded)`);
@@ -641,7 +659,12 @@ const main = async () => {
     console.log("\n⏸️  WEBSOCKET TRACKING IS ENABLED - Skipping automatic sell on launch");
     console.log("⚡ Auto-sell will be triggered by WebSocket when external buy threshold is reached");
     console.log(`⚡ Threshold: ${WEBSOCKET_EXTERNAL_BUY_THRESHOLD} SOL (cumulative within ${WEBSOCKET_EXTERNAL_BUY_WINDOW}s)`);
-    if (AUTO_SELL_50_PERCENT) {
+    if (AUTO_SELL_STAGED) {
+      console.log("⚡ Sell type: STAGED SELL");
+      console.log(`   Stage 1: ${STAGED_SELL_STAGE1_PERCENTAGE}% at ${STAGED_SELL_STAGE1_THRESHOLD} SOL`);
+      console.log(`   Stage 2: ${STAGED_SELL_STAGE2_PERCENTAGE}% at ${STAGED_SELL_STAGE2_THRESHOLD} SOL`);
+      console.log(`   Stage 3: ${STAGED_SELL_STAGE3_PERCENTAGE}% + DEV at ${STAGED_SELL_STAGE3_THRESHOLD} SOL`);
+    } else if (AUTO_SELL_50_PERCENT) {
       console.log("⚡ Sell type: 50% of bundler wallets (DEV excluded)");
     } else if (AUTO_RAPID_SELL) {
       console.log("⚡ Sell type: ALL wallets (bundler + DEV)");
