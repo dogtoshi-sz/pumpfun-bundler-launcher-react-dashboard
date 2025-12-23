@@ -288,6 +288,35 @@ app.get('/api/dev-wallet-address', async (req, res) => {
 });
 
 // Get current status
+// Serve dynamic branding endpoint (for domain-based or config-based branding)
+app.get('/api/branding', async (req, res) => {
+  try {
+    const config = readEnvConfig();
+    const host = req.get('host') || '';
+    
+    // Return branding info that can be used to customize the frontend
+    res.json({
+      success: true,
+      branding: {
+        tokenName: config.TOKEN_NAME || '',
+        tokenSymbol: config.TOKEN_SYMBOL || '',
+        showName: config.TOKEN_SHOW_NAME || config.TOKEN_NAME || '',
+        description: config.DESCRIPTION || '',
+        website: config.WEBSITE || '',
+        twitter: config.TWITTER || '',
+        telegram: config.TELEGRAM || '',
+        // Domain-based branding could be added here
+        domain: host,
+        // Logo path (if you want to serve token images dynamically)
+        logoPath: config.FILE || ''
+      }
+    });
+  } catch (error) {
+    console.error('Error getting branding:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/status', async (req, res) => {
   try {
     const keysPath = path.join(__dirname, '..', 'keys', 'data.json');

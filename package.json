@@ -20,7 +20,8 @@
     "menu": "ts-node menu.ts",
     "collect-fees": "ts-node collect-fees.ts",
     "generate-pump": "ts-node generate-pump-addresses.ts",
-    "track": "ts-node start-tracking.ts"
+    "track": "ts-node start-tracking.ts",
+    "preview-address": "ts-node preview-next-address.ts"
   },
   "license": "ISC",
   "devDependencies": {

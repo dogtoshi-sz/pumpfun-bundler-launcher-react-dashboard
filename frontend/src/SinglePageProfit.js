@@ -142,6 +142,30 @@ function SinglePageProfit() {
         }));
         setWalletCountInput(String(config.distributionWalletNum || 10));
         
+        // DYNAMIC BRANDING: Update page title and meta tags based on token config
+        if (config.tokenName || config.showName) {
+          const displayName = config.showName || config.tokenName || 'Token Bundler';
+          document.title = `${displayName} - Launch & Trade`;
+          
+          // Update meta description
+          let metaDescription = document.querySelector('meta[name="description"]');
+          if (!metaDescription) {
+            metaDescription = document.createElement('meta');
+            metaDescription.setAttribute('name', 'description');
+            document.head.appendChild(metaDescription);
+          }
+          metaDescription.setAttribute('content', config.description || `${displayName} - Professional token launcher and trading platform`);
+          
+          // Update Open Graph tags if needed (for social sharing)
+          let ogTitle = document.querySelector('meta[property="og:title"]');
+          if (!ogTitle) {
+            ogTitle = document.createElement('meta');
+            ogTitle.setAttribute('property', 'og:title');
+            document.head.appendChild(ogTitle);
+          }
+          ogTitle.setAttribute('content', displayName);
+        }
+        
         // Initialize wallet amounts from config if available
         if (config.swapAmounts) {
           const amounts = config.swapAmounts.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));

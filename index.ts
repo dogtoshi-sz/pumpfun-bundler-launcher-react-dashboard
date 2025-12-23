@@ -5,7 +5,21 @@ import base58 from "bs58"
 import fs from "fs"
 import path from "path"
 
+// CRITICAL: Force reload .env before importing constants to ensure latest values
+import dotenv from 'dotenv';
+dotenv.config({ override: true }); // Force reload, don't use cached values
+
 import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT, AUTO_GATHER, AUTO_COLLECT_FEES, VOLUME_MAKER_ENABLED, VOLUME_MAKER_DURATION_MINUTES, VOLUME_MAKER_MIN_INTERVAL_SECONDS, VOLUME_MAKER_MAX_INTERVAL_SECONDS, VOLUME_MAKER_MIN_BUY_AMOUNT, VOLUME_MAKER_MAX_BUY_AMOUNT, VOLUME_MAKER_MIN_SELL_PERCENTAGE, VOLUME_MAKER_MAX_SELL_PERCENTAGE, VOLUME_MAKER_WALLET_COUNT, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE } from "./constants"
+
+// DEBUG: Log actual values being used
+console.log("\n📋 CONFIGURATION VALUES FROM .ENV:");
+console.log(`   BUYER_AMOUNT: ${BUYER_AMOUNT} SOL`);
+console.log(`   DISTRIBUTION_WALLETNUM: ${DISTRIBUTION_WALLETNUM}`);
+console.log(`   SWAP_AMOUNTS: ${SWAP_AMOUNTS.join(', ')}`);
+console.log(`   WEBSOCKET_TRACKING_ENABLED: ${WEBSOCKET_TRACKING_ENABLED}`);
+console.log(`   WEBSOCKET_ULTRA_FAST_MODE: ${WEBSOCKET_ULTRA_FAST_MODE}`);
+console.log(`   AUTO_RAPID_SELL: ${AUTO_RAPID_SELL}`);
+console.log(`   AUTO_SELL_50_PERCENT: ${AUTO_SELL_50_PERCENT}\n`);
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
 import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend } from "./src/main";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
@@ -132,6 +146,11 @@ const main = async () => {
   // START WEBSOCKET TRACKING (if enabled) - Start IMMEDIATELY after wallets are created
   // This tracks all buys in real-time and triggers auto-sell when threshold is met
   let websocketTrackerInstance: any = null;
+  
+  // DEBUG: Check why WebSocket tracking might not be starting
+  console.log(`\n🔍 DEBUG: WEBSOCKET_TRACKING_ENABLED = ${WEBSOCKET_TRACKING_ENABLED} (type: ${typeof WEBSOCKET_TRACKING_ENABLED})`);
+  console.log(`🔍 DEBUG: process.env.WEBSOCKET_TRACKING_ENABLED = ${process.env.WEBSOCKET_TRACKING_ENABLED}`);
+  
   if (WEBSOCKET_TRACKING_ENABLED) {
     console.log("\n🌐🌐🌐 STARTING WEBSOCKET TRACKING... 🌐🌐🌐");
     console.log("⚡ Real-time buy/sell detection enabled");
@@ -157,17 +176,30 @@ const main = async () => {
     }
     
     try {
+      console.log("   🔧 Initializing WebSocket tracker...");
       // Import WebSocket tracker (choose between standard and ultra-fast)
       if (WEBSOCKET_ULTRA_FAST_MODE) {
         console.log("   🚀 ULTRA-FAST MODE: Sub-500ms reaction time");
         console.log("   ⚡ Uses 'processed' commitment + pre-built transactions");
-        const { UltraFastWebSocketTracker } = require('./api-server/websocket-tracker-ultra-fast');
-        websocketTrackerInstance = new UltraFastWebSocketTracker();
+        try {
+          const { UltraFastWebSocketTracker } = require('./api-server/websocket-tracker-ultra-fast');
+          websocketTrackerInstance = new UltraFastWebSocketTracker();
+          console.log("   ✅ Ultra-fast tracker instance created");
+        } catch (requireError: any) {
+          console.error("   ❌ Failed to require ultra-fast tracker:", requireError.message);
+          throw requireError;
+        }
       } else {
         console.log("   📊 STANDARD MODE: Reliable transaction fetching");
-        const websocketTrackerModule = require('./api-server/websocket-tracker');
-        // The module exports a singleton instance, so use it directly
-        websocketTrackerInstance = websocketTrackerModule;
+        try {
+          const websocketTrackerModule = require('./api-server/websocket-tracker');
+          // The module exports a singleton instance, so use it directly
+          websocketTrackerInstance = websocketTrackerModule;
+          console.log("   ✅ Standard tracker module loaded");
+        } catch (requireError: any) {
+          console.error("   ❌ Failed to require standard tracker:", requireError.message);
+          throw requireError;
+        }
       }
       
       // Prepare our wallet addresses (DEV + bundler wallets)
@@ -191,6 +223,12 @@ const main = async () => {
       console.log("   ⚡ Tracking starts NOW - will detect buys instantly!\n");
       
       // Start tracking (non-blocking - runs in parallel)
+      console.log("   🔧 Calling startTracking...");
+      console.log(`   📍 Mint: ${mintAddress.toBase58()}`);
+      console.log(`   📍 Wallets: ${ourWalletAddresses.length} addresses`);
+      console.log(`   📍 Auto-sell: ${autoSellEnabled ? 'ENABLED' : 'DISABLED'}`);
+      console.log(`   📍 Threshold: ${WEBSOCKET_EXTERNAL_BUY_THRESHOLD} SOL`);
+      
       const trackingStarted = websocketTrackerInstance.startTracking(
         mintAddress.toBase58(),
         ourWalletAddresses,
@@ -205,10 +243,15 @@ const main = async () => {
       if (trackingStarted) {
         console.log("✅✅✅ WEBSOCKET TRACKING STARTED SUCCESSFULLY! ✅✅✅\n");
       } else {
-        console.error("❌ Failed to start WebSocket tracking");
+        console.error("❌ Failed to start WebSocket tracking - startTracking returned false");
+        console.error("   Check WebSocket connection and .env configuration");
       }
     } catch (error: any) {
-      console.error("❌ Error starting WebSocket tracking:", error.message);
+      console.error("❌❌❌ CRITICAL: Error starting WebSocket tracking ❌❌❌");
+      console.error(`   Error: ${error.message || String(error)}`);
+      if (error.stack) {
+        console.error(`   Stack: ${error.stack.slice(0, 300)}`);
+      }
       console.error("   Tracking will NOT be active for this launch");
       console.error("   You can manually start tracking with: npm run track <mintAddress> <threshold> <window>\n");
     }

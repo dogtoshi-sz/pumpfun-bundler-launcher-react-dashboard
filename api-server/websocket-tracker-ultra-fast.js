@@ -7,6 +7,7 @@ const { PublicKey, Connection, Keypair, VersionedTransaction, ComputeBudgetProgr
 const base58 = require('bs58').default || require('bs58');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 
 const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 
@@ -29,6 +30,9 @@ class UltraFastWebSocketTracker {
     this.externalBuyTransactions = [];
     this.simulationMode = false;
     this.autoSellType = 'rapid-sell';
+    this.transactionsFetched = 0; // Count transactions fetched
+    this.processedSignatures = new Set(); // Track processed signatures
+    this.pendingTransactions = new Set(); // Track pending transactions
     
     // PRE-BUILT SELL TRANSACTIONS (critical for speed)
     this.prebuiltSellTemplates = new Map(); // wallet -> { instructions, accounts }
@@ -46,8 +50,10 @@ class UltraFastWebSocketTracker {
 
   // Initialize with API key from .env
   initialize() {
+    console.log('[WebSocket Ultra-Fast] 🔧 Initializing...');
     const envPath = path.join(__dirname, '..', '.env');
     if (fs.existsSync(envPath)) {
+      console.log('[WebSocket Ultra-Fast] ✅ Found .env file');
       const envContent = fs.readFileSync(envPath, 'utf8');
       const lines = envContent.split('\n');
       
@@ -83,9 +89,10 @@ class UltraFastWebSocketTracker {
       }
       
       if (this.wsUrl) {
-        console.log('[WebSocket Ultra-Fast] Using WebSocket endpoint from RPC_WEBSOCKET_ENDPOINT');
+        console.log('[WebSocket Ultra-Fast] ✅ Using WebSocket endpoint from RPC_WEBSOCKET_ENDPOINT');
+        console.log(`[WebSocket Ultra-Fast] 📍 WebSocket URL: ${this.wsUrl?.replace(this.apiKey || '', 'API_KEY')}`);
       } else {
-        console.error('[WebSocket Ultra-Fast] No WebSocket endpoint found in .env');
+        console.error('[WebSocket Ultra-Fast] ❌ No WebSocket endpoint found in .env');
         console.error('[WebSocket Ultra-Fast] Make sure RPC_WEBSOCKET_ENDPOINT or RPC_ENDPOINT is set in .env');
         return false;
       }
@@ -96,6 +103,7 @@ class UltraFastWebSocketTracker {
           commitment: 'processed' // FASTEST - for sending transactions
         });
         console.log('[WebSocket Ultra-Fast] ✅ Initialized Solana Connection for transaction sending');
+        console.log(`[WebSocket Ultra-Fast] 📍 RPC Endpoint: ${this.rpcEndpoint?.replace(/api-key=[^&]+/, 'api-key=API_KEY')}`);
       }
     }
     
@@ -156,9 +164,16 @@ class UltraFastWebSocketTracker {
 
   // Start tracking
   startTracking(mintAddress, ourWallets, autoSell = false, threshold = 0.1, externalBuyThreshold = 1.0, externalBuyWindow = 60000, simulationMode = false, autoSellType = 'rapid-sell') {
+    console.log('[WebSocket Ultra-Fast] 🔧 startTracking called');
+    console.log(`[WebSocket Ultra-Fast] 📍 Mint: ${mintAddress}`);
+    console.log(`[WebSocket Ultra-Fast] 📍 Wallets: ${ourWallets.length} addresses`);
+    
     if (!this.initialize()) {
+      console.error('[WebSocket Ultra-Fast] ❌ Initialize failed - cannot start tracking');
       return false;
     }
+    
+    console.log('[WebSocket Ultra-Fast] ✅ Initialize succeeded');
 
     this.currentMintAddress = mintAddress;
     this.updateOurWallets(ourWallets);
@@ -180,7 +195,8 @@ class UltraFastWebSocketTracker {
     console.log('[WebSocket Ultra-Fast] Starting tracking for mint:', mintAddress);
     console.log('[WebSocket Ultra-Fast] Auto-sell enabled:', autoSell);
     console.log('[WebSocket Ultra-Fast] External buy threshold:', externalBuyThreshold, 'SOL (cumulative)');
-    console.log('[WebSocket Ultra-Fast] Aggregation window:', externalBuyWindow / 1000, 's');
+    const windowSeconds = externalBuyWindow && !isNaN(externalBuyWindow) ? (externalBuyWindow / 1000) : 60;
+    console.log('[WebSocket Ultra-Fast] Aggregation window:', windowSeconds, 's');
     
     this.connect();
     return true;
@@ -212,11 +228,14 @@ class UltraFastWebSocketTracker {
       console.error('[WebSocket Ultra-Fast] WebSocket error:', error.message);
     });
 
-    this.ws.on('close', () => {
-      console.log('[WebSocket Ultra-Fast] WebSocket closed');
+    this.ws.on('close', (code, reason) => {
+      console.log(`[WebSocket Ultra-Fast] WebSocket closed (code: ${code}, reason: ${reason || 'none'})`);
       this.isConnected = false;
       this.subscriptionId = null;
-      this.attemptReconnect();
+      // Only reconnect if it wasn't a clean shutdown
+      if (code !== 1000) {
+        this.attemptReconnect();
+      }
     });
   }
 
@@ -257,6 +276,15 @@ class UltraFastWebSocketTracker {
         this.subscriptionId = message.result;
         console.log(`[WebSocket Ultra-Fast] ✅ Logs subscription confirmed! Subscription ID: ${this.subscriptionId}`);
         console.log('[WebSocket Ultra-Fast] 🎯 Now listening for transaction logs on Pump.fun program...');
+        console.log(`[WebSocket Ultra-Fast] 📍 Tracking mint: ${this.currentMintAddress}`);
+        const walletList = Array.from(this.ourWalletAddresses).slice(0, 3);
+        console.log(`[WebSocket Ultra-Fast] 📍 Our wallets (${this.ourWalletAddresses.size}): ${walletList.map(w => w.slice(0, 8) + '...').join(', ')}${this.ourWalletAddresses.size > 3 ? '...' : ''}`);
+        return;
+      }
+
+      // Handle subscription errors
+      if (message.error) {
+        console.error(`[WebSocket Ultra-Fast] ❌ Subscription error:`, JSON.stringify(message.error, null, 2));
         return;
       }
 
@@ -267,42 +295,54 @@ class UltraFastWebSocketTracker {
         if (result && result.value && result.value.signature) {
           const signature = result.value.signature;
           const logs = result.value.logs || [];
-          
-          // Skip if already processed
-          if (this.processedSignatures.has(signature)) {
-            return;
-          }
-          this.processedSignatures.add(signature);
-          
-          // Keep only last 1000 signatures
-          if (this.processedSignatures.size > 1000) {
-            const first = this.processedSignatures.values().next().value;
-            this.processedSignatures.delete(first);
-          }
-          
-          // PARSE LOGS DIRECTLY (no transaction fetch)
           const logsText = logs.join(' ').toLowerCase();
+          
+          // PRIORITY: Check if logs mention our mint address (instant detection)
           const mintInLogs = this.currentMintAddress && 
             (logsText.includes(this.currentMintAddress.toLowerCase()) || 
              logsText.includes(this.currentMintAddress.slice(0, 8).toLowerCase()));
           
+          // If mint is in logs, add to priority queue (process immediately)
+          // Otherwise, process in background (non-blocking)
           if (mintInLogs) {
-            // Our mint detected in logs - fetch transaction to get buy amount
-            // But do it in background (fire-and-forget) so we don't block
-            this.fetchAndProcessTransaction(signature).catch(err => {
-              // Silently handle errors - transaction might not be available yet
-            });
+            // PRIORITY: Process immediately (our mint detected in logs)
+            this.fetchAndProcessTransaction(signature, true); // true = priority
+          } else {
+            // BACKGROUND: Process in parallel without blocking (fire and forget)
+            this.fetchAndProcessTransaction(signature, false); // false = background
           }
         }
       }
     } catch (error) {
-      // Silently handle parse errors
+      console.error('[WebSocket Ultra-Fast] ❌ Error parsing message:', error.message);
     }
   }
 
   // Fetch transaction (background, non-blocking)
-  async fetchAndProcessTransaction(signature) {
-    if (!solanaConnection) return;
+  async fetchAndProcessTransaction(signature, isPriority = false) {
+    // Avoid processing the same transaction twice
+    if (this.processedSignatures.has(signature) || this.pendingTransactions.has(signature)) {
+      return;
+    }
+    
+    // Mark as pending
+    this.pendingTransactions.add(signature);
+    this.processedSignatures.add(signature);
+    
+    // Keep only last 1000 signatures
+    if (this.processedSignatures.size > 1000) {
+      const first = this.processedSignatures.values().next().value;
+      this.processedSignatures.delete(first);
+    }
+    
+    // Increment counter
+    this.transactionsFetched++;
+    if (!solanaConnection) {
+      if (this.logsReceived % 100 === 0) {
+        console.log(`[WebSocket Ultra-Fast] ⚠️  No Solana connection available`);
+      }
+      return;
+    }
     
     try {
       // Try 'processed' first (fastest), fallback to 'confirmed'
@@ -312,80 +352,338 @@ class UltraFastWebSocketTracker {
           commitment: 'processed',
           maxSupportedTransactionVersion: 0
         });
-      } catch {
+      } catch (err) {
         try {
           tx = await solanaConnection.getParsedTransaction(signature, {
             commitment: 'confirmed',
             maxSupportedTransactionVersion: 0
           });
         } catch {
-          return; // Transaction not available yet
+          // Transaction not available yet - this is normal for 'processed' commitment
+          return;
         }
       }
       
-      if (!tx || !tx.meta) return;
+      if (!tx) {
+        return; // Transaction not available yet
+      }
       
-      // Process transaction to detect buy
-      this.processTransactionForBuy(tx);
+      if (!tx.meta) {
+        // Some transactions don't have meta (e.g., failed transactions) - skip silently
+        return;
+      }
+      
+      // Check if this transaction involves our mint address
+      const message = tx.transaction.message;
+      const accountKeys = message.accountKeys || [];
+      
+      // Check if mint address is in account keys
+      let hasOurMint = false;
+      for (const key of accountKeys) {
+        let addressStr;
+        try {
+          if (typeof key === 'string') {
+            addressStr = key;
+          } else if (key && typeof key === 'object') {
+            // Handle PublicKey object or object with pubkey property
+            if (key.pubkey) {
+              addressStr = typeof key.pubkey === 'string' ? key.pubkey : (key.pubkey.toString ? key.pubkey.toString() : String(key.pubkey));
+            } else {
+              addressStr = key.toString ? key.toString() : String(key);
+            }
+          } else {
+            addressStr = String(key);
+          }
+          
+          // Ensure addressStr is a string before calling toLowerCase
+          if (typeof addressStr !== 'string') {
+            addressStr = String(addressStr);
+          }
+          
+          if (addressStr && this.currentMintAddress) {
+            const addressLower = addressStr.toLowerCase();
+            const mintLower = this.currentMintAddress.toLowerCase();
+            if (addressLower === mintLower) {
+              hasOurMint = true;
+              break;
+            }
+          }
+        } catch (err) {
+          // Skip this key if we can't process it
+          continue;
+        }
+      }
+      
+      // ALSO check token balances (mint might not be in account keys directly)
+      if (!hasOurMint && meta && (meta.preTokenBalances || meta.postTokenBalances)) {
+        const allTokenBalances = [...(meta.preTokenBalances || []), ...(meta.postTokenBalances || [])];
+        for (const balance of allTokenBalances) {
+          try {
+            if (balance && balance.mint) {
+              let mintStr;
+              if (typeof balance.mint === 'string') {
+                mintStr = balance.mint;
+              } else if (balance.mint && typeof balance.mint === 'object') {
+                mintStr = balance.mint.toString ? balance.mint.toString() : String(balance.mint);
+              } else {
+                mintStr = String(balance.mint);
+              }
+              
+              if (typeof mintStr !== 'string') {
+                mintStr = String(mintStr);
+              }
+              
+              if (mintStr && this.currentMintAddress) {
+                const mintLower = mintStr.toLowerCase();
+                const currentMintLower = this.currentMintAddress.toLowerCase();
+                if (mintLower === currentMintLower) {
+                  hasOurMint = true;
+                  break;
+                }
+              }
+            }
+          } catch (err) {
+            // Skip this balance if we can't process it
+            continue;
+          }
+        }
+      }
+      
+      // Only process if it's our mint - use the SAME logic as standard tracker
+      if (hasOurMint) {
+        // Convert to same format as standard tracker expects
+        const txData = {
+          transaction: {
+            message: tx.transaction.message,
+            signatures: tx.transaction.signatures || [signature]
+          },
+          meta: tx.meta
+        };
+        this.processTransaction(txData);
+      }
+      
+      // Remove from pending
+      this.pendingTransactions.delete(signature);
     } catch (error) {
-      // Silently handle errors
+      // Log errors occasionally
+      if (this.logsReceived % 100 === 0) {
+        console.error(`[WebSocket Ultra-Fast] ❌ Error fetching transaction:`, error.message);
+      }
     }
   }
 
-  // Process transaction to detect external buys
-  processTransactionForBuy(tx) {
+  // Process transaction to identify buys/sells (EXACT COPY FROM STANDARD TRACKER)
+  processTransaction(tx) {
     try {
+      if (!tx || !tx.transaction || !tx.transaction.message) {
+        return; // Silently skip invalid transactions
+      }
+
       const message = tx.transaction.message;
       const accountKeys = message.accountKeys || [];
+      const instructions = message.instructions || [];
       const meta = tx.meta;
-      
-      // Find mint address
+
+      // Find the mint address in account keys
       let mintAddress = null;
+      let mintInTransaction = false;
+      
+      // Check all account keys for our mint
       for (const key of accountKeys) {
-        const address = typeof key === 'string' ? key : (key.pubkey || key.toString());
-        if (address && this.currentMintAddress && 
-            address.toLowerCase() === this.currentMintAddress.toLowerCase()) {
-          mintAddress = address;
+        let addressStr;
+        try {
+          if (typeof key === 'string') {
+            addressStr = key;
+          } else if (key && typeof key === 'object') {
+            // Handle PublicKey object or object with pubkey property
+            if (key.pubkey) {
+              addressStr = typeof key.pubkey === 'string' ? key.pubkey : (key.pubkey.toString ? key.pubkey.toString() : String(key.pubkey));
+            } else {
+              addressStr = key.toString ? key.toString() : String(key);
+            }
+          } else {
+            addressStr = String(key);
+          }
+          
+          if (typeof addressStr !== 'string') {
+            addressStr = String(addressStr);
+          }
+          
+          if (addressStr && this.currentMintAddress && 
+              addressStr.toLowerCase() === this.currentMintAddress.toLowerCase()) {
+            mintAddress = addressStr;
+            mintInTransaction = true;
+            break;
+          }
+        } catch (err) {
+          continue;
+        }
+      }
+
+      // Also check in token balances
+      if (!mintInTransaction && meta && meta.preTokenBalances) {
+        for (const balance of meta.preTokenBalances) {
+          if (balance.mint && this.currentMintAddress &&
+              balance.mint.toLowerCase() === this.currentMintAddress.toLowerCase()) {
+            mintAddress = balance.mint;
+            mintInTransaction = true;
+            break;
+          }
+        }
+      }
+
+      // If mint not found in this transaction, skip
+      if (!mintInTransaction || !mintAddress) {
+        return;
+      }
+
+      // Find the wallet that initiated the transaction (first signer)
+      let walletAddressStr = null;
+      if (accountKeys.length > 0) {
+        try {
+          const firstKey = accountKeys[0];
+          if (typeof firstKey === 'string') {
+            walletAddressStr = firstKey;
+          } else if (firstKey && typeof firstKey === 'object') {
+            if (firstKey.pubkey) {
+              walletAddressStr = typeof firstKey.pubkey === 'string' ? firstKey.pubkey : (firstKey.pubkey.toString ? firstKey.pubkey.toString() : String(firstKey.pubkey));
+            } else {
+              walletAddressStr = firstKey.toString ? firstKey.toString() : String(firstKey);
+            }
+          } else {
+            walletAddressStr = String(firstKey);
+          }
+          
+          if (typeof walletAddressStr !== 'string') {
+            walletAddressStr = String(walletAddressStr);
+          }
+        } catch (err) {
+          return;
+        }
+      }
+
+      if (!walletAddressStr) {
+        return;
+      }
+
+      // Check if this is one of our wallets
+      const isOurWallet = this.ourWalletAddresses.has(walletAddressStr.toLowerCase());
+
+      // Determine buy/sell by analyzing token balance changes
+      let isBuy = false;
+      let isSell = false;
+      let solAmount = 0;
+      let tokenAmount = 0;
+
+      // Get wallet's token balance before and after
+      const preTokenBalance = this.getWalletTokenBalance(meta?.preTokenBalances, walletAddressStr, mintAddress);
+      const postTokenBalance = this.getWalletTokenBalance(meta?.postTokenBalances, walletAddressStr, mintAddress);
+      
+      // Get wallet's SOL balance before and after
+      let walletIndex = -1;
+      for (let i = 0; i < accountKeys.length; i++) {
+        const key = accountKeys[i];
+        let addr;
+        if (typeof key === 'string') {
+          addr = key;
+        } else if (key && typeof key === 'object') {
+          addr = key.pubkey ? (typeof key.pubkey === 'string' ? key.pubkey : (key.pubkey.toString ? key.pubkey.toString() : String(key.pubkey))) : (key.toString ? key.toString() : String(key));
+        } else {
+          addr = String(key);
+        }
+        if (addr && typeof addr === 'string' && addr.toLowerCase() === walletAddressStr.toLowerCase()) {
+          walletIndex = i;
           break;
         }
       }
-      
-      if (!mintAddress) return;
-      
-      // Find wallet address (first signer)
-      let walletAddress = null;
-      if (accountKeys.length > 0) {
-        const firstKey = accountKeys[0];
-        walletAddress = typeof firstKey === 'string' ? firstKey : (firstKey.pubkey || firstKey.toString());
-      }
-      
-      if (!walletAddress) return;
-      
-      // Check if external wallet
-      const isOurWallet = this.ourWalletAddresses.has(walletAddress.toLowerCase());
-      if (isOurWallet) return; // Skip our own wallets
-      
-      // Calculate SOL amount from balance change
-      let solAmount = 0;
-      if (meta.preBalances && meta.postBalances && accountKeys.length > 0) {
-        const walletIndex = 0; // First signer
-        const preBalance = meta.preBalances[walletIndex] || 0;
-        const postBalance = meta.postBalances[walletIndex] || 0;
-        const balanceChange = (preBalance - postBalance) / 1e9; // Convert lamports to SOL
+
+      let preSolBalance = 0;
+      let postSolBalance = 0;
+      if (walletIndex >= 0 && meta && meta.preBalances && meta.postBalances) {
+        preSolBalance = (meta.preBalances[walletIndex] || 0) / 1e9;
+        postSolBalance = (meta.postBalances[walletIndex] || 0) / 1e9;
         
-        // Estimate actual swap amount (subtract fees)
-        // Priority fees can be 0.0001-0.001 SOL, base fee ~0.000005 SOL
-        const estimatedFees = 0.0001; // Conservative estimate
-        solAmount = Math.max(0, balanceChange - estimatedFees);
+        const tokenBalanceChange = postTokenBalance - preTokenBalance;
+        const rawBalanceChange = Math.abs(preSolBalance - postSolBalance);
+        
+        const baseFee = 0.000005;
+        let estimatedFees = baseFee;
+        
+        if (rawBalanceChange > 0.01) {
+          const estimatedPriorityFee = 0.002;
+          const estimatedPumpFunFee = rawBalanceChange * 0.02;
+          estimatedFees = baseFee + estimatedPriorityFee + estimatedPumpFunFee;
+        } else if (rawBalanceChange > 0.001) {
+          const estimatedPriorityFee = 0.001;
+          const estimatedPumpFunFee = rawBalanceChange * 0.02;
+          estimatedFees = baseFee + estimatedPriorityFee + estimatedPumpFunFee;
+        }
+        
+        if (rawBalanceChange > estimatedFees) {
+          solAmount = rawBalanceChange - estimatedFees;
+        } else {
+          solAmount = rawBalanceChange;
+        }
+        
+        if (rawBalanceChange > 0.01 && solAmount > rawBalanceChange * 0.88) {
+          const alternativeAmount = rawBalanceChange * 0.88;
+          if (alternativeAmount < solAmount) {
+            solAmount = alternativeAmount;
+          }
+        }
       }
-      
-      if (solAmount > 0) {
-        // External buy detected!
-        this.handleExternalBuy(solAmount, walletAddress, Date.now());
+
+      // Determine buy vs sell based on token balance change
+      if (postTokenBalance > preTokenBalance) {
+        isBuy = true;
+        tokenAmount = postTokenBalance - preTokenBalance;
+      } else if (postTokenBalance < preTokenBalance) {
+        isSell = true;
+        tokenAmount = preTokenBalance - postTokenBalance;
       }
+
+      // Log the transaction
+      if (isBuy || isSell) {
+        const tradeType = isBuy ? 'BUY' : 'SELL';
+        const walletType = isOurWallet ? 'OUR WALLET' : 'EXTERNAL';
+        const timestamp = Date.now();
+        const simTag = this.simulationMode ? ' [SIM]' : '';
+        
+        console.log(`[WebSocket Ultra-Fast] 🔔 ${tradeType} detected${simTag}: ${walletType} | ${walletAddressStr.slice(0, 8)}... | ${solAmount.toFixed(4)} SOL`);
+        
+        // AGGREGATE EXTERNAL BUYS and trigger when cumulative threshold reached
+        if (isBuy && !isOurWallet && this.autoSellEnabled && solAmount > 0) {
+          this.handleExternalBuy(solAmount, walletAddressStr, timestamp);
+        }
+      }
+
     } catch (error) {
-      // Silently handle errors
+      console.error('[WebSocket Ultra-Fast] Error processing transaction:', error);
     }
+  }
+
+  // Get wallet's token balance for a specific mint (EXACT COPY FROM STANDARD TRACKER)
+  getWalletTokenBalance(balances, walletAddress, mintAddress) {
+    if (!balances || !Array.isArray(balances)) return 0;
+    
+    const walletAddressStr = typeof walletAddress === 'string' ? walletAddress : (walletAddress ? String(walletAddress) : '');
+    const mintAddressStr = typeof mintAddress === 'string' ? mintAddress : (mintAddress ? String(mintAddress) : '');
+    
+    for (const balance of balances) {
+      const owner = balance.owner;
+      const mint = balance.mint;
+      
+      const ownerStr = typeof owner === 'string' ? owner : (owner ? String(owner) : '');
+      const mintStr = typeof mint === 'string' ? mint : (mint ? String(mint) : '');
+      
+      if (mintStr && mintStr.toLowerCase() === mintAddressStr.toLowerCase() &&
+          ownerStr && ownerStr.toLowerCase() === walletAddressStr.toLowerCase()) {
+        const uiAmount = balance.uiTokenAmount?.uiAmount || balance.uiTokenAmount?.amount || 0;
+        return parseFloat(uiAmount) || 0;
+      }
+    }
+    
+    return 0;
   }
 
   // Handle external buy - aggregate and trigger sell
@@ -436,70 +734,64 @@ class UltraFastWebSocketTracker {
     }
   }
 
-  // TRIGGER INSTANT SELL - Pre-built transactions, just inject blockhash and send
-  async triggerInstantSell() {
+  // TRIGGER INSTANT SELL - Use rapid-sell.ts script (same as standard tracker for reliability)
+  // This ensures it reads current-run.json at execution time (when it's actually saved)
+  triggerInstantSell() {
     console.log('[WebSocket Ultra-Fast] 🚀🚀🚀 INSTANT SELL TRIGGERED! 🚀🚀🚀');
     console.log('[WebSocket Ultra-Fast] ⚡⚡⚡ Executing IMMEDIATELY (0ms delay)...');
     
-    if (!solanaConnection || !this.walletsToProcess || this.walletsToProcess.length === 0) {
-      console.error('[WebSocket Ultra-Fast] ❌ Cannot sell - missing connection or wallets');
-      return;
+    const scriptDir = path.join(__dirname, '..');
+    const mintAddress = this.currentMintAddress;
+    
+    // Determine which sell script to use based on autoSellType
+    // 'rapid-sell' = sell all wallets (AUTO_RAPID_SELL)
+    // 'rapid-sell-50-percent' = sell 50% of bundler wallets (AUTO_SELL_50_PERCENT)
+    const sellType = this.autoSellType || 'rapid-sell'; // Default to rapid-sell
+    
+    // Pass mint address, 0ms wait, and HIGH priority fee (threshold was met - need speed!)
+    const command = `cd "${scriptDir}" && npm run ${sellType} "${mintAddress || ''}" 0 high`;
+    
+    const sellTypeName = sellType === 'rapid-sell-50-percent' ? '50% of bundler wallets' : 'ALL wallets';
+    console.log(`[WebSocket Ultra-Fast] 📍 Selling mint: ${mintAddress}`);
+    console.log(`[WebSocket Ultra-Fast] 📍 Sell type: ${sellTypeName}`);
+    console.log(`[WebSocket Ultra-Fast] 📍 Priority: HIGH (threshold met - maximum speed!)`);
+    
+    // Execute IMMEDIATELY - non-blocking, fire and forget (don't wait for completion)
+    const childProcess = exec(command, { 
+      maxBuffer: 10 * 1024 * 1024,
+      cwd: scriptDir,
+      env: { ...process.env },
+      shell: true,
+      detached: true // Detach process for even faster execution
+    });
+    
+    // Unref to allow process to run independently (don't block)
+    if (childProcess.unref) {
+      childProcess.unref();
     }
     
-    // Get latest blockhash (ONLY RPC call allowed)
-    const { blockhash } = await solanaConnection.getLatestBlockhash('processed');
+    // Stream output in real-time for visibility
+    childProcess.stdout?.on('data', (data) => {
+      process.stdout.write(`[WebSocket Ultra-Fast Rapid Sell] ${data}`);
+    });
     
-    // For each wallet, get sell transaction from Jupiter and send immediately
-    // This is still fast because we're doing it in parallel
-    const sellPromises = this.walletsToProcess.map(async (wallet) => {
-      try {
-        // Get token account
-        const tokenAccounts = await solanaConnection.getTokenAccountsByOwner(wallet.publicKey, {
-          programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-        });
-        
-        // Find token account for our mint
-        const tokenAccount = tokenAccounts.value.find(acc => {
-          try {
-            const accountInfo = acc.account.data;
-            // Check if this is our mint (simplified check)
-            return true; // We'll let Jupiter handle routing
-          } catch {
-            return false;
-          }
-        });
-        
-        if (!tokenAccount) return;
-        
-        // Get balance
-        const balance = await solanaConnection.getTokenAccountBalance(tokenAccount.pubkey, 'processed');
-        if (!balance.value.amount || balance.value.amount === '0') return;
-        
-        // Get sell transaction from Jupiter (this is the only dynamic part)
-        // In a true ultra-fast system, we'd pre-build these too, but Jupiter requires current quote
-        // Use HIGH priority fee - threshold was met, need maximum speed!
-        const { getSellTxWithJupiter } = require('../utils/swapOnlyAmm');
-        const { PRIORITY_FEE_LAMPORTS_HIGH } = require('../constants/constants');
-        const sellTx = await getSellTxWithJupiter(wallet, new PublicKey(this.currentMintAddress), balance.value.amount, PRIORITY_FEE_LAMPORTS_HIGH);
-        
-        if (!sellTx) return;
-        
-        // Send IMMEDIATELY - skip preflight, no retries
-        await solanaConnection.sendRawTransaction(sellTx.serialize(), {
-          skipPreflight: true,
-          maxRetries: 0
-        });
-        
-        console.log(`[WebSocket Ultra-Fast] ✅ Sold from ${wallet.publicKey.toBase58().slice(0, 8)}...`);
-      } catch (error) {
-        // Silently handle errors - continue with other wallets
+    childProcess.stderr?.on('data', (data) => {
+      process.stderr.write(`[WebSocket Ultra-Fast Rapid Sell Error] ${data}`);
+    });
+    
+    childProcess.on('error', (error) => {
+      console.error('[WebSocket Ultra-Fast] ❌ Auto-sell execution error:', error);
+    });
+    
+    childProcess.on('exit', (code) => {
+      if (code === 0) {
+        console.log('[WebSocket Ultra-Fast] ✅✅✅ RAPID SELL COMPLETED SUCCESSFULLY!');
+      } else {
+        console.error(`[WebSocket Ultra-Fast] ⚠️ Rapid sell exited with code ${code}`);
       }
     });
     
-    // Fire all in parallel - don't await
-    Promise.all(sellPromises).catch(() => {});
-    
-    console.log('[WebSocket Ultra-Fast] ✅✅✅ INSTANT SELL COMPLETED!');
+    console.log('[WebSocket Ultra-Fast] ✅✅✅ INSTANT SELL PROCESS STARTED!');
   }
 
   attemptReconnect() {
