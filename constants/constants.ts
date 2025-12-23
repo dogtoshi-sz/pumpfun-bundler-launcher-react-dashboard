@@ -47,6 +47,15 @@ export const BUYER_WALLET = retrieveEnvVariable('BUYER_WALLET')
 export const BUYER_AMOUNT = Number(retrieveEnvVariable('BUYER_AMOUNT'))
 export const AUTO_RAPID_SELL = (process.env.AUTO_RAPID_SELL || 'true').toLowerCase() === 'true' // Default to true if not set
 export const AUTO_SELL_50_PERCENT = (process.env.AUTO_SELL_50_PERCENT || 'false').toLowerCase() === 'true' // Default to false if not set
+export const AUTO_SELL_STAGED = (process.env.AUTO_SELL_STAGED || 'false').toLowerCase() === 'true' // Default to false if not set
+
+// Staged sell configuration
+export const STAGED_SELL_STAGE1_THRESHOLD = Number(process.env.STAGED_SELL_STAGE1_THRESHOLD || '5') // SOL volume for stage 1
+export const STAGED_SELL_STAGE1_PERCENTAGE = Number(process.env.STAGED_SELL_STAGE1_PERCENTAGE || '30') // Percentage of wallets for stage 1
+export const STAGED_SELL_STAGE2_THRESHOLD = Number(process.env.STAGED_SELL_STAGE2_THRESHOLD || '10') // SOL volume for stage 2
+export const STAGED_SELL_STAGE2_PERCENTAGE = Number(process.env.STAGED_SELL_STAGE2_PERCENTAGE || '30') // Percentage of wallets for stage 2
+export const STAGED_SELL_STAGE3_THRESHOLD = Number(process.env.STAGED_SELL_STAGE3_THRESHOLD || '20') // SOL volume for stage 3
+export const STAGED_SELL_STAGE3_PERCENTAGE = Number(process.env.STAGED_SELL_STAGE3_PERCENTAGE || '40') // Percentage of wallets for stage 3 (remaining + DEV)
 export const AUTO_GATHER = (process.env.AUTO_GATHER || 'false').toLowerCase() === 'true' // Default to false if not set
 export const AUTO_COLLECT_FEES = (process.env.AUTO_COLLECT_FEES || 'false').toLowerCase() === 'true' // Default to false if not set
 

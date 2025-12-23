@@ -46,6 +46,15 @@ class UltraFastWebSocketTracker {
     this.rpcEndpoint = null;
     this.wsUrl = null;
     this.apiKey = null;
+    
+    // Staged sell tracking
+    this.stagedSellEnabled = false;
+    this.stagedSellStage1Threshold = 5.0;
+    this.stagedSellStage2Threshold = 10.0;
+    this.stagedSellStage3Threshold = 20.0;
+    this.stagedSellStage1Triggered = false;
+    this.stagedSellStage2Triggered = false;
+    this.stagedSellStage3Triggered = false;
   }
 
   // Initialize with API key from .env
@@ -163,7 +172,7 @@ class UltraFastWebSocketTracker {
   }
 
   // Start tracking
-  startTracking(mintAddress, ourWallets, autoSell = false, threshold = 0.1, externalBuyThreshold = 1.0, externalBuyWindow = 60000, simulationMode = false, autoSellType = 'rapid-sell') {
+  startTracking(mintAddress, ourWallets, autoSell = false, threshold = 0.1, externalBuyThreshold = 1.0, externalBuyWindow = 60000, simulationMode = false, autoSellType = 'rapid-sell', stagedSellConfig = null) {
     console.log('[WebSocket Ultra-Fast] 🔧 startTracking called');
     console.log(`[WebSocket Ultra-Fast] 📍 Mint: ${mintAddress}`);
     console.log(`[WebSocket Ultra-Fast] 📍 Wallets: ${ourWallets.length} addresses`);
@@ -183,6 +192,20 @@ class UltraFastWebSocketTracker {
     this.simulationMode = simulationMode;
     this.autoSellType = autoSellType;
     
+    // Configure staged sell if enabled
+    if (stagedSellConfig && stagedSellConfig.enabled) {
+      this.stagedSellEnabled = true;
+      this.stagedSellStage1Threshold = stagedSellConfig.stage1Threshold || 5.0;
+      this.stagedSellStage2Threshold = stagedSellConfig.stage2Threshold || 10.0;
+      this.stagedSellStage3Threshold = stagedSellConfig.stage3Threshold || 20.0;
+      console.log('[WebSocket Ultra-Fast] 🎯 Staged sell ENABLED');
+      console.log(`[WebSocket Ultra-Fast]   Stage 1: ${this.stagedSellStage1Threshold} SOL (30% of wallets)`);
+      console.log(`[WebSocket Ultra-Fast]   Stage 2: ${this.stagedSellStage2Threshold} SOL (30% of wallets)`);
+      console.log(`[WebSocket Ultra-Fast]   Stage 3: ${this.stagedSellStage3Threshold} SOL (40% + DEV wallet)`);
+    } else {
+      this.stagedSellEnabled = false;
+    }
+    
     // Pre-build sell transactions
     this.prebuildSellTransactions(mintAddress, ourWallets);
     
@@ -191,9 +214,17 @@ class UltraFastWebSocketTracker {
     this.externalBuyStartTime = null;
     this.externalBuyTransactions = [];
     this.sellTriggered = false;
+    this.stagedSellStage1Triggered = false;
+    this.stagedSellStage2Triggered = false;
+    this.stagedSellStage3Triggered = false;
     
     console.log('[WebSocket Ultra-Fast] Starting tracking for mint:', mintAddress);
     console.log('[WebSocket Ultra-Fast] Auto-sell enabled:', autoSell);
+    if (this.stagedSellEnabled) {
+      console.log('[WebSocket Ultra-Fast] Sell type: STAGED SELL');
+    } else {
+      console.log('[WebSocket Ultra-Fast] Sell type:', autoSellType);
+    }
     console.log('[WebSocket Ultra-Fast] External buy threshold:', externalBuyThreshold, 'SOL (cumulative)');
     const windowSeconds = externalBuyWindow && !isNaN(externalBuyWindow) ? (externalBuyWindow / 1000) : 60;
     console.log('[WebSocket Ultra-Fast] Aggregation window:', windowSeconds, 's');
@@ -696,6 +727,12 @@ class UltraFastWebSocketTracker {
       this.externalBuyStartTime = null;
       this.externalBuyTransactions = [];
       this.sellTriggered = false;
+      // Reset staged sell triggers when window expires
+      if (this.stagedSellEnabled) {
+        this.stagedSellStage1Triggered = false;
+        this.stagedSellStage2Triggered = false;
+        this.stagedSellStage3Triggered = false;
+      }
     }
     
     // Start new window if needed
@@ -704,6 +741,11 @@ class UltraFastWebSocketTracker {
       this.externalBuyVolume = 0;
       this.externalBuyTransactions = [];
       this.sellTriggered = false;
+      if (this.stagedSellEnabled) {
+        this.stagedSellStage1Triggered = false;
+        this.stagedSellStage2Triggered = false;
+        this.stagedSellStage3Triggered = false;
+      }
     }
     
     // Add to cumulative volume
@@ -715,23 +757,130 @@ class UltraFastWebSocketTracker {
     });
     
     const simTag = this.simulationMode ? ' [SIM]' : '';
-    console.log(`[WebSocket Ultra-Fast] 💰 External buy${simTag}: +${solAmount.toFixed(4)} SOL | Total: ${this.externalBuyVolume.toFixed(4)}/${this.externalBuyThreshold.toFixed(4)} SOL`);
     
-    // Check threshold - TRIGGER IMMEDIATELY
-    if (this.externalBuyVolume >= this.externalBuyThreshold && !this.sellTriggered) {
-      const timeToTrigger = Date.now() - this.externalBuyStartTime;
-      console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL in external buys`);
-      console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING INSTANT SELL${simTag} (${timeToTrigger}ms after first buy)...`);
+    // Check staged sell thresholds first (if enabled)
+    if (this.stagedSellEnabled) {
+      // Stage 1: 30% at 5 SOL
+      if (this.externalBuyVolume >= this.stagedSellStage1Threshold && !this.stagedSellStage1Triggered) {
+        const timeToTrigger = Date.now() - this.externalBuyStartTime;
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 1 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL`);
+        console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING STAGE 1 SELL${simTag} (${timeToTrigger}ms after first buy)...`);
+        this.stagedSellStage1Triggered = true;
+        if (!this.simulationMode) {
+          this.triggerStagedSell('stage1').catch(err => {
+            console.error(`[WebSocket Ultra-Fast] ❌ Error triggering stage 1 sell:`, err);
+          });
+        }
+      }
+      // Stage 2: 30% at 10 SOL
+      else if (this.externalBuyVolume >= this.stagedSellStage2Threshold && !this.stagedSellStage2Triggered) {
+        const timeToTrigger = Date.now() - this.externalBuyStartTime;
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 2 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL`);
+        console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING STAGE 2 SELL${simTag} (${timeToTrigger}ms after first buy)...`);
+        this.stagedSellStage2Triggered = true;
+        if (!this.simulationMode) {
+          this.triggerStagedSell('stage2').catch(err => {
+            console.error(`[WebSocket Ultra-Fast] ❌ Error triggering stage 2 sell:`, err);
+          });
+        }
+      }
+      // Stage 3: 40% + DEV at 20 SOL
+      else if (this.externalBuyVolume >= this.stagedSellStage3Threshold && !this.stagedSellStage3Triggered) {
+        const timeToTrigger = Date.now() - this.externalBuyStartTime;
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 3 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL`);
+        console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING STAGE 3 SELL${simTag} (${timeToTrigger}ms after first buy)...`);
+        console.log(`[WebSocket Ultra-Fast] ⚡ DEV wallet will be sold LAST in this stage`);
+        this.stagedSellStage3Triggered = true;
+        if (!this.simulationMode) {
+          this.triggerStagedSell('stage3').catch(err => {
+            console.error(`[WebSocket Ultra-Fast] ❌ Error triggering stage 3 sell:`, err);
+          });
+        }
+      } else {
+        // Show progress for staged sell
+        const nextThreshold = !this.stagedSellStage1Triggered ? this.stagedSellStage1Threshold :
+                             !this.stagedSellStage2Triggered ? this.stagedSellStage2Threshold :
+                             !this.stagedSellStage3Triggered ? this.stagedSellStage3Threshold : null;
+        if (nextThreshold) {
+          console.log(`[WebSocket Ultra-Fast] 💰 External buy${simTag}: +${solAmount.toFixed(4)} SOL | Total: ${this.externalBuyVolume.toFixed(4)}/${nextThreshold.toFixed(4)} SOL (staged sell)`);
+        }
+      }
+    } else {
+      // Standard threshold check (non-staged)
+      console.log(`[WebSocket Ultra-Fast] 💰 External buy${simTag}: +${solAmount.toFixed(4)} SOL | Total: ${this.externalBuyVolume.toFixed(4)}/${this.externalBuyThreshold.toFixed(4)} SOL`);
       
-      this.sellTriggered = true;
-      
-      if (!this.simulationMode) {
-        // FIRE IMMEDIATELY - non-blocking
-        this.triggerInstantSell().catch(err => {
-          console.error(`[WebSocket Ultra-Fast] ❌ Error triggering sell:`, err);
-        });
+      if (this.externalBuyVolume >= this.externalBuyThreshold && !this.sellTriggered) {
+        const timeToTrigger = Date.now() - this.externalBuyStartTime;
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL in external buys`);
+        console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING INSTANT SELL${simTag} (${timeToTrigger}ms after first buy)...`);
+        
+        this.sellTriggered = true;
+        
+        if (!this.simulationMode) {
+          // FIRE IMMEDIATELY - non-blocking
+          this.triggerInstantSell().catch(err => {
+            console.error(`[WebSocket Ultra-Fast] ❌ Error triggering sell:`, err);
+          });
+        }
       }
     }
+  }
+
+  // TRIGGER STAGED SELL - Execute specific stage
+  triggerStagedSell(stage) {
+    console.log(`[WebSocket Ultra-Fast] 🚀🚀🚀 STAGED SELL ${stage.toUpperCase()} TRIGGERED! 🚀🚀🚀`);
+    console.log('[WebSocket Ultra-Fast] ⚡⚡⚡ Executing IMMEDIATELY (0ms delay)...');
+    
+    const scriptDir = path.join(__dirname, '..');
+    const mintAddress = this.currentMintAddress;
+    
+    // Pass mint address, stage, and HIGH priority fee
+    const command = `cd "${scriptDir}" && npm run rapid-sell-staged "${mintAddress || ''}" ${stage} high`;
+    
+    const stageNames = {
+      'stage1': 'Stage 1 (30% at 5 SOL)',
+      'stage2': 'Stage 2 (30% at 10 SOL)',
+      'stage3': 'Stage 3 (40% + DEV at 20 SOL)'
+    };
+    
+    console.log(`[WebSocket Ultra-Fast] 📍 Selling mint: ${mintAddress}`);
+    console.log(`[WebSocket Ultra-Fast] 📍 Stage: ${stageNames[stage] || stage}`);
+    console.log(`[WebSocket Ultra-Fast] 📍 Priority: HIGH (threshold met - maximum speed!)`);
+    
+    // Execute IMMEDIATELY - non-blocking, fire and forget
+    const childProcess = exec(command, { 
+      maxBuffer: 10 * 1024 * 1024,
+      cwd: scriptDir,
+      env: { ...process.env },
+      shell: true,
+      detached: true
+    });
+    
+    if (childProcess.unref) {
+      childProcess.unref();
+    }
+    
+    childProcess.stdout?.on('data', (data) => {
+      process.stdout.write(`[WebSocket Ultra-Fast Staged Sell ${stage}] ${data}`);
+    });
+    
+    childProcess.stderr?.on('data', (data) => {
+      process.stderr.write(`[WebSocket Ultra-Fast Staged Sell Error] ${data}`);
+    });
+    
+    childProcess.on('error', (error) => {
+      console.error(`[WebSocket Ultra-Fast] ❌ Staged sell ${stage} execution error:`, error);
+    });
+    
+    childProcess.on('exit', (code) => {
+      if (code === 0) {
+        console.log(`[WebSocket Ultra-Fast] ✅✅✅ STAGED SELL ${stage.toUpperCase()} COMPLETED SUCCESSFULLY!`);
+      } else {
+        console.error(`[WebSocket Ultra-Fast] ⚠️ Staged sell ${stage} exited with code ${code}`);
+      }
+    });
+    
+    console.log(`[WebSocket Ultra-Fast] ✅✅✅ STAGED SELL ${stage.toUpperCase()} PROCESS STARTED!`);
   }
 
   // TRIGGER INSTANT SELL - Use rapid-sell.ts script (same as standard tracker for reliability)

@@ -12,6 +12,7 @@
     "rapid-sell-bundled": "ts-node rapid-sell-bundled.ts",
     "rapid-sell-50-percent": "ts-node rapid-sell-50-percent.ts",
     "rapid-sell-remaining": "ts-node rapid-sell-remaining.ts",
+    "rapid-sell-staged": "ts-node rapid-sell-staged.ts",
     "test-bundled-sell": "ts-node test-bundled-sell.ts",
     "check-bundle": "ts-node check-bundle-status.ts",
     "manual-gather": "node manual-gather.js",
