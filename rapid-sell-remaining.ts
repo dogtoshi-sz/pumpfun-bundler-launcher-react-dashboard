@@ -6,7 +6,7 @@ import { Connection, Keypair, VersionedTransaction, PublicKey } from "@solana/we
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk"
 import { getSellTxWithJupiter } from "./utils/swapOnlyAmm"
-import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY } from "./constants"
+import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY, PRIORITY_FEE_LAMPORTS_MEDIUM } from "./constants"
 import { collectCreatorFees } from "./collect-fees"
 
 const connection = new Connection(RPC_ENDPOINT, {
@@ -170,8 +170,8 @@ const rapidSellRemaining = async (mintAddress?: string, initialWaitMs: number = 
           continue
         }
         
-        // Get sell transaction from Jupiter (100% of current balance)
-        const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance)
+        // Get sell transaction from Jupiter (100% of current balance) with MEDIUM priority fee
+        const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance, PRIORITY_FEE_LAMPORTS_MEDIUM)
         
         if (!sellTx) {
           if (attempts % 30 === 0) {

@@ -6,7 +6,7 @@ import { Connection, Keypair, VersionedTransaction, PublicKey } from "@solana/we
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk"
 import { getSellTxWithJupiter } from "./utils/swapOnlyAmm"
-import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY, SWAP_AMOUNTS, BUYER_AMOUNT } from "./constants"
+import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY, SWAP_AMOUNTS, BUYER_AMOUNT, PRIORITY_FEE_LAMPORTS_MEDIUM } from "./constants"
 import { collectCreatorFees } from "./collect-fees"
 
 const connection = new Connection(RPC_ENDPOINT, {
@@ -65,8 +65,8 @@ const rapidSell50Percent = async (mintAddress?: string, initialWaitMs: number = 
   console.log(`📦 Total bundler wallets: ${filteredBundlerWallets.length}`)
   
   // Get buy amounts for each bundler wallet
-  // SWAP_AMOUNTS is comma-separated list of amounts (bundler wallets only, excludes dev)
-  const swapAmounts = SWAP_AMOUNTS ? SWAP_AMOUNTS.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n)) : []
+  // SWAP_AMOUNTS is already a number[] array (bundler wallets only, excludes dev)
+  const swapAmounts = SWAP_AMOUNTS && SWAP_AMOUNTS.length > 0 ? SWAP_AMOUNTS : []
   
   // Create array of wallets with their buy amounts
   const walletsWithAmounts = filteredBundlerWallets.map((kp, index) => ({
@@ -244,8 +244,8 @@ const rapidSell50Percent = async (mintAddress?: string, initialWaitMs: number = 
           continue
         }
         
-        // Get sell transaction from Jupiter (100% of current balance)
-        const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance)
+        // Get sell transaction from Jupiter (100% of current balance) with MEDIUM priority fee
+        const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance, PRIORITY_FEE_LAMPORTS_MEDIUM)
         
         if (!sellTx) {
           if (attempts % 30 === 0) {

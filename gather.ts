@@ -29,21 +29,45 @@ const main = async () => {
     try {
       const currentRunData = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'))
       
-      // NEW: Use actual wallet keys from current-run.json if available (more accurate)
-      if (currentRunData.walletKeys && Array.isArray(currentRunData.walletKeys) && currentRunData.walletKeys.length > 0) {
-        const launchStatus = currentRunData.launchStatus || (currentRunData.mintAddress ? 'SUCCESS' : 'UNKNOWN')
-        console.log(`✅ Found ${currentRunData.walletKeys.length} wallet keys in current-run.json`)
-        console.log(`   Mint: ${currentRunData.mintAddress || 'N/A (launch failed)'}`)
-        console.log(`   Launch Status: ${launchStatus}`)
-        console.log(`   Timestamp: ${new Date(currentRunData.timestamp).toLocaleString()}`)
-        
-        if (launchStatus === 'FAILED') {
-          console.log(`   ⚠️  This was a FAILED launch - no tokens to sell, just recovering SOL`)
-        }
-        
-        // Use the exact wallets from this run
+      // NEW: Prioritize bundle wallets if available, fallback to walletKeys
+      const launchStatus = currentRunData.launchStatus || (currentRunData.mintAddress ? 'SUCCESS' : 'UNKNOWN')
+      console.log(`✅ Found wallet data in current-run.json`)
+      console.log(`   Mint: ${currentRunData.mintAddress || 'N/A (launch failed)'}`)
+      console.log(`   Launch Status: ${launchStatus}`)
+      console.log(`   Timestamp: ${new Date(currentRunData.timestamp).toLocaleString()}`)
+      
+      if (launchStatus === 'FAILED') {
+        console.log(`   ⚠️  This was a FAILED launch - no tokens to sell, just recovering SOL`)
+      }
+      
+      // PRIORITY: Use bundleWalletKeys + holderWalletKeys + creatorDevWalletKey if available (new format)
+      if (currentRunData.bundleWalletKeys && Array.isArray(currentRunData.bundleWalletKeys) && currentRunData.bundleWalletKeys.length > 0) {
+        const bundleWallets = currentRunData.bundleWalletKeys.map((kp: string) => Keypair.fromSecretKey(base58.decode(kp)))
+        walletsToProcess.push(...bundleWallets)
+        console.log(`   ✅ Added ${bundleWallets.length} BUNDLE wallets (priority - these have the most SOL/tokens)`)
+      }
+      
+      if (currentRunData.holderWalletKeys && Array.isArray(currentRunData.holderWalletKeys) && currentRunData.holderWalletKeys.length > 0) {
+        const holderWallets = currentRunData.holderWalletKeys.map((kp: string) => Keypair.fromSecretKey(base58.decode(kp)))
+        walletsToProcess.push(...holderWallets)
+        console.log(`   ✅ Added ${holderWallets.length} HOLDER wallets`)
+      }
+      
+      // Add CREATOR/DEV wallet (auto-created or from BUYER_WALLET env)
+      if (currentRunData.creatorDevWalletKey) {
+        const creatorDevWallet = Keypair.fromSecretKey(base58.decode(currentRunData.creatorDevWalletKey))
+        walletsToProcess.push(creatorDevWallet)
+        console.log(`   ✅ Added CREATOR/DEV wallet from current-run.json (creates tokens, buys, collects fees)`)
+      }
+      
+      // FALLBACK: Use walletKeys if bundleWalletKeys/holderWalletKeys not available (old format)
+      if (walletsToProcess.length === 0 && currentRunData.walletKeys && Array.isArray(currentRunData.walletKeys) && currentRunData.walletKeys.length > 0) {
         walletsToProcess = currentRunData.walletKeys.map((kp: string) => Keypair.fromSecretKey(base58.decode(kp)))
-        console.log(`   Using EXACT wallets from current run (no unnecessary RPC calls for old wallets)`)
+        console.log(`   ⚠️  Using walletKeys (old format - includes all wallets)`)
+      }
+      
+      if (walletsToProcess.length > 0) {
+        console.log(`   📦 Total wallets to process: ${walletsToProcess.length}`)
       } else {
         // FALLBACK: Old format - use count and slice from data.json
         console.log(`⚠️  Old format current-run.json detected (no walletKeys). Using count-based approach.`)
@@ -104,19 +128,40 @@ const main = async () => {
     }
   }
   
-  // Add DEV buy wallet (this is separate from bundler wallets)
-  const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
-  
-  // Check if DEV wallet is already in the list (shouldn't be, but be safe)
-  const devWalletAlreadyIncluded = walletsToProcess.some(kp => kp.publicKey.equals(buyerKp.publicKey))
-  
-  // In a 50% sell scenario, DEV wallet should be gathered (it will be sold in remaining wallets sell)
-  // But we can gather SOL from it now if it has any
-  if (!devWalletAlreadyIncluded) {
-    walletsToProcess.push(buyerKp)
-    console.log(`Added DEV buy wallet: ${buyerKp.publicKey.toBase58()}`)
+  // Add DEV buy wallet (FALLBACK: only if not already included from current-run.json)
+  // PRIORITY: creatorDevWalletKey from current-run.json (already added above if exists)
+  // FALLBACK: BUYER_WALLET from .env (for cases where current-run.json doesn't have creatorDevWalletKey)
+  if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
+    try {
+      const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET));
+      // Check if DEV wallet is already in the list (by public key)
+      const devWalletAlreadyIncluded = walletsToProcess.some(kp => kp.publicKey.equals(buyerKp.publicKey));
+      
+      if (!devWalletAlreadyIncluded) {
+        walletsToProcess.push(buyerKp);
+        console.log(`   ✅ Added DEV buy wallet from BUYER_WALLET env var: ${buyerKp.publicKey.toBase58()}`);
+      } else {
+        console.log(`   ℹ️  DEV wallet already included from current-run.json: ${buyerKp.publicKey.toBase58()}`);
+      }
+    } catch (error: any) {
+      console.log(`   ⚠️  Error adding BUYER_WALLET: ${error.message}`);
+    }
   } else {
-    console.log(`DEV buy wallet already in list: ${buyerKp.publicKey.toBase58()}`)
+    // Check if we already have a DEV wallet from current-run.json
+    const hasDevWallet = walletsToProcess.length > 0 && 
+      (currentRunPath && fs.existsSync(currentRunPath) ? 
+        (() => {
+          try {
+            const currentRunData = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+            return !!currentRunData.creatorDevWalletKey;
+          } catch {
+            return false;
+          }
+        })() : false);
+    
+    if (!hasDevWallet) {
+      console.log(`   ⚠️  No DEV wallet found (neither in current-run.json nor BUYER_WALLET env var)`);
+    }
   }
 
   const bundlerWalletCount = walletsToProcess.length - (devWalletAlreadyIncluded ? 0 : 1)
@@ -129,20 +174,53 @@ const main = async () => {
   console.log(`   - DEV buy wallet: 1`)
   console.log(`   - Total wallets to process: ${walletsToProcess.length}`)
   
-  // Check main wallet balance to ensure it can pay fees
-  const mainWalletBalance = await connection.getBalance(mainKp.publicKey)
-  console.log(`   - Main wallet balance: ${(mainWalletBalance / 1e9).toFixed(6)} SOL`)
-  if (mainWalletBalance < 0.01 * 1e9) {
-    console.log(`   ⚠️  WARNING: Main wallet has low balance! May not be able to pay all transaction fees.`)
+  // Check funding wallet balance (PRIVATE_KEY - this is where all SOL/tokens will be gathered to)
+  const fundingWalletBalance = await connection.getBalance(mainKp.publicKey)
+  console.log(`   - Funding wallet (PRIVATE_KEY) balance: ${(fundingWalletBalance / 1e9).toFixed(6)} SOL`)
+  console.log(`   - All SOL and tokens will be gathered TO this funding wallet`)
+  if (fundingWalletBalance < 0.01 * 1e9) {
+    console.log(`   ⚠️  WARNING: Funding wallet has low balance! May not be able to pay all transaction fees.`)
   }
   
   console.log(`\n🚀 Processing ${walletsToProcess.length} wallets in PARALLEL (max 5 concurrent)...`)
+  console.log(`💰 All funds will be gathered TO: ${mainKp.publicKey.toBase58()} (Funding Wallet - PRIVATE_KEY)`)
 
   // Process a single wallet
   const processWallet = async (kp: Keypair, index: number, total: number) => {
     const isDevWallet = kp.publicKey.equals(buyerKp.publicKey)
-    const bundlerIndex = isDevWallet ? -1 : index
-    const walletLabel = isDevWallet ? "DEV Buy Wallet" : `Bundler Wallet ${bundlerIndex}`
+    
+    // Determine wallet type for better labeling
+    let walletType = "Unknown"
+    let walletIndex = index
+    if (isDevWallet) {
+      walletType = "DEV"
+      walletIndex = -1
+    } else {
+      // Check if this is a bundle wallet or holder wallet
+      const currentRunPath = path.join(process.cwd(), 'keys', 'current-run.json')
+      if (fs.existsSync(currentRunPath)) {
+        try {
+          const currentRunData = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'))
+          const kpKey = base58.encode(kp.secretKey)
+          
+          if (currentRunData.bundleWalletKeys && currentRunData.bundleWalletKeys.includes(kpKey)) {
+            walletType = "Bundle"
+            walletIndex = currentRunData.bundleWalletKeys.indexOf(kpKey) + 1
+          } else if (currentRunData.holderWalletKeys && currentRunData.holderWalletKeys.includes(kpKey)) {
+            walletType = "Holder"
+            walletIndex = currentRunData.holderWalletKeys.indexOf(kpKey) + 1
+          } else {
+            walletType = "Bundler" // Old format fallback
+          }
+        } catch (e) {
+          walletType = "Bundler" // Fallback
+        }
+      } else {
+        walletType = "Bundler" // Fallback
+      }
+    }
+    
+    const walletLabel = isDevWallet ? "DEV Buy Wallet" : `${walletType} Wallet ${walletIndex}`
     
     try {
       console.log(`\n[${index + 1}/${total}] 🚀 Starting ${walletLabel}: ${kp.publicKey.toBase58()}`)
@@ -170,98 +248,46 @@ const main = async () => {
         console.log(`[${index + 1}/${total}]   No token accounts found`)
       }
 
-      // Process each token account - SELL FIRST (parallel selling)
-      const sellPromises = accounts.map(async (account, j) => {
-        const tokenBalance = (await connection.getTokenAccountBalance(account.pubkey)).value
-
-        if (tokenBalance.uiAmount && tokenBalance.uiAmount > 0) {
-          let sellAttempts = 0
-          const maxSellAttempts = 20 // Increased from 3 to 20 for network resilience
-          
-          while (sellAttempts < maxSellAttempts) {
-            try {
-              console.log(`[${index + 1}/${total}]   💰 Selling token: ${account.accountInfo.mint.toBase58()} (${tokenBalance.uiAmount} tokens)`)
-              const sellTx = await getSellTxWithJupiter(kp, account.accountInfo.mint, tokenBalance.amount)
-              
-              if (sellTx == null) {
-                throw new Error("Error getting sell tx from Jupiter")
-              }
-              
-              const latestBlockhashForSell = await solanaConnection.getLatestBlockhash()
-              const txSellSig = await execute(sellTx, latestBlockhashForSell, false)
-              const tokenSellTx = txSellSig ? `https://solscan.io/tx/${txSellSig}` : ''
-              console.log(`[${index + 1}/${total}]   ✅✅✅ Sold token: ${tokenSellTx}`)
-              return { success: true, account }
-            } catch (error: any) {
-              sellAttempts++
-              const errorMsg = error.message || String(error)
-              
-              if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
-                const backoffDelay = Math.min(1000 * Math.pow(1.5, Math.floor(sellAttempts / 5)), 5000)
-                console.log(`[${index + 1}/${total}]   ⚠️ Rate limited, waiting ${backoffDelay}ms... (attempt ${sellAttempts}/${maxSellAttempts})`)
-                await sleep(backoffDelay)
-              } else if (errorMsg.includes('fetch failed') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ENOTFOUND')) {
-                // Network error - retry with exponential backoff
-                const backoffDelay = Math.min(1000 * Math.pow(1.3, Math.floor(sellAttempts / 3)), 3000)
-                if (sellAttempts % 3 === 0) {
-                  console.log(`[${index + 1}/${total}]   ⚠️ Network error connecting to Jupiter API (attempt ${sellAttempts}/${maxSellAttempts}) - retrying in ${backoffDelay}ms...`)
-                }
-                await sleep(backoffDelay)
-              } else {
-                // Other errors - shorter delay
-                if (sellAttempts % 5 === 0) {
-                  console.log(`[${index + 1}/${total}]   ⚠️ Sell attempt ${sellAttempts}/${maxSellAttempts} failed: ${errorMsg.slice(0, 100)}`)
-                }
-                await sleep(500)
-              }
-              
-              if (sellAttempts >= maxSellAttempts) {
-                console.log(`[${index + 1}/${total}]   ❌ Failed to sell token after ${maxSellAttempts} attempts`)
-                console.log(`[${index + 1}/${total}]   ⚠️  This might be a network connectivity issue or Jupiter API is down`)
-                return { success: false, account }
-              }
-            }
-          }
-        }
-        return { success: false, account }
-      })
-
-      // Wait for all sells to complete (parallel)
-      await Promise.all(sellPromises)
-      // Removed delay - processing in parallel now
-
-      // Now transfer tokens and close accounts (sequential to avoid conflicts)
+      // TRANSFER tokens directly to master wallet (don't sell them)
+      // Process each token account - TRANSFER tokens to master wallet
       for (let j = 0; j < accounts.length; j++) {
-        // NEVER close token accounts for DEV wallet
-        if (isDevWallet) {
-          console.log(`[${index + 1}/${total}]   ⚠️  Skipping token account closure for DEV wallet`)
-          continue
-        }
+        const account = accounts[j]
+        const tokenBalance = (await connection.getTokenAccountBalance(account.pubkey)).value
         
-        const baseAta = await getAssociatedTokenAddress(accounts[j].accountInfo.mint, mainKp.publicKey)
-        const tokenAccount = accounts[j].pubkey
-        const tokenBalanceAfterSell = (await connection.getTokenAccountBalance(accounts[j].pubkey)).value
-        
-        const tokenIxs: TransactionInstruction[] = []
-        tokenIxs.push(createAssociatedTokenAccountIdempotentInstruction(mainKp.publicKey, baseAta, mainKp.publicKey, accounts[j].accountInfo.mint))
-        
-        if (tokenBalanceAfterSell.uiAmount && tokenBalanceAfterSell.uiAmount > 0) {
-          tokenIxs.push(createTransferCheckedInstruction(
-            tokenAccount, 
-            accounts[j].accountInfo.mint, 
-            baseAta, 
-            kp.publicKey, 
-            BigInt(tokenBalanceAfterSell.amount), 
-            tokenBalanceAfterSell.decimals
-          ))
-        }
-        tokenIxs.push(createCloseAccountInstruction(tokenAccount, mainKp.publicKey, kp.publicKey))
-
-        if (tokenIxs.length > 1) {
+        if (tokenBalance.uiAmount && tokenBalance.uiAmount > 0) {
           try {
+            console.log(`[${index + 1}/${total}]   💰 Transferring token: ${account.accountInfo.mint.toBase58()} (${tokenBalance.uiAmount} tokens) to funding wallet`)
+            
+            // NEVER close token accounts for DEV wallet (keep them for future use)
+            const shouldCloseAccount = !isDevWallet
+            
+            const baseAta = await getAssociatedTokenAddress(account.accountInfo.mint, mainKp.publicKey)
+            const tokenAccount = account.pubkey
+            
+            const tokenIxs: TransactionInstruction[] = []
+            // Create ATA for funding wallet (PRIVATE_KEY) if it doesn't exist
+            tokenIxs.push(createAssociatedTokenAccountIdempotentInstruction(mainKp.publicKey, baseAta, mainKp.publicKey, account.accountInfo.mint))
+            
+            // Transfer tokens to funding wallet (PRIVATE_KEY)
+            tokenIxs.push(createTransferCheckedInstruction(
+              tokenAccount, 
+              account.accountInfo.mint, 
+              baseAta, 
+              kp.publicKey, 
+              BigInt(tokenBalance.amount), 
+              tokenBalance.decimals
+            ))
+            
+            // Close the token account (unless it's DEV wallet)
+            if (shouldCloseAccount) {
+              tokenIxs.push(createCloseAccountInstruction(tokenAccount, mainKp.publicKey, kp.publicKey))
+            } else {
+              console.log(`[${index + 1}/${total}]   ⚠️  Keeping token account open for DEV wallet`)
+            }
+
             const tx = new Transaction().add(
-              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 220_000 }),
               ComputeBudgetProgram.setComputeUnitLimit({ units: 350_000 }),
+              // No priority fee instruction - uses network default (cheapest)
               ...tokenIxs,
             )
             tx.feePayer = mainKp.publicKey
@@ -271,13 +297,14 @@ const main = async () => {
               commitment: "confirmed",
               skipPreflight: false
             })
-            console.log(`[${index + 1}/${total}]   ✅ Transferred tokens and closed account: https://solscan.io/tx/${sig}`)
+            console.log(`[${index + 1}/${total}]   ✅✅✅ Transferred ${tokenBalance.uiAmount} tokens to funding wallet: https://solscan.io/tx/${sig}`)
           } catch (error: any) {
-            if (error.message?.includes('429') || error.message?.includes('Too Many Requests')) {
+            const errorMsg = error.message || String(error)
+            if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
               console.log(`[${index + 1}/${total}]   ⚠️ Rate limited, waiting 2 seconds...`)
               await sleep(2000)
             } else {
-              console.log(`[${index + 1}/${total}]   ⚠️ Error transferring tokens: ${error.message}`)
+              console.log(`[${index + 1}/${total}]   ⚠️ Error transferring tokens: ${errorMsg}`)
             }
           }
         }
@@ -315,8 +342,8 @@ const main = async () => {
             console.log(`[${index + 1}/${total}]   💸 Attempting SOL transfer (${transferAttempts}/${maxTransferAttempts}): ${(transferAmount / 1e9).toFixed(6)} SOL`)
             
             const solTx = new Transaction().add(
-              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 220_000 }),
               ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+              // No priority fee instruction - uses network default (cheapest)
               SystemProgram.transfer({
                 fromPubkey: kp.publicKey,
                 toPubkey: mainKp.publicKey,

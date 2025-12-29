@@ -165,6 +165,7 @@ keys/*
 **/creator-wallets.json
 **/mixing-wallets.json
 **/pump-addresses.json
+show-keys.js
 
 # API keys and credentials
 **/credentials.json

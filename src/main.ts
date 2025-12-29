@@ -19,7 +19,8 @@ let sdk = new PumpFunSDK(new AnchorProvider(connection, new NodeWallet(new Keypa
 let kps: Keypair[] = []
 
 // create token instructions
-export const createTokenTx = async (mainKp: Keypair, mintKp: Keypair) => {
+// creatorKp should be BUYER_WALLET (wallet that creates tokens, buys as DEV, and collects fees)
+export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp: Keypair) => {
   const tokenInfo = {
     name: TOKEN_NAME,
     symbol: TOKEN_SYMBOL,
@@ -34,7 +35,7 @@ export const createTokenTx = async (mainKp: Keypair, mintKp: Keypair) => {
   let tokenMetadata = await sdk.createTokenMetadata(tokenInfo) as any;
 
   let createIx = await sdk.getCreateInstructions(
-    mainKp.publicKey,
+    creatorKp.publicKey,
     tokenInfo.name,
     tokenInfo.symbol,
     tokenMetadata.metadataUri,
@@ -157,9 +158,9 @@ export const distributeSol = async (connection: Connection, mainKp: Keypair, dis
 }
 
 export const createLUT = async (mainKp: Keypair) => {
-  // Check SOL balance first - LUT creation needs ~0.01-0.02 SOL
+  // Check SOL balance first - LUT creation needs ~0.001-0.002 SOL (rent for account)
   const balance = await connection.getBalance(mainKp.publicKey)
-  const minBalance = 0.02 * 1e9 // 0.02 SOL minimum
+  const minBalance = 0.002 * 1e9 // 0.002 SOL minimum (safe estimate for rent + fees)
   if (balance < minBalance) {
     console.log(`❌ Insufficient SOL balance for LUT creation: ${(balance / 1e9).toFixed(4)} SOL`)
     console.log(`   Required: ${(minBalance / 1e9).toFixed(4)} SOL minimum`)

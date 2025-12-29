@@ -195,14 +195,17 @@ export const executeJitoTx = async (transactions: VersionedTransaction[], payer:
       })
     })
     
-    const timeoutPromise = new Promise<string>((resolve) => {
+    const timeoutPromise = new Promise<string>((resolve, reject) => {
       setTimeout(() => {
         if (!firstSuccessResolved) {
-          console.log(`\n⚠️  No immediate success after 3s - returning anyway to start rapid sell`)
-          console.log(`   Bundle submission continues in background`)
+          console.log(`\n⚠️  No immediate success after 3s - bundle may not have been accepted`)
+          console.log(`   Bundle submission continues in background with retries`)
+          console.log(`   ⚠️  WARNING: Bundle may have been rate-limited - check Jito status manually`)
+          console.log(`   💡 Consider reducing wallet count or increasing cooldown if this persists`)
           firstSuccessResolved = true
-          updateCooldownAfterSuccess()
-          resolve(jitoTxsignature) // Return anyway - bundle was sent
+          // Don't update cooldown - bundle wasn't successfully accepted yet
+          // Return signature anyway to allow rapid sell to start (it will retry)
+          resolve(jitoTxsignature)
         }
       }, 3000) // 3 second timeout
     })

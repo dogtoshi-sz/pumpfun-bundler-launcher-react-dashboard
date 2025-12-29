@@ -2,10 +2,11 @@
   "name": "pumpfun-api-server",
   "version": "1.0.0",
   "description": "API server for Pumpfun token bundler",
-  "main": "server.js",
+  "main": "control-panel-server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node control-panel-server.js",
+    "dev": "nodemon control-panel-server.js",
+    "control-panel": "node control-panel-server.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.89.1",

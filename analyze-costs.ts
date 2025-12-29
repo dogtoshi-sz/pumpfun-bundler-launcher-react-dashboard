@@ -76,7 +76,7 @@ async function analyzeCosts() {
   // Estimate costs
   console.log(`\n📋 Estimated Costs:`);
   console.log(`  - Token creation: ~0.5-2.0 SOL (rent for accounts)`);
-  console.log(`  - LUT creation: ~0.01-0.02 SOL`);
+  console.log(`  - LUT creation: ~0.001-0.002 SOL (rent for account)`);
   console.log(`  - Transaction fees: ~0.01-0.05 SOL`);
   console.log(`  - Trading slippage: Variable (depends on liquidity)`);
   

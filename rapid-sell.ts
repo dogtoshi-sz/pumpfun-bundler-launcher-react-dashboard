@@ -6,7 +6,7 @@ import { Connection, Keypair, VersionedTransaction, PublicKey } from "@solana/we
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
 import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk"
 import { getSellTxWithJupiter } from "./utils/swapOnlyAmm"
-import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_LOW } from "./constants"
+import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, AUTO_COLLECT_FEES, PRIVATE_KEY, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } from "./constants"
 import { collectCreatorFees } from "./collect-fees"
 
 const connection = new Connection(RPC_ENDPOINT, {
@@ -17,10 +17,30 @@ const connection = new Connection(RPC_ENDPOINT, {
 // Rapid sell function - sells from ALL wallets in parallel (milliseconds speed)
 // Optimized to beat sniper bots - fires IMMEDIATELY, before bonding curve is even detected
 // Smart retry: if tokens not detected yet, keeps trying until they are
-// priorityFee: 'high' for WebSocket threshold triggers (fast!), 'low' for manual sells (cheap!)
-const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0, priorityFee: 'high' | 'low' = 'low') => {
-  const priorityFeeText = priorityFee === 'high' ? 'HIGH (WebSocket threshold met!)' : 'LOW (manual/cheap)'
-  const priorityFeeAmount = priorityFee === 'high' ? (PRIORITY_FEE_LAMPORTS_HIGH / 1e9).toFixed(4) : (PRIORITY_FEE_LAMPORTS_LOW / 1e9).toFixed(4)
+// priorityFee: 'high' for WebSocket threshold triggers (very fast, expensive), 'medium' for rapid sells (fast, reasonable), 'low' for manual sells (cheap!), 'none' for no priority fee
+const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0, priorityFee: 'high' | 'medium' | 'low' | 'none' = 'medium') => {
+  let priorityFeeText: string
+  let priorityFeeAmount: string
+  let priorityFeeLamports: number
+  
+  if (priorityFee === 'none') {
+    priorityFeeText = 'NONE (no priority fee - cheapest!)'
+    priorityFeeAmount = '0'
+    priorityFeeLamports = 0
+  } else if (priorityFee === 'high') {
+    priorityFeeText = 'HIGH (WebSocket threshold met!)'
+    priorityFeeAmount = (PRIORITY_FEE_LAMPORTS_HIGH / 1e9).toFixed(4)
+    priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
+  } else if (priorityFee === 'medium') {
+    priorityFeeText = 'MEDIUM (rapid sell - fast and reasonable)'
+    priorityFeeAmount = (PRIORITY_FEE_LAMPORTS_MEDIUM / 1e9).toFixed(4)
+    priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
+  } else {
+    priorityFeeText = 'LOW (manual/cheap)'
+    priorityFeeAmount = (PRIORITY_FEE_LAMPORTS_LOW / 1e9).toFixed(4)
+    priorityFeeLamports = PRIORITY_FEE_LAMPORTS_LOW
+  }
+  
   console.log("🚀🚀🚀 RACE MODE - INSTANT FIRE to beat sniper bots! 🚀🚀🚀")
   console.log(`⚡ Priority Fee: ${priorityFeeText} (${priorityFeeAmount} SOL)`)
   console.log("⚡ Starting IMMEDIATELY - will retry until tokens detected...")
@@ -37,34 +57,89 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0, priori
     console.log(`✅ Using mint address from command line: ${targetMint}`)
   }
   
-  // Add DEV wallet FIRST (highest priority - should sell first)
-  const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
-  walletsToProcess.push(buyerKp)
-  console.log(`✅ Added DEV wallet first: ${buyerKp.publicKey.toBase58()}`)
+  // Determine DEV/Creator wallet - PRIORITY: creatorDevWalletKey from current-run.json, FALLBACK: BUYER_WALLET from .env
+  let buyerKp: Keypair
+  let devWalletSource: string
   
   if (fs.existsSync(currentRunPath)) {
     try {
       const currentRunData = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'))
       
+      // PRIORITY: Use creatorDevWalletKey from current-run.json (the actual wallet used for the launch)
+      if (currentRunData.creatorDevWalletKey) {
+        buyerKp = Keypair.fromSecretKey(base58.decode(currentRunData.creatorDevWalletKey))
+        devWalletSource = 'creatorDevWalletKey from current-run.json'
+        console.log(`✅ Using DEV wallet from current-run.json: ${buyerKp.publicKey.toBase58()}`)
+      } else if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
+        // FALLBACK: Use BUYER_WALLET from .env (persistent wallet)
+        buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
+        devWalletSource = 'BUYER_WALLET from .env'
+        console.log(`✅ Using DEV wallet from BUYER_WALLET (.env): ${buyerKp.publicKey.toBase58()}`)
+      } else {
+        console.log("❌ No DEV wallet found - cannot sell")
+        return
+      }
+      
       // Get mint address from parameter or current-run.json
       targetMint = mintAddress || currentRunData.mintAddress || null
       
-      if (currentRunData.walletKeys && Array.isArray(currentRunData.walletKeys) && currentRunData.walletKeys.length > 0) {
-        // Add bundler wallets AFTER DEV wallet
+      // Add DEV wallet FIRST (highest priority - should sell first)
+      walletsToProcess.push(buyerKp)
+      console.log(`✅ Added DEV wallet first (${devWalletSource}): ${buyerKp.publicKey.toBase58()}`)
+      
+      // PRIORITY: Bundle wallets first (these are the important ones with larger amounts)
+      // Holder wallets are just for holder count and can be sold later separately
+      if (currentRunData.bundleWalletKeys && Array.isArray(currentRunData.bundleWalletKeys) && currentRunData.bundleWalletKeys.length > 0) {
+        // Use bundleWalletKeys if available (new format)
+        const bundleWallets = currentRunData.bundleWalletKeys.map((kp: string) => Keypair.fromSecretKey(base58.decode(kp)))
+        // Filter out DEV wallet if it's already in bundle wallets (shouldn't happen, but safety check)
+        const bundleWalletsFiltered = bundleWallets.filter(kp => !kp.publicKey.equals(buyerKp.publicKey))
+        walletsToProcess.push(...bundleWalletsFiltered)
+        console.log(`✅ Added ${bundleWalletsFiltered.length} BUNDLE wallets (priority for selling)`)
+      } else if (currentRunData.walletKeys && Array.isArray(currentRunData.walletKeys) && currentRunData.walletKeys.length > 0) {
+        // Fallback: Use walletKeys (old format - assume all are bundle wallets)
         const bundlerWallets = currentRunData.walletKeys.map((kp: string) => Keypair.fromSecretKey(base58.decode(kp)))
-        // Filter out DEV wallet if it's already in bundler wallets (shouldn't happen, but safety check)
+        // Filter out DEV wallet if it's already in bundler wallets
         const bundlerWalletsFiltered = bundlerWallets.filter(kp => !kp.publicKey.equals(buyerKp.publicKey))
         walletsToProcess.push(...bundlerWalletsFiltered)
-        console.log(`✅ Added ${bundlerWalletsFiltered.length} bundler wallets from current run`)
+        console.log(`✅ Added ${bundlerWalletsFiltered.length} wallets from current run (old format - assuming all are bundle wallets)`)
       } else {
         console.log("⚠️  No walletKeys in current-run.json (only DEV wallet will sell)")
       }
+      
+      // Include holder wallets in rapid-sell (sell ALL wallets when user clicks "SELL ALL")
+      if (currentRunData.holderWalletKeys && Array.isArray(currentRunData.holderWalletKeys) && currentRunData.holderWalletKeys.length > 0) {
+        const holderWallets = currentRunData.holderWalletKeys.map((kp: string) => Keypair.fromSecretKey(base58.decode(kp)))
+        // Filter out DEV wallet if it's already in holder wallets (shouldn't happen, but safety check)
+        const holderWalletsFiltered = holderWallets.filter(kp => !kp.publicKey.equals(buyerKp.publicKey))
+        walletsToProcess.push(...holderWalletsFiltered)
+        console.log(`✅ Added ${holderWalletsFiltered.length} HOLDER wallets (selling ALL wallets)`)
+      }
     } catch (error) {
       console.log('❌ Error reading current-run.json:', error)
-      console.log('   Continuing with DEV wallet only...')
+      // Fallback to BUYER_WALLET if current-run.json read failed
+      if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
+        buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
+        devWalletSource = 'BUYER_WALLET from .env (fallback)'
+        walletsToProcess.push(buyerKp)
+        console.log(`✅ Using DEV wallet from BUYER_WALLET (fallback): ${buyerKp.publicKey.toBase58()}`)
+      } else {
+        console.log('   ❌ No DEV wallet available - cannot sell')
+        return
+      }
     }
   } else {
-    console.log('⚠️  No current-run.json found (only DEV wallet will sell)')
+    // No current-run.json - use BUYER_WALLET from .env
+    if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
+      buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
+      devWalletSource = 'BUYER_WALLET from .env'
+      walletsToProcess.push(buyerKp)
+      console.log(`✅ Using DEV wallet from BUYER_WALLET (.env): ${buyerKp.publicKey.toBase58()}`)
+      console.log('⚠️  No current-run.json found (only DEV wallet will sell)')
+    } else {
+      console.log('❌ No current-run.json found and no BUYER_WALLET set - cannot sell')
+      return
+    }
   }
   
   if (!targetMint) {
@@ -254,8 +329,7 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0, priori
         }
         
         // Get sell transaction from Jupiter (100% of current balance)
-        // Use HIGH priority fee if threshold was met (WebSocket auto-sell), LOW for manual sells
-        const priorityFeeLamports = priorityFee === 'high' ? PRIORITY_FEE_LAMPORTS_HIGH : PRIORITY_FEE_LAMPORTS_LOW
+        // Use HIGH priority fee if threshold was met (WebSocket auto-sell), LOW for manual sells, 0 for no priority fee
         const sellTx = await getSellTxWithJupiter(wallet, currentAccount.accountInfo.mint, currentBalance, priorityFeeLamports)
         
         if (!sellTx) {
@@ -444,7 +518,8 @@ const rapidSell = async (mintAddress?: string, initialWaitMs: number = 0, priori
 if (require.main === module) {
   const mintAddress = process.argv[2] // Optional: pass mint address as argument
   const initialWait = process.argv[3] ? parseInt(process.argv[3]) : 0 // Default: 0ms (INSTANT start)
-  rapidSell(mintAddress, initialWait).catch(console.error)
+  const priorityFee = (process.argv[4] as 'high' | 'medium' | 'low' | 'none') || 'medium' // Default: 'medium' (fast and reasonable), use 'high' for very fast, 'low' for cheap, 'none' for no priority fee
+  rapidSell(mintAddress, initialWait, priorityFee).catch(console.error)
 }
 
 export { rapidSell }
