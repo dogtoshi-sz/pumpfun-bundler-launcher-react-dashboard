@@ -86,13 +86,39 @@ async function runVolumeMaker() {
 
 async function runCommand(command: string, description: string) {
   console.log(`\n🔄 Running: ${description}...\n`);
-  try {
-    const { stdout, stderr } = await execAsync(`npm run ${command}`);
-    if (stdout) console.log(stdout);
-    if (stderr) console.error(stderr);
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
-  }
+  return new Promise<void>((resolve, reject) => {
+    const childProcess = exec(`npm run ${command}`, {
+      cwd: process.cwd(),
+      env: process.env
+    });
+    
+    // Stream output in real-time
+    if (childProcess.stdout) {
+      childProcess.stdout.on('data', (data) => {
+        process.stdout.write(data);
+      });
+    }
+    
+    if (childProcess.stderr) {
+      childProcess.stderr.on('data', (data) => {
+        process.stderr.write(data);
+      });
+    }
+    
+    childProcess.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        console.error(`\n❌ Command exited with code ${code}`);
+        resolve(); // Still resolve so menu continues
+      }
+    });
+    
+    childProcess.on('error', (error) => {
+      console.error(`❌ Error: ${error.message}`);
+      reject(error);
+    });
+  });
 }
 
 async function viewCurrentRunInfo() {

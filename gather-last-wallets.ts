@@ -98,8 +98,8 @@ async function gatherLastWallets(count: number = 10) {
               )
               
               const tx = new Transaction().add(
-                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 220_000 }),
                 ComputeBudgetProgram.setComputeUnitLimit({ units: 350_000 }),
+                // No priority fee instruction - uses network default (cheapest)
                 transferIx,
                 closeIx
               )
@@ -127,8 +127,8 @@ async function gatherLastWallets(count: number = 10) {
         if (transferAmount > 0) {
           const latestBlockhash = await connection.getLatestBlockhash()
           const solTx = new Transaction().add(
-            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 220_000 }),
             ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+            // No priority fee instruction - uses network default (cheapest)
             SystemProgram.transfer({
               fromPubkey: kp.publicKey,
               toPubkey: mainKp.publicKey,

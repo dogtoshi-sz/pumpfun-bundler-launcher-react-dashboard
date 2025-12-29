@@ -446,8 +446,8 @@ class UltraFastWebSocketTracker {
       }
       
       // ALSO check token balances (mint might not be in account keys directly)
-      if (!hasOurMint && meta && (meta.preTokenBalances || meta.postTokenBalances)) {
-        const allTokenBalances = [...(meta.preTokenBalances || []), ...(meta.postTokenBalances || [])];
+      if (!hasOurMint && tx.meta && (tx.meta.preTokenBalances || tx.meta.postTokenBalances)) {
+        const allTokenBalances = [...(tx.meta.preTokenBalances || []), ...(tx.meta.postTokenBalances || [])];
         for (const balance of allTokenBalances) {
           try {
             if (balance && balance.mint) {
@@ -496,8 +496,11 @@ class UltraFastWebSocketTracker {
       // Remove from pending
       this.pendingTransactions.delete(signature);
     } catch (error) {
-      // Log errors occasionally
-      if (this.logsReceived % 100 === 0) {
+      // Remove from pending on error
+      this.pendingTransactions.delete(signature);
+      
+      // Log errors occasionally (not every single one to avoid spam)
+      if (this.logsReceived % 100 === 0 || error.message.includes('meta is not defined')) {
         console.error(`[WebSocket Ultra-Fast] ❌ Error fetching transaction:`, error.message);
       }
     }
@@ -682,9 +685,13 @@ class UltraFastWebSocketTracker {
         
         console.log(`[WebSocket Ultra-Fast] 🔔 ${tradeType} detected${simTag}: ${walletType} | ${walletAddressStr.slice(0, 8)}... | ${solAmount.toFixed(4)} SOL`);
         
-        // AGGREGATE EXTERNAL BUYS and trigger when cumulative threshold reached
-        if (isBuy && !isOurWallet && this.autoSellEnabled && solAmount > 0) {
-          this.handleExternalBuy(solAmount, walletAddressStr, timestamp);
+        // AGGREGATE EXTERNAL BUYS/SELLS (NET VOLUME) and trigger when cumulative threshold reached
+        // Buys add to volume, sells subtract from volume (net buying pressure)
+        // This ensures we only trigger on REAL net buying pressure, not gross volume
+        if (!isOurWallet && this.autoSellEnabled && solAmount > 0) {
+          // For buys: add positive amount, for sells: add negative amount (subtracts from total)
+          const volumeChange = isBuy ? solAmount : -solAmount;
+          this.handleExternalBuy(volumeChange, walletAddressStr, timestamp);
         }
       }
 
@@ -717,21 +724,37 @@ class UltraFastWebSocketTracker {
     return 0;
   }
 
-  // Handle external buy - aggregate and trigger sell
+  // Handle external buy/sell - aggregate NET volume and trigger sell
+  // solAmount can be positive (buy) or negative (sell) for net volume tracking
   handleExternalBuy(solAmount, walletAddress, timestamp) {
     const now = Date.now();
     
-    // Reset window if expired
+    // Slide window forward if expired - remove old transactions outside the window but keep current volume
     if (this.externalBuyStartTime && (now - this.externalBuyStartTime) > this.externalBuyWindow) {
-      this.externalBuyVolume = 0;
-      this.externalBuyStartTime = null;
-      this.externalBuyTransactions = [];
-      this.sellTriggered = false;
-      // Reset staged sell triggers when window expires
-      if (this.stagedSellEnabled) {
-        this.stagedSellStage1Triggered = false;
-        this.stagedSellStage2Triggered = false;
-        this.stagedSellStage3Triggered = false;
+      // Remove transactions outside the current window
+      const windowStart = now - this.externalBuyWindow;
+      const oldTransactions = this.externalBuyTransactions.filter(tx => tx.timestamp < windowStart);
+      
+      // Subtract old transactions from volume to maintain accurate NET volume
+      for (const oldTx of oldTransactions) {
+        this.externalBuyVolume -= oldTx.amount;
+      }
+      
+      // Remove old transactions from array
+      this.externalBuyTransactions = this.externalBuyTransactions.filter(tx => tx.timestamp >= windowStart);
+      
+      // Update window start time to the oldest remaining transaction, or current time if none
+      if (this.externalBuyTransactions.length > 0) {
+        this.externalBuyStartTime = Math.min(...this.externalBuyTransactions.map(tx => tx.timestamp));
+      } else {
+        // No transactions in window, start fresh
+        this.externalBuyStartTime = now;
+        this.externalBuyVolume = 0;
+      }
+      
+      // Ensure volume never goes below 0 after removing old transactions
+      if (this.externalBuyVolume < 0) {
+        this.externalBuyVolume = 0;
       }
     }
     
@@ -748,8 +771,12 @@ class UltraFastWebSocketTracker {
       }
     }
     
-    // Add to cumulative volume
+    // Add to cumulative NET volume (buys add, sells subtract)
     this.externalBuyVolume += solAmount;
+    // Ensure volume never goes below 0 (can't have negative net buying pressure)
+    if (this.externalBuyVolume < 0) {
+      this.externalBuyVolume = 0;
+    }
     this.externalBuyTransactions.push({
       wallet: walletAddress,
       amount: solAmount,
@@ -757,13 +784,16 @@ class UltraFastWebSocketTracker {
     });
     
     const simTag = this.simulationMode ? ' [SIM]' : '';
+    const isSell = solAmount < 0;
+    const volumeType = isSell ? 'sell' : 'buy';
+    const volumeSign = isSell ? '-' : '+';
     
     // Check staged sell thresholds first (if enabled)
     if (this.stagedSellEnabled) {
       // Stage 1: 30% at 5 SOL
       if (this.externalBuyVolume >= this.stagedSellStage1Threshold && !this.stagedSellStage1Triggered) {
         const timeToTrigger = Date.now() - this.externalBuyStartTime;
-        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 1 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL`);
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 1 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL NET`);
         console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING STAGE 1 SELL${simTag} (${timeToTrigger}ms after first buy)...`);
         this.stagedSellStage1Triggered = true;
         if (!this.simulationMode) {
@@ -775,7 +805,7 @@ class UltraFastWebSocketTracker {
       // Stage 2: 30% at 10 SOL
       else if (this.externalBuyVolume >= this.stagedSellStage2Threshold && !this.stagedSellStage2Triggered) {
         const timeToTrigger = Date.now() - this.externalBuyStartTime;
-        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 2 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL`);
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 2 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL NET`);
         console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING STAGE 2 SELL${simTag} (${timeToTrigger}ms after first buy)...`);
         this.stagedSellStage2Triggered = true;
         if (!this.simulationMode) {
@@ -787,7 +817,7 @@ class UltraFastWebSocketTracker {
       // Stage 3: 40% + DEV at 20 SOL
       else if (this.externalBuyVolume >= this.stagedSellStage3Threshold && !this.stagedSellStage3Triggered) {
         const timeToTrigger = Date.now() - this.externalBuyStartTime;
-        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 3 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL`);
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 STAGE 3 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL NET`);
         console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING STAGE 3 SELL${simTag} (${timeToTrigger}ms after first buy)...`);
         console.log(`[WebSocket Ultra-Fast] ⚡ DEV wallet will be sold LAST in this stage`);
         this.stagedSellStage3Triggered = true;
@@ -797,21 +827,21 @@ class UltraFastWebSocketTracker {
           });
         }
       } else {
-        // Show progress for staged sell
+        // Show progress for staged sell (NET volume)
         const nextThreshold = !this.stagedSellStage1Triggered ? this.stagedSellStage1Threshold :
                              !this.stagedSellStage2Triggered ? this.stagedSellStage2Threshold :
                              !this.stagedSellStage3Triggered ? this.stagedSellStage3Threshold : null;
         if (nextThreshold) {
-          console.log(`[WebSocket Ultra-Fast] 💰 External buy${simTag}: +${solAmount.toFixed(4)} SOL | Total: ${this.externalBuyVolume.toFixed(4)}/${nextThreshold.toFixed(4)} SOL (staged sell)`);
+          console.log(`[WebSocket Ultra-Fast] 💰 External ${volumeType}${simTag}: ${volumeSign}${Math.abs(solAmount).toFixed(4)} SOL | NET Total: ${this.externalBuyVolume.toFixed(4)}/${nextThreshold.toFixed(4)} SOL (staged sell)`);
         }
       }
     } else {
-      // Standard threshold check (non-staged)
-      console.log(`[WebSocket Ultra-Fast] 💰 External buy${simTag}: +${solAmount.toFixed(4)} SOL | Total: ${this.externalBuyVolume.toFixed(4)}/${this.externalBuyThreshold.toFixed(4)} SOL`);
+      // Standard threshold check (non-staged) - NET volume
+      console.log(`[WebSocket Ultra-Fast] 💰 External ${volumeType}${simTag}: ${volumeSign}${Math.abs(solAmount).toFixed(4)} SOL | NET Total: ${this.externalBuyVolume.toFixed(4)}/${this.externalBuyThreshold.toFixed(4)} SOL`);
       
       if (this.externalBuyVolume >= this.externalBuyThreshold && !this.sellTriggered) {
         const timeToTrigger = Date.now() - this.externalBuyStartTime;
-        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL in external buys`);
+        console.log(`[WebSocket Ultra-Fast] 🚨🚨🚨 THRESHOLD REACHED${simTag}! ${this.externalBuyVolume.toFixed(4)} SOL NET in external volume`);
         console.log(`[WebSocket Ultra-Fast] ⚡⚡⚡ TRIGGERING INSTANT SELL${simTag} (${timeToTrigger}ms after first buy)...`);
         
         this.sellTriggered = true;

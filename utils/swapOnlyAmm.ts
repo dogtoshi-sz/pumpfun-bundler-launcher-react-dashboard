@@ -5,7 +5,7 @@ import {
   Connection,
   VersionedTransaction
 } from '@solana/web3.js';
-import { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_LOW } from '../constants/constants';
+import { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } from '../constants/constants';
 
 const SLIPPAGE = 9900 // 99% slippage - maximum to avoid error 6001 when multiple wallets sell simultaneously
 
@@ -81,6 +81,8 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
 };
 
 export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number) => {
+  // Use provided priority fee or default to LOW
+  const feeToUse = priorityFeeLamports ?? PRIORITY_FEE_LAMPORTS_LOW
   try {
     const publicKey = btoa(wallet.secretKey.toString())
     // Use new Jupiter API endpoint (old quote-api.jup.ag was deprecated)
@@ -102,7 +104,7 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
           userPublicKey: wallet.publicKey.toString(),
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
-          prioritizationFeeLamports: PRIORITY_FEE_LAMPORTS_LOW // Low priority fee for manual sells (default: 0.0001 SOL) - cheap but slower
+          prioritizationFeeLamports: feeToUse // Use provided priority fee or default to LOW
         }),
       })
     ).json();

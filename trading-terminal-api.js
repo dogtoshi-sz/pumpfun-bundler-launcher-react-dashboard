@@ -117,12 +117,13 @@ const getWalletTokenBalance = async (walletPrivateKey, mintAddress) => {
   }
 };
 
-// Get private key by wallet address
+// Get private key by wallet address (checks trading wallets AND launch wallets)
 const getPrivateKeyByAddress = (address) => {
   try {
-    const wallets = loadTradingWallets();
     const targetPubkey = new PublicKey(address);
     
+    // First, check trading wallets
+    const wallets = loadTradingWallets();
     for (const privateKey of wallets) {
       try {
         const kp = Keypair.fromSecretKey(base58.decode(privateKey));
@@ -132,6 +133,33 @@ const getPrivateKeyByAddress = (address) => {
       } catch (error) {
         // Skip invalid private keys
         continue;
+      }
+    }
+    
+    // If not found, check launch wallets from current-run.json
+    const currentRunPath = path.join(__dirname, 'keys', 'current-run.json');
+    if (fs.existsSync(currentRunPath)) {
+      try {
+        const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+        const allWalletKeys = [
+          ...(currentRun.bundleWalletKeys || []),
+          ...(currentRun.holderWalletKeys || []),
+          ...(currentRun.walletKeys || [])
+        ];
+        
+        for (const privateKey of allWalletKeys) {
+          try {
+            const kp = Keypair.fromSecretKey(base58.decode(privateKey));
+            if (kp.publicKey.equals(targetPubkey)) {
+              return privateKey;
+            }
+          } catch (error) {
+            // Skip invalid private keys
+            continue;
+          }
+        }
+      } catch (error) {
+        console.error('Error reading current-run.json:', error);
       }
     }
     

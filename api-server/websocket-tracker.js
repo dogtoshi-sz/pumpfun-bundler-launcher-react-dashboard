@@ -802,7 +802,7 @@ class WebSocketTracker {
         
         console.log(`[WebSocket] 🔔 ${tradeType} detected${simTag}: ${walletType} | ${walletAddressStr.slice(0, 8)}... | ${solAmount.toFixed(4)} SOL | Mint: ${mintAddress.slice(0, 8)}... | ${tokenAmount > 0 ? tokenAmount.toFixed(2) + ' tokens' : ''}`);
         
-        // Emit transaction to frontend
+        // Emit transaction data
         const txData = {
           type: tradeType.toLowerCase(),
           walletAddress: walletAddressStr,

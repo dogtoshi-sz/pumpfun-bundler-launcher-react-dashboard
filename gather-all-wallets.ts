@@ -3,7 +3,7 @@ import fs from "fs"
 import path from "path"
 import { readJson, retrieveEnvVariable, getDataDirectory } from "./utils"
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js"
-import { TOKEN_PROGRAM_ID, createCloseAccountInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
 import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "./constants"
 
 const connection = new Connection(RPC_ENDPOINT, {
@@ -14,33 +14,97 @@ const connection = new Connection(RPC_ENDPOINT, {
 const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
 
 async function gatherAllWallets() {
-  console.log("💰💰💰 GATHERING FROM ALL WALLETS IN data.json 💰💰💰\n")
-  
-  const dataPath = path.join(getDataDirectory(), 'data.json')
-  if (!fs.existsSync(dataPath)) {
-    console.log("❌ data.json not found")
-    return
-  }
-  
-  const walletsData = JSON.parse(fs.readFileSync(dataPath, 'utf8'))
-  console.log(`📦 Found ${walletsData.length} wallets in data.json\n`)
+  console.log("💰💰💰 GATHERING FROM ALL WALLETS 💰💰💰\n")
   
   const walletsToProcess: Keypair[] = []
   
-  // Add all wallets from data.json
-  for (const privateKey of walletsData) {
-    try {
-      const kp = Keypair.fromSecretKey(base58.decode(privateKey))
-      const balance = await connection.getBalance(kp.publicKey)
-      if (balance > 100000) { // More than 0.0001 SOL (just rent)
-        walletsToProcess.push(kp)
+  // First, add wallets from data.json (bundle wallets)
+  const dataPath = path.join(getDataDirectory(), 'data.json')
+  if (fs.existsSync(dataPath)) {
+    const walletsData = JSON.parse(fs.readFileSync(dataPath, 'utf8'))
+    console.log(`📦 Found ${walletsData.length} wallets in data.json`)
+    
+    for (const privateKey of walletsData) {
+      try {
+        const kp = Keypair.fromSecretKey(base58.decode(privateKey))
+        const balance = await connection.getBalance(kp.publicKey)
+        if (balance > 100000) { // More than 0.0001 SOL (just rent)
+          walletsToProcess.push(kp)
+        }
+      } catch (e) {
+        // Skip invalid keys
       }
-    } catch (e) {
-      // Skip invalid keys
+    }
+    console.log(`   ✅ Added ${walletsToProcess.length} wallets from data.json with SOL\n`)
+  } else {
+    console.log(`   ⚠️  data.json not found (no bundle wallets)\n`)
+  }
+  
+  // Also check current-run.json for creator/dev wallet and holder wallets
+  const currentRunPath = path.join(process.cwd(), 'keys', 'current-run.json')
+  if (fs.existsSync(currentRunPath)) {
+    try {
+      const currentRunData = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'))
+      
+      // Add creator/dev wallet (auto-created or from BUYER_WALLET)
+      if (currentRunData.creatorDevWalletKey) {
+        try {
+          const creatorDevWallet = Keypair.fromSecretKey(base58.decode(currentRunData.creatorDevWalletKey))
+          const balance = await connection.getBalance(creatorDevWallet.publicKey)
+          if (balance > 100000) {
+            // Check if already added (shouldn't be, but safety check)
+            const alreadyAdded = walletsToProcess.some(kp => kp.publicKey.equals(creatorDevWallet.publicKey))
+            if (!alreadyAdded) {
+              walletsToProcess.push(creatorDevWallet)
+              console.log(`   ✅ Added CREATOR/DEV wallet from current-run.json: ${creatorDevWallet.publicKey.toBase58()}`)
+            }
+          }
+        } catch (e: any) {
+          console.log(`   ⚠️  Error adding creator/dev wallet: ${e.message}`)
+        }
+      }
+      
+      // Add holder wallets if they exist
+      if (currentRunData.holderWalletKeys && Array.isArray(currentRunData.holderWalletKeys)) {
+        for (const privateKey of currentRunData.holderWalletKeys) {
+          try {
+            const kp = Keypair.fromSecretKey(base58.decode(privateKey))
+            const balance = await connection.getBalance(kp.publicKey)
+            if (balance > 100000) {
+              const alreadyAdded = walletsToProcess.some(existing => existing.publicKey.equals(kp.publicKey))
+              if (!alreadyAdded) {
+                walletsToProcess.push(kp)
+              }
+            }
+          } catch (e) {
+            // Skip invalid keys
+          }
+        }
+        console.log(`   ✅ Added holder wallets from current-run.json`)
+      }
+    } catch (e: any) {
+      console.log(`   ⚠️  Error reading current-run.json: ${e.message}`)
     }
   }
   
-  console.log(`💰 Found ${walletsToProcess.length} wallets with SOL to gather\n`)
+  // Fallback: If BUYER_WALLET is set in .env and not already included
+  if (process.env.BUYER_WALLET && process.env.BUYER_WALLET.trim() !== '') {
+    try {
+      const buyerKp = Keypair.fromSecretKey(base58.decode(process.env.BUYER_WALLET))
+      const alreadyAdded = walletsToProcess.some(kp => kp.publicKey.equals(buyerKp.publicKey))
+      if (!alreadyAdded) {
+        const balance = await connection.getBalance(buyerKp.publicKey)
+        if (balance > 100000) {
+          walletsToProcess.push(buyerKp)
+          console.log(`   ✅ Added BUYER_WALLET from .env: ${buyerKp.publicKey.toBase58()}`)
+        }
+      }
+    } catch (e: any) {
+      console.log(`   ⚠️  Error adding BUYER_WALLET: ${e.message}`)
+    }
+  }
+  
+  console.log(`\n💰 Found ${walletsToProcess.length} total wallets with SOL to gather\n`)
   
   if (walletsToProcess.length === 0) {
     console.log("✅ No wallets with SOL found")
@@ -59,7 +123,7 @@ async function gatherAllWallets() {
           programId: TOKEN_PROGRAM_ID,
         })
         
-        // Sell/transfer any tokens
+        // Transfer any tokens to funding wallet (PRIVATE_KEY)
         for (const { pubkey, account } of tokenAccounts.value) {
           try {
             const accountInfo = account.data
@@ -68,7 +132,10 @@ async function gatherAllWallets() {
             const amount = accountInfo.readBigUInt64LE(64)
             
             if (amount > 0n) {
-              // Transfer tokens to main wallet
+              // Get token balance with decimals
+              const tokenBalance = await connection.getTokenAccountBalance(pubkey)
+              
+              // Transfer tokens to funding wallet (PRIVATE_KEY)
               const mainTokenAccount = await getAssociatedTokenAddress(mint, mainKp.publicKey)
               const latestBlockhash = await connection.getLatestBlockhash()
               
@@ -77,8 +144,8 @@ async function gatherAllWallets() {
                 mint,
                 mainTokenAccount,
                 kp.publicKey,
-                amount,
-                0 // Assume 6 decimals, adjust if needed
+                BigInt(tokenBalance.value.amount),
+                tokenBalance.value.decimals
               )
               
               const closeIx = createCloseAccountInstruction(
@@ -87,22 +154,30 @@ async function gatherAllWallets() {
                 kp.publicKey
               )
               
+              // Create ATA for funding wallet (PRIVATE_KEY) if needed
+              const createAtaIx = createAssociatedTokenAccountIdempotentInstruction(
+                mainKp.publicKey,
+                mainTokenAccount,
+                mainKp.publicKey,
+                mint
+              )
+              
               const msg = new TransactionMessage({
                 payerKey: kp.publicKey,
                 recentBlockhash: latestBlockhash.blockhash,
-                instructions: [transferIx, closeIx]
+                instructions: [createAtaIx, transferIx, closeIx]
               }).compileToV0Message()
               
               const tx = new VersionedTransaction(msg)
-              tx.sign([kp])
+              tx.sign([kp, mainKp]) // Sign with both wallets (mainKp pays fees)
               
-              await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 })
-              await connection.confirmTransaction(latestBlockhash.blockhash, 'confirmed')
+              const sig = await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 })
+              await connection.confirmTransaction(sig, 'confirmed')
               
-              console.log(`   ✅ Transferred tokens from ${walletAddr}`)
+              console.log(`   ✅ Transferred ${tokenBalance.value.uiAmount} tokens from ${walletAddr}: https://solscan.io/tx/${sig}`)
             }
-          } catch (e) {
-            // Skip token errors
+          } catch (e: any) {
+            console.log(`   ⚠️  Error transferring tokens from ${walletAddr}: ${e.message}`)
           }
         }
         

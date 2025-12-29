@@ -8,11 +8,15 @@ import base58 from 'bs58';
 
 dotenv.config();
 
-export const retrieveEnvVariable = (variableName: string) => {
+export const retrieveEnvVariable = (variableName: string, defaultValue: string = '', required: boolean = true) => {
+  // First check process.env (can be passed from parent process - no .env file needed)
   const variable = process.env[variableName] || '';
   if (!variable) {
-    console.log(`${variableName} is not set`);
-    process.exit(1);
+    if (required && !defaultValue) {
+      console.log(`${variableName} is not set`);
+      process.exit(1);
+    }
+    return defaultValue;
   }
   return variable;
 };

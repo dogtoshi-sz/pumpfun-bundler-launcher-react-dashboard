@@ -4,29 +4,24 @@ import { SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk"
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
+import dotenv from 'dotenv'
 
-// CRITICAL: Force reload .env before importing constants to ensure latest values
-import dotenv from 'dotenv';
-dotenv.config({ override: true }); // Force reload, don't use cached values
+// CRITICAL: Force reload .env file with override to get latest values
+// This ensures we read the .env file that was just updated by the API server
+const rootEnvPath = path.join(process.cwd(), '.env')
+if (fs.existsSync(rootEnvPath)) {
+  dotenv.config({ path: rootEnvPath, override: true })
+  console.log(`[index.ts] Reloaded .env file from: ${rootEnvPath}`)
+} else {
+  dotenv.config({ override: true })
+  console.log(`[index.ts] Using default .env location`)
+}
 
-import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_SELL_50_PERCENT, AUTO_SELL_STAGED, AUTO_GATHER, AUTO_COLLECT_FEES, VOLUME_MAKER_ENABLED, VOLUME_MAKER_DURATION_MINUTES, VOLUME_MAKER_MIN_INTERVAL_SECONDS, VOLUME_MAKER_MAX_INTERVAL_SECONDS, VOLUME_MAKER_MIN_BUY_AMOUNT, VOLUME_MAKER_MAX_BUY_AMOUNT, VOLUME_MAKER_MIN_SELL_PERCENTAGE, VOLUME_MAKER_MAX_SELL_PERCENTAGE, VOLUME_MAKER_WALLET_COUNT, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, STAGED_SELL_STAGE1_THRESHOLD, STAGED_SELL_STAGE2_THRESHOLD, STAGED_SELL_STAGE3_THRESHOLD, STAGED_SELL_STAGE1_PERCENTAGE, STAGED_SELL_STAGE2_PERCENTAGE, STAGED_SELL_STAGE3_PERCENTAGE } from "./constants"
-
-// DEBUG: Log actual values being used
-console.log("\n📋 CONFIGURATION VALUES FROM .ENV:");
-console.log(`   BUYER_AMOUNT: ${BUYER_AMOUNT} SOL`);
-console.log(`   DISTRIBUTION_WALLETNUM: ${DISTRIBUTION_WALLETNUM}`);
-console.log(`   SWAP_AMOUNTS: ${SWAP_AMOUNTS.join(', ')}`);
-console.log(`   WEBSOCKET_TRACKING_ENABLED: ${WEBSOCKET_TRACKING_ENABLED}`);
-console.log(`   WEBSOCKET_ULTRA_FAST_MODE: ${WEBSOCKET_ULTRA_FAST_MODE}`);
-console.log(`   AUTO_RAPID_SELL: ${AUTO_RAPID_SELL}`);
-console.log(`   AUTO_SELL_50_PERCENT: ${AUTO_SELL_50_PERCENT}`);
-console.log(`   AUTO_SELL_STAGED: ${AUTO_SELL_STAGED}\n`);
+import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_WALLET, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT } from "./constants"
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
 import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend } from "./src/main";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
 import { sendBundle } from "./executor/liljito";
-import { startVolumeMaker } from "./volume-maker";
-import { showInteractiveMenu } from "./interactive-menu";
 
 
 
@@ -95,37 +90,81 @@ const main = async () => {
   console.log("Mint address of token ", mintAddress.toBase58())
   saveDataToFile([base58.encode(mintKp.secretKey)], "mint.json")
 
-  const tokenCreationIxs = await createTokenTx(mainKp, mintKp)
+  // Prepare buyer wallet for dev buy (needed for createTokenTx)
+  // If BUYER_WALLET is not set, create it the SAME WAY as bundle wallets (using distributeSol)
+  let buyerKp: Keypair
+  let buyerWalletSource: string
+  if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
+    // Use BUYER_WALLET from .env (persistent wallet)
+    buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
+    buyerWalletSource = 'BUYER_WALLET env var (persistent)'
+    console.log("Dev buyer wallet (from .env):", buyerKp.publicKey.toBase58())
+  } else {
+    // Create DEV wallet FIRST using distributeSol (same as bundle wallets) - saves to data.json automatically
+    console.log("   ⚠️  BUYER_WALLET not set in .env - creating DEV wallet like bundle wallets")
+    console.log("   💡 This wallet will be created and saved to data.json (same as bundle wallets)")
+    
+    const buyerAmount = Number(process.env.BUYER_AMOUNT || '0.1');
+    const devRequiredAmount = buyerAmount + 0.1 // BUYER_AMOUNT + 0.1 SOL buffer for fees/rent/safety
+    console.log(`\n💰 Creating DEV wallet FIRST (same as bundle wallets)...`)
+    console.log(`   Amount: ${devRequiredAmount.toFixed(4)} SOL (${buyerAmount.toFixed(4)} for buy + 0.1 SOL buffer)`)
+    
+    const devWalletResult = await distributeSol(connection, mainKp, 1, [devRequiredAmount])
+    if (!devWalletResult || devWalletResult.length === 0) {
+      console.error(`   ❌ Failed to create DEV wallet`)
+      return
+    }
+    buyerKp = devWalletResult[0]
+    buyerWalletSource = 'auto-created (saved to data.json like bundle wallets)'
+    console.log(`   ✅ Created DEV wallet: ${buyerKp.publicKey.toBase58()}`)
+    console.log(`   ✅ Saved to data.json (same as bundle wallets)`)
+  }
+
+  const tokenCreationIxs = await createTokenTx(buyerKp, mintKp, mainKp)
   if (tokenCreationIxs.length == 0) {
     console.log("Token creation failed")
     return
   }
   // Calculate minimum SOL needed
-  // If SWAP_AMOUNTS is provided but has fewer values than DISTRIBUTION_WALLETNUM, pad with SWAP_AMOUNT
-  console.log(`\n📊 Buy Amount Configuration:`);
-  console.log(`   - SWAP_AMOUNTS from .env: ${process.env.SWAP_AMOUNTS || '(empty)'}`);
-  console.log(`   - Parsed SWAP_AMOUNTS array: [${SWAP_AMOUNTS.join(', ')}] (length: ${SWAP_AMOUNTS.length})`);
+  // CRITICAL: Re-read from process.env to get latest values (constants were loaded at import time)
+  // This ensures we use the values that were just saved by the API server
+  const bundleWalletCount = Number(process.env.BUNDLE_WALLET_COUNT || process.env.DISTRIBUTION_WALLETNUM || '0');
+  const bundleSwapAmountsString = process.env.BUNDLE_SWAP_AMOUNTS || '';
+  const bundleSwapAmounts = bundleSwapAmountsString
+    ? bundleSwapAmountsString.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
+    : [];
+  const holderWalletCount = Number(process.env.HOLDER_WALLET_COUNT || '0');
+  const holderSwapAmountsString = process.env.HOLDER_SWAP_AMOUNTS || '';
+  const holderSwapAmounts = holderSwapAmountsString
+    ? holderSwapAmountsString.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
+    : [];
+  const holderWalletAmount = Number(process.env.HOLDER_WALLET_AMOUNT || '0.01');
+  const buyerAmount = Number(process.env.BUYER_AMOUNT || '0.1');
+  
+  console.log(`\n📊 Buy Amount Configuration (from .env):`);
+  console.log(`   - BUNDLE_SWAP_AMOUNTS from .env: ${bundleSwapAmountsString || '(empty)'}`);
+  console.log(`   - Parsed BUNDLE_SWAP_AMOUNTS array: [${bundleSwapAmounts.join(', ')}] (length: ${bundleSwapAmounts.length})`);
+  console.log(`   - BUNDLE_WALLET_COUNT: ${bundleWalletCount}`);
   console.log(`   - SWAP_AMOUNT (fallback): ${SWAP_AMOUNT}`);
-  console.log(`   - BUYER_AMOUNT (DEV buy): ${BUYER_AMOUNT}`);
-  console.log(`   - DISTRIBUTION_WALLETNUM: ${DISTRIBUTION_WALLETNUM}`);
+  console.log(`   - BUYER_AMOUNT (DEV buy): ${buyerAmount}`);
+  console.log(`   - DISTRIBUTION_WALLETNUM (legacy): ${DISTRIBUTION_WALLETNUM}`);
   
   let swapAmountsToUse: number[];
-  if (SWAP_AMOUNTS.length > 0) {
-    swapAmountsToUse = [...SWAP_AMOUNTS];
+  if (bundleSwapAmounts.length > 0) {
+    swapAmountsToUse = [...bundleSwapAmounts];
     // Pad with SWAP_AMOUNT if we have fewer amounts than wallets
-    while (swapAmountsToUse.length < DISTRIBUTION_WALLETNUM) {
-      console.warn(`   ⚠️  SWAP_AMOUNTS has ${swapAmountsToUse.length} values but need ${DISTRIBUTION_WALLETNUM}. Padding with SWAP_AMOUNT (${SWAP_AMOUNT})`);
+    while (swapAmountsToUse.length < bundleWalletCount) {
+      console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS has ${swapAmountsToUse.length} values but need ${bundleWalletCount}. Padding with SWAP_AMOUNT (${SWAP_AMOUNT})`);
       swapAmountsToUse.push(SWAP_AMOUNT);
     }
     // Trim if we have more amounts than wallets (shouldn't happen, but be safe)
-    swapAmountsToUse = swapAmountsToUse.slice(0, DISTRIBUTION_WALLETNUM);
+    swapAmountsToUse = swapAmountsToUse.slice(0, bundleWalletCount);
     console.log(`   ✅ Using custom amounts: [${swapAmountsToUse.join(', ')}]`);
   } else {
-    console.warn(`   ⚠️  SWAP_AMOUNTS is empty! All wallets will use SWAP_AMOUNT (${SWAP_AMOUNT})`);
-    swapAmountsToUse = Array(DISTRIBUTION_WALLETNUM).fill(SWAP_AMOUNT);
+    console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS is empty! All wallets will use SWAP_AMOUNT (${SWAP_AMOUNT})`);
+    swapAmountsToUse = Array(bundleWalletCount).fill(SWAP_AMOUNT);
   }
-  // Calculate minimum SOL needed: bundle wallets + buyer wallet + buffer
-  const minimumSolAmount = swapAmountsToUse.reduce((sum, amount) => sum + amount + 0.01, 0) + BUYER_AMOUNT + 0.01 + 0.04
+  const minimumSolAmount = swapAmountsToUse.reduce((sum, amount) => sum + amount + 0.01, 0) + 0.04 + buyerAmount
 
   if (mainBal / 10 ** 9 < minimumSolAmount) {
     console.log("Main wallet balance is not enough to run the bundler")
@@ -133,10 +172,84 @@ const main = async () => {
     return
   }
 
+  // Check if existing BUYER_WALLET has enough balance (if using persistent wallet)
+  // If insufficient, fund it automatically (same as auto-created wallets)
+  // BUT: Skip funding if BUYER_WALLET is the same as PRIVATE_KEY (same wallet, no transfer needed)
+  if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
+    const isSameWallet = mainKp.publicKey.equals(buyerKp.publicKey)
+    
+    if (isSameWallet) {
+      // Same wallet - just check balance, no funding needed
+      const existingBalance = await connection.getBalance(buyerKp.publicKey)
+      const existingBalanceSol = existingBalance / 1e9
+      const devRequiredAmount = buyerAmount + 0.1 // BUYER_AMOUNT + 0.1 SOL buffer for fees/rent/safety
+      if (existingBalanceSol < devRequiredAmount) {
+        console.log(`\n⚠️  BUYER_WALLET is the same as PRIVATE_KEY (master wallet)`)
+        console.log(`   Current balance: ${existingBalanceSol.toFixed(4)} SOL`)
+        console.log(`   Need at least ${devRequiredAmount.toFixed(4)} SOL for DEV buy`)
+        console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.1 SOL (buffer for fees/rent/safety)`)
+        console.log(`   ⚠️  Insufficient balance - please fund the master wallet`)
+        return
+      } else {
+        console.log(`\n✅ BUYER_WALLET is the same as PRIVATE_KEY (master wallet)`)
+        console.log(`   Balance: ${existingBalanceSol.toFixed(4)} SOL (sufficient for DEV buy)`)
+      }
+    } else {
+      // Different wallet - check balance and fund if needed
+      const existingBalance = await connection.getBalance(buyerKp.publicKey)
+      const existingBalanceSol = existingBalance / 1e9
+      const devRequiredAmount = buyerAmount + 0.1 // BUYER_AMOUNT + 0.1 SOL buffer for fees/rent/safety
+      if (existingBalanceSol < devRequiredAmount) {
+        const fundingNeeded = devRequiredAmount - existingBalanceSol
+        console.log(`\n⚠️  BUYER_WALLET has insufficient balance (${existingBalanceSol.toFixed(4)} SOL)`)
+        console.log(`   Need at least ${devRequiredAmount.toFixed(4)} SOL for DEV buy`)
+        console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.1 SOL (buffer for fees/rent/safety)`)
+        console.log(`\n💰 Funding BUYER_WALLET with ${fundingNeeded.toFixed(4)} SOL...`)
+        
+        try {
+          const latestBlockhash = await connection.getLatestBlockhash()
+          const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+          const transferMsg = new TransactionMessage({
+            payerKey: mainKp.publicKey,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions: [
+              SystemProgram.transfer({
+                fromPubkey: mainKp.publicKey,
+                toPubkey: buyerKp.publicKey,
+                lamports: fundingLamports
+              })
+            ]
+          }).compileToV0Message()
+
+          const transferTx = new VersionedTransaction(transferMsg)
+          transferTx.sign([mainKp])
+
+          const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+          await connection.confirmTransaction(sig, 'confirmed')
+
+          const newBalance = await connection.getBalance(buyerKp.publicKey)
+          console.log(`   ✅ Funded BUYER_WALLET! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+          console.log(`   Transaction: https://solscan.io/tx/${sig}`)
+        } catch (error: any) {
+          console.error(`   ❌ Failed to fund BUYER_WALLET: ${error.message}`)
+          return
+        }
+      } else {
+        console.log(`\n✅ BUYER_WALLET has sufficient balance: ${existingBalanceSol.toFixed(4)} SOL`)
+      }
+    }
+  }
+  // Note: If BUYER_WALLET was not set, the wallet was already created and funded above using distributeSol
+
+  if (bundleWalletCount === 0) {
+    console.log("⚠️  BUNDLE_WALLET_COUNT is 0 - no bundle wallets will be created")
+    console.log("   Set BUNDLE_WALLET_COUNT in .env to create bundle wallets")
+  }
+
   console.log("Distributing SOL to wallets...")
-  const swapAmountsForDistribution = SWAP_AMOUNTS.length > 0 ? SWAP_AMOUNTS : undefined
+  const swapAmountsForDistribution = bundleSwapAmounts.length > 0 ? bundleSwapAmounts : undefined
   
-  let result = await distributeSol(connection, mainKp, DISTRIBUTION_WALLETNUM, swapAmountsForDistribution)
+  let result = await distributeSol(connection, mainKp, bundleWalletCount, swapAmountsForDistribution)
   if (!result) {
     console.log("Distribution failed")
     return
@@ -144,140 +257,57 @@ const main = async () => {
     kps = result
   }
 
-  // START WEBSOCKET TRACKING (if enabled) - Start IMMEDIATELY after wallets are created
-  // This tracks all buys in real-time and triggers auto-sell when threshold is met
-  let websocketTrackerInstance: any = null;
-  
-  // DEBUG: Check why WebSocket tracking might not be starting
-  console.log(`\n🔍 DEBUG: WEBSOCKET_TRACKING_ENABLED = ${WEBSOCKET_TRACKING_ENABLED} (type: ${typeof WEBSOCKET_TRACKING_ENABLED})`);
-  console.log(`🔍 DEBUG: process.env.WEBSOCKET_TRACKING_ENABLED = ${process.env.WEBSOCKET_TRACKING_ENABLED}`);
-  
-  if (WEBSOCKET_TRACKING_ENABLED) {
-    console.log("\n🌐🌐🌐 STARTING WEBSOCKET TRACKING... 🌐🌐🌐");
-    console.log("⚡ Real-time buy/sell detection enabled");
-    console.log(`   Mint: ${mintAddress.toBase58()}`);
-    console.log(`   External Buy Threshold: ${WEBSOCKET_EXTERNAL_BUY_THRESHOLD} SOL (cumulative)`);
-    console.log(`   Aggregation Window: ${WEBSOCKET_EXTERNAL_BUY_WINDOW} seconds`);
+  // Create holder wallets (buy separately, not in bundle)
+  let holderWallets: Keypair[] = []
+  if (holderWalletCount > 0) {
+    console.log(`\n👥 Creating ${holderWalletCount} holder wallets...`)
     
-    // Determine auto-sell type based on .env settings
-    // Priority: AUTO_SELL_STAGED > AUTO_SELL_50_PERCENT > AUTO_RAPID_SELL
-    let autoSellType = 'rapid-sell'; // Default
-    let autoSellEnabled = false;
-    let stagedSellConfig = null;
-    
-    if (AUTO_SELL_STAGED) {
-      autoSellType = 'rapid-sell-staged';
-      autoSellEnabled = true;
-      stagedSellConfig = {
-        enabled: true,
-        stage1Threshold: STAGED_SELL_STAGE1_THRESHOLD,
-        stage2Threshold: STAGED_SELL_STAGE2_THRESHOLD,
-        stage3Threshold: STAGED_SELL_STAGE3_THRESHOLD,
-        stage1Percentage: STAGED_SELL_STAGE1_PERCENTAGE,
-        stage2Percentage: STAGED_SELL_STAGE2_PERCENTAGE,
-        stage3Percentage: STAGED_SELL_STAGE3_PERCENTAGE
-      };
-      console.log(`   Auto-Sell: STAGED SELL`);
-      console.log(`     Stage 1: ${STAGED_SELL_STAGE1_PERCENTAGE}% at ${STAGED_SELL_STAGE1_THRESHOLD} SOL`);
-      console.log(`     Stage 2: ${STAGED_SELL_STAGE2_PERCENTAGE}% at ${STAGED_SELL_STAGE2_THRESHOLD} SOL`);
-      console.log(`     Stage 3: ${STAGED_SELL_STAGE3_PERCENTAGE}% + DEV at ${STAGED_SELL_STAGE3_THRESHOLD} SOL`);
-    } else if (AUTO_SELL_50_PERCENT) {
-      autoSellType = 'rapid-sell-50-percent';
-      autoSellEnabled = true;
-      console.log(`   Auto-Sell: 50% of bundler wallets (DEV wallet excluded)`);
-    } else if (AUTO_RAPID_SELL) {
-      autoSellType = 'rapid-sell';
-      autoSellEnabled = true;
-      console.log(`   Auto-Sell: ALL wallets (bundler + DEV)`);
+    // Parse holder amounts (use fresh values from process.env)
+    let holderAmounts: number[] = []
+    if (holderSwapAmounts.length > 0) {
+      holderAmounts = [...holderSwapAmounts]
+      // Pad with HOLDER_WALLET_AMOUNT if needed
+      while (holderAmounts.length < holderWalletCount) {
+        holderAmounts.push(holderWalletAmount)
+      }
+      holderAmounts = holderAmounts.slice(0, holderWalletCount)
     } else {
-      console.log(`   Auto-Sell: DISABLED (tracking only, no auto-sell)`);
+      holderAmounts = Array(holderWalletCount).fill(holderWalletAmount)
     }
     
-    try {
-      console.log("   🔧 Initializing WebSocket tracker...");
-      // Import WebSocket tracker (choose between standard and ultra-fast)
-      if (WEBSOCKET_ULTRA_FAST_MODE) {
-        console.log("   🚀 ULTRA-FAST MODE: Sub-500ms reaction time");
-        console.log("   ⚡ Uses 'processed' commitment + pre-built transactions");
-        try {
-          const { UltraFastWebSocketTracker } = require('./api-server/websocket-tracker-ultra-fast');
-          websocketTrackerInstance = new UltraFastWebSocketTracker();
-          console.log("   ✅ Ultra-fast tracker instance created");
-        } catch (requireError: any) {
-          console.error("   ❌ Failed to require ultra-fast tracker:", requireError.message);
-          throw requireError;
-        }
-      } else {
-        console.log("   📊 STANDARD MODE: Reliable transaction fetching");
-        try {
-          const websocketTrackerModule = require('./api-server/websocket-tracker');
-          // The module exports a singleton instance, so use it directly
-          websocketTrackerInstance = websocketTrackerModule;
-          console.log("   ✅ Standard tracker module loaded");
-        } catch (requireError: any) {
-          console.error("   ❌ Failed to require standard tracker:", requireError.message);
-          throw requireError;
-        }
-      }
-      
-      // Prepare our wallet addresses (DEV + bundler wallets)
-      const ourWalletAddresses: string[] = [];
-      
-      // Add DEV wallet
-      ourWalletAddresses.push(mainKp.publicKey.toBase58());
-      
-      // Add bundler wallets (from kps array - wallets that were just created)
-      kps.forEach(kp => {
-        ourWalletAddresses.push(kp.publicKey.toBase58());
-      });
-      
-      // Add buyer wallet (DEV buy wallet) if different from main
-      const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET));
-      if (!buyerKp.publicKey.equals(mainKp.publicKey)) {
-        ourWalletAddresses.push(buyerKp.publicKey.toBase58());
-      }
-      
-      console.log(`   Our Wallets: ${ourWalletAddresses.length} addresses (DEV + ${kps.length} bundler)`);
-      console.log("   ⚡ Tracking starts NOW - will detect buys instantly!\n");
-      
-      // Start tracking (non-blocking - runs in parallel)
-      console.log("   🔧 Calling startTracking...");
-      console.log(`   📍 Mint: ${mintAddress.toBase58()}`);
-      console.log(`   📍 Wallets: ${ourWalletAddresses.length} addresses`);
-      console.log(`   📍 Auto-sell: ${autoSellEnabled ? 'ENABLED' : 'DISABLED'}`);
-      console.log(`   📍 Threshold: ${WEBSOCKET_EXTERNAL_BUY_THRESHOLD} SOL`);
-      
-      const trackingStarted = websocketTrackerInstance.startTracking(
-        mintAddress.toBase58(),
-        ourWalletAddresses,
-        autoSellEnabled,
-        0.1, // threshold (not used for cumulative)
-        WEBSOCKET_EXTERNAL_BUY_THRESHOLD,
-        WEBSOCKET_EXTERNAL_BUY_WINDOW * 1000, // Convert to milliseconds
-        false, // simulationMode = false (real mode)
-        autoSellType // 'rapid-sell' or 'rapid-sell-50-percent'
-      );
-      
-      if (trackingStarted) {
-        console.log("✅✅✅ WEBSOCKET TRACKING STARTED SUCCESSFULLY! ✅✅✅\n");
-      } else {
-        console.error("❌ Failed to start WebSocket tracking - startTracking returned false");
-        console.error("   Check WebSocket connection and .env configuration");
-      }
-    } catch (error: any) {
-      console.error("❌❌❌ CRITICAL: Error starting WebSocket tracking ❌❌❌");
-      console.error(`   Error: ${error.message || String(error)}`);
-      if (error.stack) {
-        console.error(`   Stack: ${error.stack.slice(0, 300)}`);
-      }
-      console.error("   Tracking will NOT be active for this launch");
-      console.error("   You can manually start tracking with: npm run track <mintAddress> <threshold> <window>\n");
+    console.log(`   Holder wallet amounts: [${holderAmounts.join(', ')}]`)
+    
+    // Create and fund holder wallets
+    const holderResult = await distributeSol(connection, mainKp, holderWalletCount, holderAmounts)
+    if (holderResult) {
+      holderWallets = holderResult
+      console.log(`   ✅ Created ${holderWallets.length} holder wallets`)
+    } else {
+      console.log("   ⚠️  Holder wallet distribution failed, continuing without holder wallets")
     }
   } else {
-    console.log("\n⏸️  WEBSOCKET_TRACKING_ENABLED is false in .env");
-    console.log("   Real-time tracking is DISABLED");
-    console.log("   Set WEBSOCKET_TRACKING_ENABLED=true to enable\n");
+    console.log("   ℹ️  HOLDER_WALLET_COUNT is 0 - no holder wallets will be created")
   }
+
+  // CRITICAL: Save current-run.json IMMEDIATELY after wallets are created
+  // This ensures wallets are saved even if bundle fails early
+  console.log("\n💾 Saving wallet info to current-run.json (immediate save)...")
+  const initialRunWallets: any = {
+    count: kps.length, // Will update with walletsUsed.length after buy instructions are created
+    totalCreated: kps.length + holderWallets.length + (BUYER_WALLET && BUYER_WALLET.trim() !== '' ? 0 : 1),
+    timestamp: Date.now(),
+    mintAddress: mintAddress.toBase58(),
+    launchStatus: "PENDING", // Will be updated to SUCCESS/FAILED after confirmation
+    bundleWalletKeys: kps.map(kp => base58.encode(kp.secretKey)), // All bundle wallets (will filter to walletsUsed later)
+    holderWalletKeys: holderWallets.map(kp => base58.encode(kp.secretKey)), // Holder wallets
+    walletKeys: [...kps, ...holderWallets].map(kp => base58.encode(kp.secretKey)) // All wallets for backward compatibility
+  }
+  // Save creatorDevWalletKey
+  initialRunWallets.creatorDevWalletKey = base58.encode(buyerKp.secretKey)
+  const keysPath = path.join('keys', 'current-run.json')
+  fs.writeFileSync(keysPath, JSON.stringify(initialRunWallets, null, 2))
+  console.log(`   ✅ Saved ${kps.length} bundle wallets, ${holderWallets.length} holder wallets, and DEV wallet`)
+  console.log(`   ✅ current-run.json will be updated as process progresses`)
 
   console.log("Creating LUT started")
   const lutAddress = await createLUT(mainKp)
@@ -288,45 +318,9 @@ const main = async () => {
   console.log("LUT Address:", lutAddress.toBase58())
   saveDataToFile([lutAddress.toBase58()], "lut.json")
   
-  // Prepare buyer wallet for dev buy
-  const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
-  console.log("Dev buyer wallet:", buyerKp.publicKey.toBase58())
-  
-  // Fund buyer wallet if it doesn't have enough SOL (only if it's different from main wallet)
-  const isBuyerSameAsMain = buyerKp.publicKey.equals(mainKp.publicKey)
-  if (!isBuyerSameAsMain) {
-    const buyerBalance = await connection.getBalance(buyerKp.publicKey)
-    const buyerRequiredAmount = Math.floor((BUYER_AMOUNT + 0.01) * 10 ** 9) // Buy amount + buffer for fees
-    if (buyerBalance < buyerRequiredAmount) {
-      console.log(`Funding buyer wallet: ${(buyerBalance / 10 ** 9).toFixed(4)} SOL → ${(buyerRequiredAmount / 10 ** 9).toFixed(4)} SOL needed`)
-      const fundBuyerTx = new VersionedTransaction(
-        new TransactionMessage({
-          payerKey: mainKp.publicKey,
-          recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
-          instructions: [
-            ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 250_000 }),
-            SystemProgram.transfer({
-              fromPubkey: mainKp.publicKey,
-              toPubkey: buyerKp.publicKey,
-              lamports: buyerRequiredAmount
-            })
-          ]
-        }).compileToV0Message()
-      )
-      fundBuyerTx.sign([mainKp])
-      const fundBuyerSig = await connection.sendTransaction(fundBuyerTx, { skipPreflight: false })
-      await connection.confirmTransaction(fundBuyerSig, "confirmed")
-      console.log(`✅ Buyer wallet funded: https://solscan.io/tx/${fundBuyerSig}`)
-    } else {
-      console.log(`✅ Buyer wallet has sufficient balance: ${(buyerBalance / 10 ** 9).toFixed(4)} SOL`)
-    }
-  } else {
-    console.log(`✅ Buyer wallet is the same as main wallet - no funding needed`)
-  }
-  
-  // Add buyer wallet to LUT along with other wallets
-  if (!(await addAddressesToTableMultiExtend(lutAddress, mintAddress, [...kps, buyerKp], mainKp))) {
+  // Add buyer wallet and holder wallets to LUT along with bundle wallets
+  const allWalletsForLUT = [...kps, buyerKp, ...holderWallets]
+  if (!(await addAddressesToTableMultiExtend(lutAddress, mintAddress, allWalletsForLUT, mainKp))) {
     console.log("Adding addresses to table failed")
     return
   }
@@ -343,7 +337,7 @@ const main = async () => {
   const buyIxsByWallet: { [walletIndex: number]: TransactionInstruction[] } = {}
   const walletsUsed: Keypair[] = [] // Track wallets that actually get buy instructions
 
-  for (let i = 0; i < DISTRIBUTION_WALLETNUM; i++) {
+  for (let i = 0; i < bundleWalletCount; i++) {
     // Use custom amount if provided, otherwise use SWAP_AMOUNT
     let buyAmount = swapAmountsToUse[i] || SWAP_AMOUNT; // Fallback to SWAP_AMOUNT if undefined
     if (isNaN(buyAmount) || buyAmount <= 0) {
@@ -356,7 +350,8 @@ const main = async () => {
       console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) will NOT be used for buying (skipped due to invalid amount)`);
       continue; // Skip this wallet
     }
-    const ix = await makeBuyIx(kps[i], buyAmountLamports, i, mainKp.publicKey, mintAddress)
+    // CRITICAL: buyerKp is the token creator (passed to createTokenTx), so it must be the referrer
+    const ix = await makeBuyIx(kps[i], buyAmountLamports, i, buyerKp.publicKey, mintAddress)
     buyIxsByWallet[i] = ix // Store by wallet index
     walletsUsed.push(kps[i]) // Track this wallet as used
     console.log(`Wallet ${i} will buy ${buyAmount} SOL worth of tokens`)
@@ -367,17 +362,25 @@ const main = async () => {
   console.log(`   - Wallets with buy instructions: ${walletsUsed.length}`)
   if (walletsUsed.length < kps.length) {
     console.warn(`   ⚠️  ${kps.length - walletsUsed.length} wallet(s) skipped (no buy instructions)`)
-    console.warn(`   ⚠️  Skipped wallets will NOT be included in current-run.json (but remain in data.json as backup)`)
+    console.warn(`   ⚠️  Skipped wallets remain in data.json as backup`)
   }
   
-  // DON'T save current-run.json yet - wait until bundle is confirmed successful
-  // This prevents saving mint address from failed launches
-  // We'll save it after token is confirmed on-chain
-  console.log(`\n📝 Current run info (will save after successful launch):`)
+  // Update current-run.json with actual wallets used (filter out skipped wallets)
+  console.log(`\n💾 Updating current-run.json with wallets actually used...`)
+  if (fs.existsSync(keysPath)) {
+    const currentRunData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
+    currentRunData.count = walletsUsed.length
+    currentRunData.bundleWalletKeys = walletsUsed.map(kp => base58.encode(kp.secretKey))
+    currentRunData.walletKeys = [...walletsUsed, ...holderWallets].map(kp => base58.encode(kp.secretKey))
+    fs.writeFileSync(keysPath, JSON.stringify(currentRunData, null, 2))
+    console.log(`   ✅ Updated: ${walletsUsed.length} bundle wallets will be used in bundle`)
+  }
+  
+  console.log(`\n📝 Current run info:`)
   console.log(`   - Wallets used (with buy instructions): ${walletsUsed.length}`)
   console.log(`   - Total wallets created: ${kps.length}`)
   console.log(`   - Mint: ${mintAddress.toBase58()}`)
-  console.log(`   - Will save to current-run.json ONLY after token is confirmed on-chain`)
+  console.log(`   - current-run.json saved and will be updated as process progresses`)
 
   // Get a fresh blockhash RIGHT BEFORE creating all transactions
   // All transactions in the bundle MUST use the same blockhash for Jito bundling
@@ -418,10 +421,27 @@ const main = async () => {
   // This is the EXACT SAME method the pump.fun frontend uses - it's a normal buy, not a "sniper"
   // The only difference is it's bundled with Jito for speed, but the buy instruction itself is identical
   // Use the SAME blockhash as token creation for proper bundling
+  // CRITICAL: buyerKp is the token creator (passed to createTokenTx), so it must be the referrer
   console.log("Creating DEV buy transaction (FIRST buy)...")
   console.log("   Using official pump.fun SDK - same as frontend (not a sniper)")
-  const devBuyAmountLamports = Math.floor(BUYER_AMOUNT * 10 ** 9)
-  const devBuyIxs = await makeBuyIx(buyerKp, devBuyAmountLamports, 0, mainKp.publicKey, mintAddress)
+  
+  // Verify DEV wallet has sufficient balance before creating buy transaction
+  const devBalance = await connection.getBalance(buyerKp.publicKey)
+  const devBalanceSol = devBalance / 1e9
+  const devRequiredAmount = buyerAmount + 0.1 // BUYER_AMOUNT + 0.1 SOL buffer
+  console.log(`   DEV wallet balance: ${devBalanceSol.toFixed(4)} SOL`)
+  console.log(`   Required: ${devRequiredAmount.toFixed(4)} SOL (${buyerAmount.toFixed(4)} for buy + 0.1 buffer)`)
+  
+  if (devBalanceSol < devRequiredAmount) {
+    console.error(`\n❌ ERROR: DEV wallet has insufficient balance!`)
+    console.error(`   Current: ${devBalanceSol.toFixed(4)} SOL`)
+    console.error(`   Required: ${devRequiredAmount.toFixed(4)} SOL`)
+    console.error(`   Please fund the wallet or check funding logic`)
+    return
+  }
+  
+  const devBuyAmountLamports = Math.floor(buyerAmount * 10 ** 9)
+  const devBuyIxs = await makeBuyIx(buyerKp, devBuyAmountLamports, 0, buyerKp.publicKey, mintAddress)
   
   // Use same blockhash as token creation for bundling (important!)
   // Use SAME compute budget settings as bundler wallets for consistency
@@ -438,13 +458,13 @@ const main = async () => {
   const devBuyTx = new VersionedTransaction(devBuyMsg)
   devBuyTx.sign([buyerKp])
   transactions.push(devBuyTx)
-  console.log(`✅ DEV buy transaction created: ${BUYER_AMOUNT} SOL from ${buyerKp.publicKey.toBase58()}`)
+  console.log(`✅ DEV buy transaction created: ${buyerAmount} SOL from ${buyerKp.publicKey.toBase58()}`)
   console.log(`   This will be the FIRST buy transaction in the bundle (right after token creation)`)
   console.log(`   Bundle order: 1) Token Creation → 2) DEV Buy → 3) Bundler Wallet Buys`)
   
   // Now create bundler wallet buy transactions
   // IMPORTANT: Use the SAME blockhash as token creation and DEV buy for proper bundling
-  for (let i = 0; i < Math.ceil(DISTRIBUTION_WALLETNUM / 4); i++) {
+  for (let i = 0; i < Math.ceil(bundleWalletCount / 4); i++) {
     const instructions: TransactionInstruction[] = [
       ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
@@ -459,6 +479,7 @@ const main = async () => {
       } else if (kps[index] && !buyIxsByWallet[index]) {
         console.warn(`⚠️  Wallet ${index} exists but has no buy instructions (was skipped due to invalid amount)`)
       }
+
     }
     const msg = new TransactionMessage({
       payerKey: kps[i * 4].publicKey,
@@ -505,8 +526,8 @@ const main = async () => {
   console.log("=".repeat(80))
   console.log(`Total transactions in bundle: ${transactions.length}`)
   console.log(`1. Token Creation Transaction`)
-  console.log(`2. DEV Buy Transaction (${BUYER_AMOUNT} SOL from ${buyerKp.publicKey.toBase58()})`)
-  console.log(`3-${transactions.length}. Bundler Wallet Buy Transactions (${DISTRIBUTION_WALLETNUM} wallets)`)
+  console.log(`2. DEV Buy Transaction (${buyerAmount} SOL from ${buyerKp.publicKey.toBase58()})`)
+  console.log(`3-${transactions.length}. Bundler Wallet Buy Transactions (${bundleWalletCount} wallets)`)
   console.log(`All transactions use blockhash: ${latestBlockhash.blockhash.slice(0, 8)}...`)
   console.log(`Valid until block height: ${latestBlockhash.lastValidBlockHeight}`)
   console.log("=".repeat(80))
@@ -549,7 +570,7 @@ const main = async () => {
     
     // Rebuild bundler wallet transactions
     let txIndex = 2
-    for (let i = 0; i < Math.ceil(DISTRIBUTION_WALLETNUM / 4); i++) {
+    for (let i = 0; i < Math.ceil(bundleWalletCount / 4); i++) {
       const instructions: TransactionInstruction[] = [
         ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
         ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
@@ -634,161 +655,67 @@ const main = async () => {
     process.exit(1)
   }
   
-  // Save wallet info immediately (before rapid sell) so rapid sell can use it
-  // We'll update launchStatus after token confirmation
-  console.log("\n💾 Saving wallet info for rapid sell...")
-  const initialRunWallets = {
-    count: walletsUsed.length,
-    totalCreated: kps.length,
-    timestamp: Date.now(),
-    mintAddress: mintAddress.toBase58(),
-    launchStatus: "PENDING", // Will be updated to SUCCESS/FAILED after confirmation
-    walletKeys: walletsUsed.map(kp => base58.encode(kp.secretKey))
+  // Update current-run.json with bundle submission status
+  // (Wallets were already saved earlier, just updating status)
+  console.log("\n💾 Updating current-run.json with bundle submission status...")
+  if (fs.existsSync(keysPath)) {
+    const currentRunData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
+    // Ensure all fields are up to date
+    currentRunData.count = walletsUsed.length
+    currentRunData.bundleWalletKeys = walletsUsed.map(kp => base58.encode(kp.secretKey))
+    currentRunData.holderWalletKeys = holderWallets.map(kp => base58.encode(kp.secretKey))
+    currentRunData.walletKeys = [...walletsUsed, ...holderWallets].map(kp => base58.encode(kp.secretKey))
+    currentRunData.creatorDevWalletKey = base58.encode(buyerKp.secretKey)
+    currentRunData.launchStatus = "PENDING" // Will be updated to SUCCESS/FAILED after confirmation
+    fs.writeFileSync(keysPath, JSON.stringify(currentRunData, null, 2))
+    console.log(`   ✅ Updated current-run.json (ready for rapid sell)`)
   }
-  const keysPath = path.join('keys', 'current-run.json')
-  fs.writeFileSync(keysPath, JSON.stringify(initialRunWallets, null, 2))
-  console.log(`   ✅ Saved wallet info for rapid sell (${walletsUsed.length} wallets)`)
   
-  // AUTOMATIC SELL - Start IMMEDIATELY after bundle is sent (don't wait for confirmation!)
-  // BUT: If WebSocket tracking is enabled, DON'T auto-sell on launch - let WebSocket trigger it when threshold is met
-  // If WebSocket tracking is disabled, use the normal auto-sell behavior
+  // AUTOMATIC RAPID SELL - Start IMMEDIATELY after bundle is sent (don't wait for confirmation!)
+  // Rapid sell has retry logic to handle tokens not detected yet
   let rapidSellPromise: Promise<void> | null = null
-  
-  // Check if WebSocket tracking is enabled - if so, skip automatic sell (WebSocket will trigger it)
-  if (WEBSOCKET_TRACKING_ENABLED) {
-    console.log("\n⏸️  WEBSOCKET TRACKING IS ENABLED - Skipping automatic sell on launch");
-    console.log("⚡ Auto-sell will be triggered by WebSocket when external buy threshold is reached");
-    console.log(`⚡ Threshold: ${WEBSOCKET_EXTERNAL_BUY_THRESHOLD} SOL (cumulative within ${WEBSOCKET_EXTERNAL_BUY_WINDOW}s)`);
-    if (AUTO_SELL_STAGED) {
-      console.log("⚡ Sell type: STAGED SELL");
-      console.log(`   Stage 1: ${STAGED_SELL_STAGE1_PERCENTAGE}% at ${STAGED_SELL_STAGE1_THRESHOLD} SOL`);
-      console.log(`   Stage 2: ${STAGED_SELL_STAGE2_PERCENTAGE}% at ${STAGED_SELL_STAGE2_THRESHOLD} SOL`);
-      console.log(`   Stage 3: ${STAGED_SELL_STAGE3_PERCENTAGE}% + DEV at ${STAGED_SELL_STAGE3_THRESHOLD} SOL`);
-    } else if (AUTO_SELL_50_PERCENT) {
-      console.log("⚡ Sell type: 50% of bundler wallets (DEV excluded)");
-    } else if (AUTO_RAPID_SELL) {
-      console.log("⚡ Sell type: ALL wallets (bundler + DEV)");
-    }
-    console.log("");
+  if (AUTO_RAPID_SELL) {
+    console.log("\n🚀🚀🚀 AUTOMATIC RAPID SELL STARTING IMMEDIATELY... 🚀🚀🚀")
+    console.log("⚡⚡⚡ FIRING INSTANTLY - No waiting for token confirmation! ⚡⚡⚡")
+    console.log("⚡ Rapid sell will retry until tokens are detected (beats all bots!)")
+    console.log("⚡ This will sell 100% of tokens from ALL wallets (bundler + DEV)\n")
+    
+    rapidSellPromise = (async () => {
+      try {
+        const { rapidSell } = await import('./rapid-sell')
+        // Start with 0ms wait - fires immediately, retries until tokens detected
+        await rapidSell(mintAddress.toBase58(), 0)
+        
+        // AUTOMATIC GATHER - Recover SOL from all wallets after rapid sell (if enabled)
+        if (AUTO_GATHER) {
+          console.log("\n💰💰💰 AUTOMATIC GATHER STARTING... 💰💰💰")
+          console.log("⚡ Recovering SOL from all wallets (bundler + DEV)")
+          console.log("⚡ This will sell any remaining tokens and transfer all SOL to main wallet\n")
+          
+          try {
+            // Import and call gather function directly
+            const { gather } = await import('./gather')
+            await gather()
+            console.log("\n✅✅✅ AUTOMATIC GATHER COMPLETED ✅✅✅")
+          } catch (error: any) {
+            console.error("❌ Error starting automatic gather:", error.message)
+            console.error("   You can manually run: npm run gather")
+          }
+        } else {
+          console.log("\n⏸️  AUTO_GATHER is disabled in .env")
+          console.log("   Gather will NOT start automatically")
+          console.log("   Run manually with: npm run gather")
+        }
+      } catch (error: any) {
+        console.error("❌ Error in rapid sell:", error.message)
+        console.error("   You can manually run: npm run rapid-sell")
+      }
+    })()
   } else {
-    // WebSocket tracking is disabled - use normal automatic sell behavior
-    // Priority: AUTO_SELL_50_PERCENT takes precedence over AUTO_RAPID_SELL (they are mutually exclusive)
-    if (AUTO_SELL_50_PERCENT) {
-      console.log("\n🚀🚀🚀 AUTOMATIC SELL 50% STARTING IMMEDIATELY... 🚀🚀🚀")
-      console.log("⚡⚡⚡ FIRING INSTANTLY - No waiting for token confirmation! ⚡⚡⚡")
-      console.log("⚡ Sell will retry until tokens are detected (beats all bots!)")
-      console.log("⚡ This will sell 100% of tokens from HALF the bundler wallets (DEV wallet EXCLUDED)\n")
-      
-      rapidSellPromise = (async () => {
-        try {
-          const { rapidSell50Percent } = await import('./rapid-sell-50-percent')
-          // Start with 0ms wait - fires immediately, retries until tokens detected
-          await rapidSell50Percent(mintAddress.toBase58(), 0)
-          
-          // AUTOMATIC GATHER - Recover SOL from all wallets after sell (if enabled)
-          if (AUTO_GATHER) {
-            console.log("\n💰💰💰 AUTOMATIC GATHER STARTING... 💰💰💰")
-            console.log("⚡ Recovering SOL from all wallets (bundler + DEV)")
-            console.log("⚡ This will sell any remaining tokens and transfer all SOL to main wallet\n")
-            
-            try {
-              // Import and call gather function directly
-              const { gather } = await import('./gather')
-              await gather()
-              console.log("\n✅✅✅ AUTOMATIC GATHER COMPLETED ✅✅✅")
-            } catch (error: any) {
-              console.error("❌ Error starting automatic gather:", error.message)
-              console.error("   You can manually run: npm run gather")
-            }
-          } else {
-            console.log("\n⏸️  AUTO_GATHER is disabled in .env")
-            console.log("   Gather will NOT start automatically")
-            console.log("   Run manually with: npm run gather")
-          }
-
-          // AUTOMATIC FEE COLLECTION - Collect creator fees after sell (if enabled)
-          if (AUTO_COLLECT_FEES) {
-            console.log("\n💰💰💰 AUTOMATIC FEE COLLECTION STARTING... 💰💰💰")
-            try {
-              const { collectCreatorFees } = await import('./collect-fees')
-              const creatorWallet = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
-              await collectCreatorFees(creatorWallet)
-              console.log("\n✅ Automatic fee collection completed")
-            } catch (error: any) {
-              console.error("❌ Error in automatic fee collection:", error.message)
-              console.error("   You can manually run: npm run collect-fees")
-            }
-          } else {
-            console.log("\n⏸️  AUTO_COLLECT_FEES is disabled in .env")
-            console.log("   Fees will remain in creator vault")
-            console.log("   Run manually with: npm run collect-fees")
-          }
-        } catch (error: any) {
-          console.error("❌ Error in sell 50%:", error.message)
-          console.error("   You can manually run: npm run rapid-sell-50-percent")
-        }
-      })()
-    } else if (AUTO_RAPID_SELL) {
-      console.log("\n🚀🚀🚀 AUTOMATIC RAPID SELL STARTING IMMEDIATELY... 🚀🚀🚀")
-      console.log("⚡⚡⚡ FIRING INSTANTLY - No waiting for token confirmation! ⚡⚡⚡")
-      console.log("⚡ Rapid sell will retry until tokens are detected (beats all bots!)")
-      console.log("⚡ This will sell 100% of tokens from ALL wallets (bundler + DEV)\n")
-      
-      rapidSellPromise = (async () => {
-        try {
-          const { rapidSell } = await import('./rapid-sell')
-          // Start with 0ms wait - fires immediately, retries until tokens detected
-          await rapidSell(mintAddress.toBase58(), 0)
-          
-          // AUTOMATIC GATHER - Recover SOL from all wallets after rapid sell (if enabled)
-          if (AUTO_GATHER) {
-            console.log("\n💰💰💰 AUTOMATIC GATHER STARTING... 💰💰💰")
-            console.log("⚡ Recovering SOL from all wallets (bundler + DEV)")
-            console.log("⚡ This will sell any remaining tokens and transfer all SOL to main wallet\n")
-            
-            try {
-              // Import and call gather function directly
-              const { gather } = await import('./gather')
-              await gather()
-              console.log("\n✅✅✅ AUTOMATIC GATHER COMPLETED ✅✅✅")
-            } catch (error: any) {
-              console.error("❌ Error starting automatic gather:", error.message)
-              console.error("   You can manually run: npm run gather")
-            }
-          } else {
-            console.log("\n⏸️  AUTO_GATHER is disabled in .env")
-            console.log("   Gather will NOT start automatically")
-            console.log("   Run manually with: npm run gather")
-          }
-
-          // AUTOMATIC FEE COLLECTION - Collect creator fees after rapid sell (if enabled)
-          if (AUTO_COLLECT_FEES) {
-            console.log("\n💰💰💰 AUTOMATIC FEE COLLECTION STARTING... 💰💰💰")
-            try {
-              const { collectCreatorFees } = await import('./collect-fees')
-              const creatorWallet = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
-              await collectCreatorFees(creatorWallet)
-              console.log("\n✅ Automatic fee collection completed")
-            } catch (error: any) {
-              console.error("❌ Error in automatic fee collection:", error.message)
-              console.error("   You can manually run: npm run collect-fees")
-            }
-          } else {
-            console.log("\n⏸️  AUTO_COLLECT_FEES is disabled in .env")
-            console.log("   Fees will remain in creator vault")
-            console.log("   Run manually with: npm run collect-fees")
-          }
-        } catch (error: any) {
-          console.error("❌ Error in rapid sell:", error.message)
-          console.error("   You can manually run: npm run rapid-sell")
-        }
-      })()
-    } else {
-      console.log("\n⏸️  AUTO_RAPID_SELL and AUTO_SELL_50_PERCENT are disabled in .env")
-      console.log("   Sell will NOT start automatically")
-      console.log("   Run manually with: npm run rapid-sell or npm run rapid-sell-50-percent")
-    }
-  } // End of "else" block for when WebSocket tracking is disabled
+    console.log("\n⏸️  AUTO_RAPID_SELL is disabled in .env")
+    console.log("   Rapid sell will NOT start automatically")
+    console.log("   Run manually with: npm run rapid-sell")
+  }
   
   // Token confirmation check runs in PARALLEL with rapid sell (non-blocking)
   // This is just for error handling - rapid sell already handles retries
@@ -813,6 +740,25 @@ const main = async () => {
   const confirmationCheckPromise = (async () => {
     while (Date.now() - startWaitTime < maxWaitTime) {
       try {
+        // First check if bundle transaction was actually included in a block
+        if (bundleSignature) {
+          try {
+            const txStatus = await connection.getSignatureStatus(bundleSignature, { searchTransactionHistory: true })
+            if (txStatus.value) {
+              if (txStatus.value.err) {
+                console.log(`\n❌ Bundle transaction failed: ${JSON.stringify(txStatus.value.err)}`)
+                console.log(`   Transaction: https://solscan.io/tx/${bundleSignature}`)
+                // Continue checking - might be a different transaction that succeeded
+              } else if (txStatus.value.confirmationStatus === 'confirmed' || txStatus.value.confirmationStatus === 'finalized') {
+                console.log(`\n✅ Bundle transaction confirmed on-chain!`)
+                console.log(`   Transaction: https://solscan.io/tx/${bundleSignature}`)
+              }
+            }
+          } catch (e) {
+            // Ignore errors checking transaction status
+          }
+        }
+        
         const mintInfo = await connection.getParsedAccountInfo(mintAddress, "confirmed")
         if (mintInfo.value && mintInfo.value.data) {
           console.log("\n✅ Token confirmed on-chain!")
@@ -914,30 +860,63 @@ const main = async () => {
       }
       
       // Save as failed
-      const failedRunWallets = {
-        count: walletsUsed.length,
-        totalCreated: kps.length,
-        timestamp: Date.now(),
-        mintAddress: null,
-        launchStatus: "FAILED",
-        walletKeys: walletsUsed.map(kp => base58.encode(kp.secretKey)),
-        failureReason: "Bundle not included on-chain"
+      // Update existing current-run.json with FAILED status
+      if (fs.existsSync(keysPath)) {
+        const currentRunData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
+        currentRunData.launchStatus = "FAILED"
+        currentRunData.failureReason = "Bundle not included on-chain"
+        fs.writeFileSync(keysPath, JSON.stringify(currentRunData, null, 2))
+        console.log("\n   ⚠️  Updated current-run.json: launchStatus = FAILED")
+        console.log("   💡 All wallets are saved in current-run.json - you can retry with: npm run retry-bundle")
+        console.log("   💡 Or run gather script to recover SOL from wallets")
+      } else {
+        // Fallback: create new file if somehow it doesn't exist
+        const failedRunWallets: any = {
+          count: walletsUsed.length,
+          totalCreated: kps.length + holderWallets.length + (BUYER_WALLET && BUYER_WALLET.trim() !== '' ? 0 : 1),
+          timestamp: Date.now(),
+          mintAddress: mintAddress.toBase58(),
+          launchStatus: "FAILED",
+          bundleWalletKeys: walletsUsed.map(kp => base58.encode(kp.secretKey)),
+          holderWalletKeys: holderWallets.map(kp => base58.encode(kp.secretKey)),
+          walletKeys: [...walletsUsed, ...holderWallets].map(kp => base58.encode(kp.secretKey)),
+          creatorDevWalletKey: base58.encode(buyerKp.secretKey),
+          failureReason: "Bundle not included on-chain"
+        }
+        fs.writeFileSync(keysPath, JSON.stringify(failedRunWallets, null, 2))
+        console.log("\n   ⚠️  Created current-run.json with FAILED status")
       }
-      fs.writeFileSync(keysPath, JSON.stringify(failedRunWallets, null, 2))
-      console.log("\n   ⚠️  Marked launch as FAILED in current-run.json")
-      console.log("   💡 Run gather script to recover SOL from wallets")
       return false
     } else {
-      // Update current-run.json with SUCCESS status
-      const currentRunWallets = {
-        count: walletsUsed.length,
-        totalCreated: kps.length,
-        timestamp: Date.now(),
-        mintAddress: mintAddress.toBase58(),
-        launchStatus: "SUCCESS",
-        walletKeys: walletsUsed.map(kp => base58.encode(kp.secretKey))
+      // Update existing current-run.json with SUCCESS status
+      if (fs.existsSync(keysPath)) {
+        const currentRunData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
+        currentRunData.launchStatus = "SUCCESS"
+        currentRunData.totalCreated = kps.length + holderWallets.length + (BUYER_WALLET && BUYER_WALLET.trim() !== '' ? 0 : 1)
+        // Ensure all fields are up to date
+        currentRunData.count = walletsUsed.length
+        currentRunData.bundleWalletKeys = walletsUsed.map(kp => base58.encode(kp.secretKey))
+        currentRunData.holderWalletKeys = holderWallets.map(kp => base58.encode(kp.secretKey))
+        currentRunData.walletKeys = [...walletsUsed, ...holderWallets].map(kp => base58.encode(kp.secretKey))
+        currentRunData.creatorDevWalletKey = base58.encode(buyerKp.secretKey)
+        fs.writeFileSync(keysPath, JSON.stringify(currentRunData, null, 2))
+        console.log(`   ✅ Updated current-run.json: launchStatus = SUCCESS`)
+      } else {
+        // Fallback: create new file if somehow it doesn't exist
+        const currentRunWallets: any = {
+          count: walletsUsed.length,
+          totalCreated: kps.length + holderWallets.length + (BUYER_WALLET && BUYER_WALLET.trim() !== '' ? 0 : 1),
+          timestamp: Date.now(),
+          mintAddress: mintAddress.toBase58(),
+          launchStatus: "SUCCESS",
+          bundleWalletKeys: walletsUsed.map(kp => base58.encode(kp.secretKey)),
+          holderWalletKeys: holderWallets.map(kp => base58.encode(kp.secretKey)),
+          walletKeys: [...walletsUsed, ...holderWallets].map(kp => base58.encode(kp.secretKey)),
+          creatorDevWalletKey: base58.encode(buyerKp.secretKey)
+        }
+        fs.writeFileSync(keysPath, JSON.stringify(currentRunWallets, null, 2))
+        console.log(`   ✅ Created current-run.json with SUCCESS status`)
       }
-      fs.writeFileSync(keysPath, JSON.stringify(currentRunWallets, null, 2))
       console.log("\n✅✅✅ TOKEN LAUNCH CONFIRMED - Token is on-chain! ✅✅✅")
       
       // Mark pump address as used if we used one from the pool
@@ -945,25 +924,6 @@ const main = async () => {
         markPumpAddressAsUsed(usedPumpAddressPublicKey)
         console.log(`✅ Marked pump address as used: ${usedPumpAddressPublicKey}`)
       }
-
-      // Start volume maker if enabled
-      if (VOLUME_MAKER_ENABLED && walletsUsed.length > 0) {
-        console.log("\n📊 Starting volume maker in background...")
-        startVolumeMaker(walletsUsed, mintAddress, {
-          enabled: VOLUME_MAKER_ENABLED,
-          durationMinutes: VOLUME_MAKER_DURATION_MINUTES,
-          minIntervalSeconds: VOLUME_MAKER_MIN_INTERVAL_SECONDS,
-          maxIntervalSeconds: VOLUME_MAKER_MAX_INTERVAL_SECONDS,
-          minBuyAmount: VOLUME_MAKER_MIN_BUY_AMOUNT,
-          maxBuyAmount: VOLUME_MAKER_MAX_BUY_AMOUNT,
-          minSellPercentage: VOLUME_MAKER_MIN_SELL_PERCENTAGE,
-          maxSellPercentage: VOLUME_MAKER_MAX_SELL_PERCENTAGE,
-          walletCount: VOLUME_MAKER_WALLET_COUNT
-        }).catch((error) => {
-          console.error("❌ Volume maker error:", error)
-        })
-      }
-
       return true
     }
   })()
@@ -977,18 +937,8 @@ const main = async () => {
   }
   
   // If rapid sell wasn't started, wait for confirmation check
-  const launchSuccess = await confirmationCheckPromise
-  
-  // Show interactive menu if launch was successful
-  if (launchSuccess) {
-    console.log("\n" + "=".repeat(60));
-    console.log("✅ Launch completed successfully!");
-    console.log("=".repeat(60));
-    await showInteractiveMenu();
-  } else {
-    console.log("\n⚠️  Launch failed or not confirmed. Exiting...");
-    process.exit(1);
-  }
+  await confirmationCheckPromise
 }
 
 main()
+
