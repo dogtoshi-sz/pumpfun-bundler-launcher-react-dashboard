@@ -1576,7 +1576,8 @@ app.get('/api/warming-wallets', async (req, res) => {
         lastTransactionDate: w.lastTransactionDate,
         totalTrades: w.totalTrades,
         createdAt: w.createdAt,
-        status: w.status
+        status: w.status,
+        tags: w.tags || []
       }))
     });
   } catch (error) {
@@ -1612,13 +1613,13 @@ app.post('/api/warming-wallets/create', async (req, res) => {
 // Add existing wallet
 app.post('/api/warming-wallets/add', async (req, res) => {
   try {
-    const { privateKey } = req.body;
+    const { privateKey, tags } = req.body;
     if (!privateKey) {
       return res.status(400).json({ success: false, error: 'Private key is required' });
     }
     
     const { addWarmingWallet } = require('../src/wallet-warming-manager.ts');
-    const wallet = addWarmingWallet(privateKey);
+    const wallet = addWarmingWallet(privateKey, tags || []);
     
     res.json({
       success: true,
@@ -1629,12 +1630,37 @@ app.post('/api/warming-wallets/add', async (req, res) => {
         lastTransactionDate: wallet.lastTransactionDate,
         totalTrades: wallet.totalTrades,
         createdAt: wallet.createdAt,
-        status: wallet.status
+        status: wallet.status,
+        tags: wallet.tags || []
       }
     });
   } catch (error) {
     console.error('[Warming] Add wallet error:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to add wallet' });
+  }
+});
+
+// Update wallet tags
+app.put('/api/warming-wallets/:address/tags', async (req, res) => {
+  try {
+    const { address } = req.params;
+    const { tags } = req.body;
+    
+    if (!Array.isArray(tags)) {
+      return res.status(400).json({ success: false, error: 'Tags must be an array' });
+    }
+    
+    const { updateWalletTags } = require('../src/wallet-warming-manager.ts');
+    const updated = updateWalletTags(address, tags);
+    
+    if (updated) {
+      res.json({ success: true, message: 'Tags updated' });
+    } else {
+      res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+  } catch (error) {
+    console.error('[Warming] Update tags error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to update tags' });
   }
 });
 
@@ -1738,7 +1764,8 @@ app.get('/api/warm-wallets/progress', async (req, res) => {
         firstTransactionDate: w.firstTransactionDate,
         lastTransactionDate: w.lastTransactionDate,
         totalTrades: w.totalTrades,
-        status: w.status
+        status: w.status,
+        tags: w.tags || []
       })),
       activeProcesses: Array.from(warmingProcesses.entries()).map(([id, proc]) => ({
         processId: id,

@@ -5,9 +5,9 @@ import { Connection, Keypair, PublicKey, SystemProgram, TransactionMessage, Vers
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
-import { buyTokenSimple, sellTokenSimple } from "./trading-terminal"
-import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "./constants"
-import { sleep } from "./utils"
+import { buyTokenSimple, sellTokenSimple } from "../trading-terminal"
+import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "../constants"
+import { sleep } from "../utils"
 import { getCachedTrendingTokens } from "./fetch-trending-tokens"
 
 const connection = new Connection(RPC_ENDPOINT, {
@@ -24,6 +24,7 @@ export interface WarmedWallet {
   totalTrades: number // Total successful trades (buy+sell pairs)
   createdAt: string // When wallet was added
   status: 'idle' | 'warming' | 'ready' // Current status
+  tags: string[] // Tags like "OLD", "recent", etc.
 }
 
 const WARMED_WALLETS_FILE = path.join(process.cwd(), 'keys', 'warmed-wallets.json')
@@ -56,7 +57,7 @@ export function saveWarmedWallets(wallets: WarmedWallet[]): void {
 }
 
 // Create a new wallet
-export function createWarmingWallet(): WarmedWallet {
+export function createWarmingWallet(tags: string[] = []): WarmedWallet {
   const kp = Keypair.generate()
   const wallet: WarmedWallet = {
     privateKey: base58.encode(kp.secretKey),
@@ -66,7 +67,8 @@ export function createWarmingWallet(): WarmedWallet {
     lastTransactionDate: null,
     totalTrades: 0,
     createdAt: new Date().toISOString(),
-    status: 'idle'
+    status: 'idle',
+    tags: tags || []
   }
   
   const wallets = loadWarmedWallets()
@@ -77,7 +79,7 @@ export function createWarmingWallet(): WarmedWallet {
 }
 
 // Add existing wallet
-export function addWarmingWallet(privateKey: string): WarmedWallet {
+export function addWarmingWallet(privateKey: string, tags: string[] = []): WarmedWallet {
   const kp = Keypair.fromSecretKey(base58.decode(privateKey))
   const address = kp.publicKey.toBase58()
   
@@ -86,6 +88,11 @@ export function addWarmingWallet(privateKey: string): WarmedWallet {
   // Check if wallet already exists
   const existing = wallets.find(w => w.address === address)
   if (existing) {
+    // Merge tags if wallet exists
+    if (tags && tags.length > 0) {
+      existing.tags = [...new Set([...existing.tags, ...tags])]
+      saveWarmedWallets(wallets)
+    }
     return existing
   }
   
@@ -97,13 +104,28 @@ export function addWarmingWallet(privateKey: string): WarmedWallet {
     lastTransactionDate: null,
     totalTrades: 0,
     createdAt: new Date().toISOString(),
-    status: 'idle'
+    status: 'idle',
+    tags: tags || []
   }
   
   wallets.push(wallet)
   saveWarmedWallets(wallets)
   
   return wallet
+}
+
+// Update wallet tags
+export function updateWalletTags(address: string, tags: string[]): boolean {
+  const wallets = loadWarmedWallets()
+  const wallet = wallets.find(w => w.address === address)
+  
+  if (wallet) {
+    wallet.tags = tags
+    saveWarmedWallets(wallets)
+    return true
+  }
+  
+  return false
 }
 
 // Auto-fund wallet if needed
@@ -245,9 +267,10 @@ export async function warmWallet(
       const sellDelay = 5 + Math.random() * 25
       await sleep(sellDelay * 1000)
       
-      // Sell
-      const sellPercentage = 80 + Math.random() * 20
-      console.log(`   💸 Selling ${sellPercentage.toFixed(1)}%...`)
+      // Sell (keep 1-5% to make wallet look active)
+      const keepPercentage = 1 + Math.random() * 4 // Keep 1-5% of tokens
+      const sellPercentage = 100 - keepPercentage
+      console.log(`   💸 Selling ${sellPercentage.toFixed(1)}% (keeping ${keepPercentage.toFixed(1)}% for activity)...`)
       await sellTokenSimple(
         wallet.privateKey,
         randomToken,

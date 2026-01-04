@@ -34,7 +34,8 @@
     "test-wallet": "ts-node test-wallet-trading.ts",
     "retry-bundle": "ts-node retry-bundle.ts",
     "find-creator": "ts-node find-creator-wallet.ts",
-    "warm-wallets": "ts-node warm-wallets.ts"
+    "warm-wallets": "ts-node warm-wallets.ts",
+    "import-wallets": "ts-node scripts/import-wallets.ts"
   },
   "license": "ISC",
   "devDependencies": {
