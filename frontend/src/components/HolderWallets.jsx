@@ -698,7 +698,7 @@ export default function HolderWallets() {
                       value={manualInputs[`${wallet.address}-buy-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-buy-manual`]: e.target.value })}
                       placeholder="SOL"
-                      className="flex-1 px-2 py-1 text-xs bg-gray-900/50/50 border border-gray-800 rounded text-white focus:outline-none focus:ring-1 focus:ring-green-500"
+                      className="flex-1 px-2 py-1 text-xs bg-white border border-gray-800 rounded text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500"
                     />
                     <button
                       onClick={() => handleManualBuy(wallet)}
@@ -750,7 +750,7 @@ export default function HolderWallets() {
                       value={manualInputs[`${wallet.address}-sell-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-sell-manual`]: e.target.value })}
                       placeholder="%"
-                      className="flex-1 px-2 py-1 text-xs bg-gray-900/50/50 border border-gray-800 rounded text-white focus:outline-none focus:ring-1 focus:ring-red-500"
+                      className="flex-1 px-2 py-1 text-xs bg-white border border-gray-800 rounded text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                     <button
                       onClick={() => handleManualSell(wallet)}
