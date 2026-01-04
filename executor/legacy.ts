@@ -23,7 +23,7 @@ export const execute = async (transaction: VersionedTransaction, latestBlockhash
   );
 
   if (confirmation.value.err) {
-    console.log("Confirmtaion error")
+    console.log(`❌ Confirmation error: ${JSON.stringify(confirmation.value.err)}`)
     return ""
   } else {
     if (isBuy === 1) {

@@ -348,7 +348,7 @@ export default function TokenLaunch({ onLaunch }) {
     try {
       // Handle theme - normalize to lowercase for razebot CSS files (blue.css, green.css, etc.)
       const websiteTheme = settings.WEBSITE_THEME || 'DEFAULT';
-      let colorScheme = 'blue'; // Default
+      let colorScheme = undefined; // Don't set default - let database keep existing value
       let darkMode = false;
       
       if (websiteTheme === 'CUSTOM' && settings.WEBSITE_CUSTOM_COLOR) {
@@ -359,11 +359,8 @@ export default function TokenLaunch({ onLaunch }) {
         // Normalize theme to lowercase for CSS file names (blue.css, green.css, purple.css, etc.)
         colorScheme = websiteTheme.toLowerCase().trim();
         darkMode = false;
-      } else {
-        // DEFAULT theme
-        colorScheme = 'blue';
-        darkMode = false;
       }
+      // If DEFAULT, leave colorScheme as undefined so it doesn't update the database field
       
       // Upload token image to Vercel Blob if needed, then use URL
       let tokenImageUrl = null;
@@ -442,7 +439,7 @@ export default function TokenLaunch({ onLaunch }) {
             chain: 'solana',
             logoUrl: websiteLogoUrl || null, // Use website logo for logoUrl (saves to website_logo_image)
             tokenImageUrl: tokenImageUrl || null, // Use token image for tokenImageUrl
-            colorScheme: colorScheme,
+            ...(colorScheme !== undefined && { colorScheme: colorScheme }), // Only include if defined (DEFAULT theme won't update)
             darkMode: darkMode,
           }
         })

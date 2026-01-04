@@ -423,9 +423,9 @@ const distributeSolWithMixing = async (
         const mixerNeedsFunding = mixerBalance < solAmount + 0.01 * 1e9
 
         try {
-          // Step 1: Fund mixing wallet from mainKp (if needed) - in parallel
+          // Step 1: Fund mixing wallet from mainKp (if needed)
           if (mixerNeedsFunding) {
-            const fundingAmount = solAmount + 0.01 * 1e9
+            const fundingAmount = solAmount + 0.02 * 1e9 // Extra buffer for fees and rent
             const blockhash = await connection.getLatestBlockhash()
             
             const fundMixerTx = new TransactionMessage({
@@ -447,7 +447,7 @@ const distributeSolWithMixing = async (
             const fundMixerSig = await execute(fundMixerV0, blockhash, 1)
             
             if (!fundMixerSig) {
-              console.log(`   ⚠️  Wallet ${i + 1}: Failed to fund mixer, using direct funding...`)
+              console.log(`   ⚠️  Wallet ${i + 1}: Failed to fund mixer (tx: ${fundMixerSig || 'no signature'}), using direct funding...`)
               // Fallback: fund directly
               const directBlockhash = await connection.getLatestBlockhash()
               const directTx = new TransactionMessage({
@@ -465,26 +465,69 @@ const distributeSolWithMixing = async (
               }).compileToV0Message()
               const directV0 = new VersionedTransaction(directTx)
               directV0.sign([mainKp])
-              await execute(directV0, directBlockhash, 1)
+              const directSig = await execute(directV0, directBlockhash, 1)
+              if (directSig) {
+                console.log(`   ✅ Wallet ${i + 1}: Direct funding successful`)
+              }
               return
             }
             
-            // Update balance cache
-            mixerBalances[mixerIndex] += fundingAmount
-            // Small delay for privacy (randomized)
-            await sleep(randomDelay())
+            // CRITICAL: Wait for funding to confirm and verify balance before proceeding
+            // Poll balance up to 10 times (5 seconds max) to ensure funding is confirmed
+            let confirmedBalance = mixerBalance
+            let attempts = 0
+            const maxAttempts = 10
+            while (attempts < maxAttempts) {
+              await sleep(500) // Wait 500ms between checks
+              confirmedBalance = await connection.getBalance(mixer.publicKey)
+              if (confirmedBalance >= mixerBalance + fundingAmount - 1000) { // Allow 1000 lamport tolerance
+                break
+              }
+              attempts++
+            }
+            
+            if (confirmedBalance < mixerBalance + fundingAmount - 1000) {
+              console.log(`   ⚠️  Wallet ${i + 1}: Mixer funding not confirmed after ${maxAttempts} attempts (expected: ${((mixerBalance + fundingAmount) / 1e9).toFixed(6)} SOL, got: ${(confirmedBalance / 1e9).toFixed(6)} SOL), using direct funding...`)
+              // Fallback: fund directly
+              const directBlockhash = await connection.getLatestBlockhash()
+              const directTx = new TransactionMessage({
+                payerKey: mainKp.publicKey,
+                recentBlockhash: directBlockhash.blockhash,
+                instructions: [
+                  ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                  SystemProgram.transfer({
+                    fromPubkey: mainKp.publicKey,
+                    toPubkey: targetWallet.publicKey,
+                    lamports: solAmount
+                  })
+                ]
+              }).compileToV0Message()
+              const directV0 = new VersionedTransaction(directTx)
+              directV0.sign([mainKp])
+              const directSig = await execute(directV0, directBlockhash, 1)
+              if (directSig) {
+                console.log(`   ✅ Wallet ${i + 1}: Direct funding successful`)
+              }
+              return
+            }
+            
+            // Update balance cache with confirmed balance
+            mixerBalances[mixerIndex] = confirmedBalance
+            console.log(`   ✅ Wallet ${i + 1}: Mixer funded and confirmed (balance: ${(confirmedBalance / 1e9).toFixed(6)} SOL)`)
           }
 
-          // Step 2: Transfer from mixer to target wallet - in parallel
-          // Get actual mixer balance (may have changed if funded in this batch)
-          const actualMixerBalance = await connection.getBalance(mixer.publicKey)
+          // Step 2: Transfer from mixer to target wallet
+          // Use confirmed balance from cache (or re-fetch if needed)
+          const actualMixerBalance = mixerBalances[mixerIndex] || await connection.getBalance(mixer.publicKey)
           const routeBlockhash = await connection.getLatestBlockhash()
           
-          // Calculate amount to transfer: ALL balance minus rent exemption (~0.00089 SOL) and transaction fees (~0.00001 SOL)
-          // This ensures we don't leave SOL behind in mixing wallets
+          // Calculate amount to transfer: balance minus rent exemption and transaction fees
+          // Leave enough for rent exemption (~0.00089 SOL) and fees (~0.0001 SOL)
           const rentExemption = 890_880 // Base account rent exemption
-          const estimatedTxFee = 5_000 // Estimated transaction fee
-          const amountToTransfer = actualMixerBalance - rentExemption - estimatedTxFee
+          const estimatedTxFee = 10_000 // Higher estimate for safety
+          const safetyBuffer = 5_000 // Extra buffer
+          const amountToTransfer = actualMixerBalance - rentExemption - estimatedTxFee - safetyBuffer
           
           // Only transfer if we have enough (at least the target amount)
           if (amountToTransfer >= solAmount) {
@@ -497,7 +540,7 @@ const distributeSolWithMixing = async (
                 SystemProgram.transfer({
                   fromPubkey: mixer.publicKey,
                   toPubkey: targetWallet.publicKey,
-                  lamports: amountToTransfer // Send ALL balance (minus rent + fees)
+                  lamports: amountToTransfer
                 })
               ]
             }).compileToV0Message()
@@ -507,7 +550,7 @@ const distributeSolWithMixing = async (
             const routeSig = await execute(routeV0, routeBlockhash, 1)
             
             if (!routeSig) {
-              console.log(`   ⚠️  Wallet ${i + 1}: Failed to route through mixer, using direct funding...`)
+              console.log(`   ⚠️  Wallet ${i + 1}: Failed to route through mixer (tx: ${routeSig || 'no signature'}), using direct funding...`)
               // Fallback: fund directly
               const directBlockhash = await connection.getLatestBlockhash()
               const directTx = new TransactionMessage({
@@ -525,15 +568,18 @@ const distributeSolWithMixing = async (
               }).compileToV0Message()
               const directV0 = new VersionedTransaction(directTx)
               directV0.sign([mainKp])
-              await execute(directV0, directBlockhash, 1)
+              const directSig = await execute(directV0, directBlockhash, 1)
+              if (directSig) {
+                console.log(`   ✅ Wallet ${i + 1}: Direct funding successful`)
+              }
             } else {
-              // Update balance cache (mixer should now have only rent exemption left)
-              mixerBalances[mixerIndex] = rentExemption
-              console.log(`   ✅ Wallet ${i + 1}: Transferred ${(amountToTransfer / 1e9).toFixed(6)} SOL from mixer (drained balance)`)
+              // Update balance cache (mixer should now have only rent exemption + buffer left)
+              mixerBalances[mixerIndex] = rentExemption + estimatedTxFee + safetyBuffer
+              console.log(`   ✅ Wallet ${i + 1}: Transferred ${(amountToTransfer / 1e9).toFixed(6)} SOL from mixer to target wallet`)
             }
           } else {
             // Not enough balance, fund directly
-            console.log(`   ⚠️  Wallet ${i + 1}: Mixer balance too low, using direct funding...`)
+            console.log(`   ⚠️  Wallet ${i + 1}: Mixer balance too low (${(actualMixerBalance / 1e9).toFixed(6)} SOL, need ${(solAmount / 1e9).toFixed(6)} SOL), using direct funding...`)
             const directBlockhash = await connection.getLatestBlockhash()
             const directTx = new TransactionMessage({
               payerKey: mainKp.publicKey,
@@ -550,10 +596,14 @@ const distributeSolWithMixing = async (
             }).compileToV0Message()
             const directV0 = new VersionedTransaction(directTx)
             directV0.sign([mainKp])
-            await execute(directV0, directBlockhash, 1)
+            const directSig = await execute(directV0, directBlockhash, 1)
+            if (directSig) {
+              console.log(`   ✅ Wallet ${i + 1}: Direct funding successful`)
+            }
           }
         } catch (error) {
-          console.log(`   ⚠️  Wallet ${i + 1}: Error during mixing, using direct funding...`, error instanceof Error ? error.message : error)
+          const errorMsg = error instanceof Error ? error.message : String(error)
+          console.log(`   ⚠️  Wallet ${i + 1}: Error during mixing (${errorMsg}), using direct funding...`)
           // Fallback: fund directly
           try {
             const directBlockhash = await connection.getLatestBlockhash()
@@ -572,9 +622,14 @@ const distributeSolWithMixing = async (
             }).compileToV0Message()
             const directV0 = new VersionedTransaction(directTx)
             directV0.sign([mainKp])
-            await execute(directV0, directBlockhash, 1)
+            const directSig = await execute(directV0, directBlockhash, 1)
+            if (directSig) {
+              console.log(`   ✅ Wallet ${i + 1}: Direct funding successful after error`)
+            } else {
+              console.log(`   ❌ Wallet ${i + 1}: Direct funding also failed`)
+            }
           } catch (fallbackError) {
-            console.log(`   ❌ Wallet ${i + 1}: Direct funding also failed`)
+            console.log(`   ❌ Wallet ${i + 1}: Direct funding also failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`)
           }
         }
       }))
