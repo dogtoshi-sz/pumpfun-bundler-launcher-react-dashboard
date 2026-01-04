@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import {
   RocketLaunchIcon,
   WalletIcon,
@@ -118,6 +119,13 @@ export default function TokenLaunch({ onLaunch }) {
   const [selectedBundleWallets, setSelectedBundleWallets] = useState([]);
   const [selectedHolderWallets, setSelectedHolderWallets] = useState([]);
   const [loadingWarmedWallets, setLoadingWarmedWallets] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  // Filter and sort state for wallet modal
+  const [searchQuery, setSearchQuery] = useState('');
+  const [tagFilter, setTagFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('createdAt');
+  const [sortOrder, setSortOrder] = useState('desc');
 
   useEffect(() => {
     loadSettings();
@@ -140,6 +148,73 @@ export default function TokenLaunch({ onLaunch }) {
       setLoadingWarmedWallets(false);
     }
   };
+
+  // Filter and sort wallets for modal
+  const filteredAndSortedWallets = React.useMemo(() => {
+    let filtered = warmedWallets.filter(wallet => {
+      // Search filter
+      if (searchQuery && !wallet.address.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      // Tag filter
+      if (tagFilter !== 'all') {
+        if (tagFilter === 'OLD' && (!wallet.tags || !wallet.tags.includes('OLD'))) return false;
+        if (tagFilter === 'recent' && (!wallet.tags || !wallet.tags.includes('recent'))) return false;
+        if (tagFilter !== 'OLD' && tagFilter !== 'recent' && (!wallet.tags || !wallet.tags.includes(tagFilter))) return false;
+      }
+      // Status filter
+      if (statusFilter !== 'all') {
+        if (wallet.status !== statusFilter) return false;
+      }
+      return true;
+    });
+
+    // Sort
+    filtered.sort((a, b) => {
+      let aVal, bVal;
+      switch (sortBy) {
+        case 'createdAt':
+          aVal = new Date(a.createdAt || 0).getTime();
+          bVal = new Date(b.createdAt || 0).getTime();
+          break;
+        case 'transactionCount':
+          aVal = a.transactionCount || 0;
+          bVal = b.transactionCount || 0;
+          break;
+        case 'totalTrades':
+          aVal = a.totalTrades || 0;
+          bVal = b.totalTrades || 0;
+          break;
+        case 'firstTransactionDate':
+          aVal = a.firstTransactionDate ? new Date(a.firstTransactionDate).getTime() : 0;
+          bVal = b.firstTransactionDate ? new Date(b.firstTransactionDate).getTime() : 0;
+          break;
+        case 'lastTransactionDate':
+          aVal = a.lastTransactionDate ? new Date(a.lastTransactionDate).getTime() : 0;
+          bVal = b.lastTransactionDate ? new Date(b.lastTransactionDate).getTime() : 0;
+          break;
+        case 'solBalance':
+          aVal = a.solBalance || 0;
+          bVal = b.solBalance || 0;
+          break;
+        default:
+          return 0;
+      }
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+
+    return filtered;
+  }, [warmedWallets, searchQuery, tagFilter, statusFilter, sortBy, sortOrder]);
+
+  const allTags = React.useMemo(() => {
+    const tags = new Set();
+    warmedWallets.forEach(w => {
+      if (w.tags && Array.isArray(w.tags)) {
+        w.tags.forEach(tag => tags.add(tag));
+      }
+    });
+    return Array.from(tags);
+  }, [warmedWallets]);
   
   // Reload wallet info when settings change (wallet counts/amounts)
   useEffect(() => {
@@ -1522,87 +1597,358 @@ export default function TokenLaunch({ onLaunch }) {
           </div>
           {useWarmedWallets && (
             <div className="mt-4 space-y-4">
-              <div className="p-3 bg-gray-900/50 rounded border border-gray-800">
-                <p className="text-xs text-gray-400 mb-2">
-                  Available Warmed Wallets: {warmedWallets.length} | 
-                  Selected Bundle: {selectedBundleWallets.length} | 
-                  Selected Holder: {selectedHolderWallets.length}
-                </p>
-                {loadingWarmedWallets ? (
-                  <p className="text-xs text-gray-500">Loading warmed wallets...</p>
-                ) : warmedWallets.length === 0 ? (
-                  <p className="text-xs text-yellow-400">
-                    No warmed wallets available. Go to the Warming tab to create or add wallets.
-                  </p>
-                ) : (
-                  <div className="max-h-60 overflow-y-auto space-y-2">
-                    {warmedWallets.map((wallet) => {
-                      const isBundle = selectedBundleWallets.includes(wallet.address);
-                      const isHolder = selectedHolderWallets.includes(wallet.address);
-                      return (
-                        <div
-                          key={wallet.address}
-                          className="flex items-center justify-between p-2 bg-gray-800/50 rounded border border-gray-700"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-mono text-white truncate">
-                              {wallet.address.slice(0, 8)}...{wallet.address.slice(-8)}
-                            </p>
-                            <div className="flex gap-2 mt-1">
-                              <span className="text-xs text-gray-500">
-                                Trades: {wallet.totalTrades || wallet.transactionCount || 0}
-                              </span>
-                              <span className="text-xs text-gray-500">
+              {/* Selected Wallets Summary */}
+              <div className="p-4 bg-gray-900/50 rounded border border-gray-800">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      Selected Wallets Summary
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Total Available: {warmedWallets.length} | 
+                      Bundle: {selectedBundleWallets.length} | 
+                      Holder: {selectedHolderWallets.length}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadWarmedWallets();
+                      setShowWalletModal(true);
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
+                  >
+                    📋 Select Wallets
+                  </button>
+                </div>
+                
+                {/* Selected Bundle Wallets */}
+                {selectedBundleWallets.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold text-green-400 mb-2">
+                      Bundle Wallets ({selectedBundleWallets.length}):
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedBundleWallets.map(addr => {
+                        const wallet = warmedWallets.find(w => w.address === addr);
+                        return (
+                          <div
+                            key={addr}
+                            className="px-2 py-1 bg-green-900/30 border border-green-600/50 rounded text-xs"
+                          >
+                            <p className="text-white font-mono">{addr.slice(0, 8)}...{addr.slice(-6)}</p>
+                            {wallet && (
+                              <div className="text-gray-400 text-[10px] mt-0.5">
+                                Trades: {wallet.totalTrades || wallet.transactionCount || 0} | 
                                 SOL: {(wallet.solBalance || 0).toFixed(4)}
-                              </span>
-                              {wallet.tags && wallet.tags.length > 0 && (
-                                <span className="text-xs text-blue-400">
-                                  {wallet.tags.join(', ')}
-                                </span>
-                              )}
-                            </div>
+                              </div>
+                            )}
                           </div>
-                          <div className="flex gap-2 ml-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (isBundle) {
-                                  setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
-                                } else {
-                                  setSelectedBundleWallets(prev => [...prev, wallet.address]);
-                                }
-                              }}
-                              className={`px-2 py-1 text-xs rounded ${
-                                isBundle
-                                  ? 'bg-green-600 text-white'
-                                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                              }`}
-                            >
-                              Bundle
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (isHolder) {
-                                  setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
-                                } else {
-                                  setSelectedHolderWallets(prev => [...prev, wallet.address]);
-                                }
-                              }}
-                              className={`px-2 py-1 text-xs rounded ${
-                                isHolder
-                                  ? 'bg-yellow-600 text-white'
-                                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                              }`}
-                            >
-                              Holder
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
+                
+                {/* Selected Holder Wallets */}
+                {selectedHolderWallets.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-yellow-400 mb-2">
+                      Holder Wallets ({selectedHolderWallets.length}):
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedHolderWallets.map(addr => {
+                        const wallet = warmedWallets.find(w => w.address === addr);
+                        return (
+                          <div
+                            key={addr}
+                            className="px-2 py-1 bg-yellow-900/30 border border-yellow-600/50 rounded text-xs"
+                          >
+                            <p className="text-white font-mono">{addr.slice(0, 8)}...{addr.slice(-6)}</p>
+                            {wallet && (
+                              <div className="text-gray-400 text-[10px] mt-0.5">
+                                Trades: {wallet.totalTrades || wallet.transactionCount || 0} | 
+                                SOL: {(wallet.solBalance || 0).toFixed(4)}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                
+                {selectedBundleWallets.length === 0 && selectedHolderWallets.length === 0 && (
+                  <p className="text-xs text-gray-500 italic">
+                    No wallets selected. Click "Select Wallets" to choose warmed wallets for your launch.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* Wallet Selection Modal */}
+          {showWalletModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+              <div className="bg-gray-900 border border-gray-700 rounded-lg w-[95vw] h-[90vh] max-w-7xl flex flex-col">
+                {/* Modal Header */}
+                <div className="flex items-center justify-between p-4 border-b border-gray-800">
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Select Warmed Wallets</h3>
+                    <p className="text-sm text-gray-400 mt-1">
+                      {filteredAndSortedWallets.length} of {warmedWallets.length} wallets shown | 
+                      Bundle: {selectedBundleWallets.length} | 
+                      Holder: {selectedHolderWallets.length}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowWalletModal(false)}
+                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                
+                {/* Filters and Sort */}
+                <div className="p-4 border-b border-gray-800 bg-gray-900/50">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {/* Search */}
+                    <div className="lg:col-span-2">
+                      <label className="text-xs text-gray-400 mb-1 block">🔍 Search Address</label>
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search by wallet address..."
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                      />
+                    </div>
+                    
+                    {/* Tag Filter */}
+                    <div>
+                      <label className="text-xs text-gray-400 mb-1 block">🏷️ Filter by Tag</label>
+                      <select
+                        value={tagFilter}
+                        onChange={(e) => setTagFilter(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                      >
+                        <option value="all">All Tags</option>
+                        {allTags.map(tag => (
+                          <option key={tag} value={tag}>{tag}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    {/* Status Filter */}
+                    <div>
+                      <label className="text-xs text-gray-400 mb-1 block">📊 Filter by Status</label>
+                      <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                      >
+                        <option value="all">All Status</option>
+                        <option value="idle">⏸️ Idle</option>
+                        <option value="warming">🔥 Warming</option>
+                        <option value="ready">✅ Ready</option>
+                      </select>
+                    </div>
+                    
+                    {/* Sort By */}
+                    <div>
+                      <label className="text-xs text-gray-400 mb-1 block">🔀 Sort By</label>
+                      <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                      >
+                        <option value="createdAt">Created Date</option>
+                        <option value="transactionCount">Transaction Count</option>
+                        <option value="totalTrades">Total Trades</option>
+                        <option value="firstTransactionDate">First Transaction</option>
+                        <option value="lastTransactionDate">Last Transaction</option>
+                        <option value="solBalance">SOL Balance</option>
+                      </select>
+                    </div>
+                  </div>
+                  
+                  {/* Sort Order Toggle */}
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                      className={`px-3 py-1 rounded text-xs font-medium ${
+                        sortOrder === 'asc' 
+                          ? 'bg-blue-600 text-white' 
+                          : 'bg-gray-700 text-gray-300'
+                      }`}
+                    >
+                      {sortOrder === 'asc' ? '↑ Ascending' : '↓ Descending'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSearchQuery('');
+                        setTagFilter('all');
+                        setStatusFilter('all');
+                        setSortBy('createdAt');
+                        setSortOrder('desc');
+                      }}
+                      className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
+                    >
+                      🗑️ Clear Filters
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Wallet List */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  {loadingWarmedWallets ? (
+                    <div className="text-center text-gray-400 py-8">Loading wallets...</div>
+                  ) : filteredAndSortedWallets.length === 0 ? (
+                    <div className="text-center text-yellow-400 py-8">
+                      No wallets match your filters. Try adjusting your search or filters.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {filteredAndSortedWallets.map((wallet) => {
+                        const isBundle = selectedBundleWallets.includes(wallet.address);
+                        const isHolder = selectedHolderWallets.includes(wallet.address);
+                        return (
+                          <div
+                            key={wallet.address}
+                            className={`p-3 rounded-lg border ${
+                              isBundle || isHolder
+                                ? 'bg-green-900/30 border-green-600/50'
+                                : 'bg-gray-800/50 border-gray-700'
+                            }`}
+                          >
+                            <div className="mb-2">
+                              <p className="text-xs font-mono text-white break-all">
+                                {wallet.address}
+                              </p>
+                            </div>
+                            
+                            <div className="space-y-1 text-xs mb-3">
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">Trades:</span>
+                                <span className="text-white">{wallet.totalTrades || wallet.transactionCount || 0}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">SOL Balance:</span>
+                                <span className={`font-semibold ${
+                                  (wallet.solBalance || 0) > 0.1 ? 'text-green-400' : 
+                                  (wallet.solBalance || 0) > 0.01 ? 'text-yellow-400' : 
+                                  'text-red-400'
+                                }`}>
+                                  {(wallet.solBalance || 0).toFixed(4)} SOL
+                                </span>
+                              </div>
+                              {wallet.firstTransactionDate && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-400">First TX:</span>
+                                  <span className="text-white text-[10px]">
+                                    {new Date(wallet.firstTransactionDate).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              )}
+                              {wallet.lastTransactionDate && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-400">Last TX:</span>
+                                  <span className="text-white text-[10px]">
+                                    {new Date(wallet.lastTransactionDate).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              )}
+                              {wallet.tags && wallet.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {wallet.tags.map(tag => (
+                                    <span key={tag} className="px-1.5 py-0.5 bg-blue-900/50 text-blue-300 rounded text-[10px]">
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">Status:</span>
+                                <span className={`${
+                                  wallet.status === 'ready' ? 'text-green-400' :
+                                  wallet.status === 'warming' ? 'text-yellow-400' :
+                                  'text-gray-400'
+                                }`}>
+                                  {wallet.status || 'idle'}
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="flex gap-2 mt-3">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isBundle) {
+                                    setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
+                                  } else {
+                                    setSelectedBundleWallets(prev => [...prev, wallet.address]);
+                                    // Remove from holder if it was there
+                                    setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
+                                  }
+                                }}
+                                className={`flex-1 px-2 py-1.5 text-xs rounded font-medium transition-colors ${
+                                  isBundle
+                                    ? 'bg-green-600 text-white'
+                                    : 'bg-gray-700 text-gray-300 hover:bg-green-600 hover:text-white'
+                                }`}
+                              >
+                                {isBundle ? '✓ Bundle' : 'Bundle'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isHolder) {
+                                    setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
+                                  } else {
+                                    setSelectedHolderWallets(prev => [...prev, wallet.address]);
+                                    // Remove from bundle if it was there
+                                    setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
+                                  }
+                                }}
+                                className={`flex-1 px-2 py-1.5 text-xs rounded font-medium transition-colors ${
+                                  isHolder
+                                    ? 'bg-yellow-600 text-white'
+                                    : 'bg-gray-700 text-gray-300 hover:bg-yellow-600 hover:text-white'
+                                }`}
+                              >
+                                {isHolder ? '✓ Holder' : 'Holder'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Modal Footer */}
+                <div className="flex items-center justify-between p-4 border-t border-gray-800 bg-gray-900/50">
+                  <div className="text-sm text-gray-400">
+                    Selected: {selectedBundleWallets.length} Bundle, {selectedHolderWallets.length} Holder
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedBundleWallets([]);
+                        setSelectedHolderWallets([]);
+                      }}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
+                    >
+                      Clear All
+                    </button>
+                    <button
+                      onClick={() => setShowWalletModal(false)}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
