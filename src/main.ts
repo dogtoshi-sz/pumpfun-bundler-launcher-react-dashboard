@@ -474,20 +474,21 @@ const distributeSolWithMixing = async (
             
             // CRITICAL: Wait for funding to confirm and verify balance before proceeding
             // Poll balance up to 10 times (5 seconds max) to ensure funding is confirmed
-            let confirmedBalance = mixerBalance
+            const initialBalance = mixerBalances[mixerIndex]
+            let confirmedBalance = initialBalance
             let attempts = 0
             const maxAttempts = 10
             while (attempts < maxAttempts) {
               await sleep(500) // Wait 500ms between checks
               confirmedBalance = await connection.getBalance(mixer.publicKey)
-              if (confirmedBalance >= mixerBalance + fundingAmount - 1000) { // Allow 1000 lamport tolerance
+              if (confirmedBalance >= initialBalance + fundingAmount - 1000) { // Allow 1000 lamport tolerance
                 break
               }
               attempts++
             }
             
-            if (confirmedBalance < mixerBalance + fundingAmount - 1000) {
-              console.log(`   ⚠️  Wallet ${i + 1}: Mixer funding not confirmed after ${maxAttempts} attempts (expected: ${((mixerBalance + fundingAmount) / 1e9).toFixed(6)} SOL, got: ${(confirmedBalance / 1e9).toFixed(6)} SOL), using direct funding...`)
+            if (confirmedBalance < initialBalance + fundingAmount - 1000) {
+              console.log(`   ⚠️  Wallet ${i + 1}: Mixer funding not confirmed after ${maxAttempts} attempts (expected: ${((initialBalance + fundingAmount) / 1e9).toFixed(6)} SOL, got: ${(confirmedBalance / 1e9).toFixed(6)} SOL), using direct funding...`)
               // Fallback: fund directly
               const directBlockhash = await connection.getLatestBlockhash()
               const directTx = new TransactionMessage({
