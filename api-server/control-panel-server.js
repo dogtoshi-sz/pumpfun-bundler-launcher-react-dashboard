@@ -1667,6 +1667,32 @@ app.put('/api/warming-wallets/:address/tags', async (req, res) => {
   }
 });
 
+// Update wallet stats from blockchain (RPC call - only when user requests)
+app.post('/api/warming-wallets/update-stats', async (req, res) => {
+  try {
+    const { walletAddresses } = req.body;
+    
+    if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
+    }
+    
+    console.log(`[Warming] Updating stats for ${walletAddresses.length} wallet(s) from blockchain...`);
+    const { updateMultipleWalletsFromBlockchain } = require('../src/wallet-warming-manager.ts');
+    const result = await updateMultipleWalletsFromBlockchain(walletAddresses);
+    
+    res.json({
+      success: true,
+      message: `Updated ${result.updated} wallet(s), ${result.failed} failed`,
+      updated: result.updated,
+      failed: result.failed,
+      errors: result.errors
+    });
+  } catch (error) {
+    console.error('[Warming] Update stats error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to update wallet stats' });
+  }
+});
+
 // Delete wallet
 app.delete('/api/warming-wallets/:address', async (req, res) => {
   try {

@@ -399,3 +399,125 @@ export function deleteWarmingWallet(address: string): boolean {
   return true
 }
 
+// Fetch transaction history from blockchain for a wallet
+export async function fetchWalletTransactionHistory(address: string): Promise<{
+  transactionCount: number
+  firstTransactionDate: string | null
+  lastTransactionDate: string | null
+  totalTrades: number
+}> {
+  try {
+    const pubkey = new PublicKey(address)
+    
+    // Get transaction signatures (up to 1000 most recent)
+    const signatures = await connection.getSignaturesForAddress(pubkey, { limit: 1000 })
+    
+    if (signatures.length === 0) {
+      return {
+        transactionCount: 0,
+        firstTransactionDate: null,
+        lastTransactionDate: null,
+        totalTrades: 0
+      }
+    }
+    
+    // Sort by block time (oldest first)
+    const sorted = signatures
+      .filter(sig => sig.blockTime !== null)
+      .sort((a, b) => (a.blockTime || 0) - (b.blockTime || 0))
+    
+    const firstTx = sorted[0]
+    const lastTx = signatures[0] // Most recent is first in array
+    
+    // Count transactions (each signature = 1 transaction)
+    const transactionCount = signatures.length
+    
+    // Estimate trades: look for token transfers (buy/sell pairs)
+    // This is an approximation - we count transactions that involve token programs
+    // A more accurate method would parse each transaction, but that's expensive
+    // For now, we'll estimate: transactions / 2 = trades (since each trade = buy + sell)
+    const totalTrades = Math.floor(transactionCount / 2)
+    
+    return {
+      transactionCount,
+      firstTransactionDate: firstTx?.blockTime ? new Date(firstTx.blockTime * 1000).toISOString() : null,
+      lastTransactionDate: lastTx?.blockTime ? new Date(lastTx.blockTime * 1000).toISOString() : null,
+      totalTrades
+    }
+  } catch (error: any) {
+    console.error(`[Wallet Manager] Error fetching transaction history for ${address}:`, error.message)
+    throw error
+  }
+}
+
+// Update wallet stats from blockchain (only when user requests)
+export async function updateWalletStatsFromBlockchain(address: string): Promise<WarmedWallet | null> {
+  try {
+    console.log(`[Wallet Manager] Fetching blockchain data for ${address}...`)
+    const history = await fetchWalletTransactionHistory(address)
+    
+    const wallets = loadWarmedWallets()
+    const walletIndex = wallets.findIndex(w => w.address === address)
+    
+    if (walletIndex < 0) {
+      console.log(`[Wallet Manager] Wallet not found: ${address}`)
+      return null
+    }
+    
+    const wallet = wallets[walletIndex]
+    
+    // Update stats (preserve existing if blockchain data is missing)
+    wallet.transactionCount = history.transactionCount || wallet.transactionCount
+    wallet.totalTrades = history.totalTrades || wallet.totalTrades
+    
+    // Only update dates if we got them from blockchain and they're more accurate
+    if (history.firstTransactionDate) {
+      if (!wallet.firstTransactionDate || 
+          new Date(history.firstTransactionDate) < new Date(wallet.firstTransactionDate)) {
+        wallet.firstTransactionDate = history.firstTransactionDate
+      }
+    }
+    
+    if (history.lastTransactionDate) {
+      if (!wallet.lastTransactionDate || 
+          new Date(history.lastTransactionDate) > new Date(wallet.lastTransactionDate)) {
+        wallet.lastTransactionDate = history.lastTransactionDate
+      }
+    }
+    
+    saveWarmedWallets(wallets)
+    console.log(`[Wallet Manager] Updated wallet ${address}: ${history.transactionCount} transactions, ${history.totalTrades} trades`)
+    
+    return wallet
+  } catch (error: any) {
+    console.error(`[Wallet Manager] Error updating wallet stats:`, error.message)
+    throw error
+  }
+}
+
+// Update multiple wallets from blockchain
+export async function updateMultipleWalletsFromBlockchain(addresses: string[]): Promise<{
+  updated: number
+  failed: number
+  errors: string[]
+}> {
+  let updated = 0
+  let failed = 0
+  const errors: string[] = []
+  
+  for (const address of addresses) {
+    try {
+      await updateWalletStatsFromBlockchain(address)
+      updated++
+      // Small delay to avoid rate limiting
+      await sleep(500)
+    } catch (error: any) {
+      failed++
+      errors.push(`${address}: ${error.message}`)
+      console.error(`[Wallet Manager] Failed to update ${address}:`, error.message)
+    }
+  }
+  
+  return { updated, failed, errors }
+}
+
