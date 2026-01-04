@@ -1667,6 +1667,11 @@ app.put('/api/warming-wallets/:address/tags', async (req, res) => {
   }
 });
 
+// Test endpoint to verify route is accessible
+app.get('/api/warming-wallets/test', (req, res) => {
+  res.json({ success: true, message: 'Update stats endpoint is accessible' });
+});
+
 // Update wallet stats from blockchain (RPC call - only when user requests)
 app.post('/api/warming-wallets/update-stats', async (req, res) => {
   try {
