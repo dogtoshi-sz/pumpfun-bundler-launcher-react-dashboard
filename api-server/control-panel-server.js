@@ -498,6 +498,52 @@ app.post('/api/launch-token', async (req, res) => {
     const latestEnv = readEnvFile();
     console.log(`[Launch] Latest .env has ${Object.keys(latestEnv).length} variables`);
     
+    // Handle warmed wallets if provided
+    const { useWarmedWallets, bundleWalletAddresses, holderWalletAddresses } = req.body || {};
+    if (useWarmedWallets && (bundleWalletAddresses || holderWalletAddresses)) {
+      console.log(`[Launch] Using warmed wallets:`);
+      console.log(`   Bundle wallets: ${bundleWalletAddresses?.length || 0}`);
+      console.log(`   Holder wallets: ${holderWalletAddresses?.length || 0}`);
+      
+      // Load warmed wallets and save selected ones to a file that index.ts can read
+      const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+      const allWarmedWallets = loadWarmedWallets();
+      
+      // Create a map of addresses to private keys
+      const walletMap = new Map();
+      allWarmedWallets.forEach(wallet => {
+        walletMap.set(wallet.address, wallet.privateKey);
+      });
+      
+      // Get private keys for selected wallets
+      const bundleWalletKeys = (bundleWalletAddresses || [])
+        .map(addr => walletMap.get(addr))
+        .filter(key => key); // Remove undefined
+      
+      const holderWalletKeys = (holderWalletAddresses || [])
+        .map(addr => walletMap.get(addr))
+        .filter(key => key); // Remove undefined
+      
+      // Save to a file that index.ts will read
+      const warmedWalletsPath = path.join(keysDir, 'warmed-wallets-for-launch.json');
+      fs.writeFileSync(warmedWalletsPath, JSON.stringify({
+        bundleWalletKeys,
+        holderWalletKeys,
+        bundleWalletAddresses: bundleWalletAddresses || [],
+        holderWalletAddresses: holderWalletAddresses || [],
+        createdAt: new Date().toISOString()
+      }, null, 2));
+      
+      console.log(`[Launch] Saved ${bundleWalletKeys.length} bundle and ${holderWalletKeys.length} holder warmed wallets to ${warmedWalletsPath}`);
+    } else {
+      // Clear warmed wallets file if not using them
+      const warmedWalletsPath = path.join(keysDir, 'warmed-wallets-for-launch.json');
+      if (fs.existsSync(warmedWalletsPath)) {
+        fs.unlinkSync(warmedWalletsPath);
+        console.log(`[Launch] Cleared warmed wallets file - will create fresh wallets`);
+      }
+    }
+    
     // Execute npm start in background
     // Use the same working directory as terminal would use
     // The child process (index.ts) will reload .env with dotenv.config({ override: true })

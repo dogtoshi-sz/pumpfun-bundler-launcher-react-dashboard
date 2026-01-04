@@ -113,13 +113,33 @@ export default function TokenLaunch({ onLaunch }) {
   const [tweetList, setTweetList] = useState([]); // Array of { text: string, image: File | null, imagePreview: string | null }
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [showBuyerWallet, setShowBuyerWallet] = useState(false);
+  const [useWarmedWallets, setUseWarmedWallets] = useState(false);
+  const [warmedWallets, setWarmedWallets] = useState([]);
+  const [selectedBundleWallets, setSelectedBundleWallets] = useState([]);
+  const [selectedHolderWallets, setSelectedHolderWallets] = useState([]);
+  const [loadingWarmedWallets, setLoadingWarmedWallets] = useState(false);
 
   useEffect(() => {
     loadSettings();
     loadNextAddress();
     loadDeployerWallet();
     loadWalletInfo();
+    loadWarmedWallets();
   }, []);
+
+  const loadWarmedWallets = async () => {
+    try {
+      setLoadingWarmedWallets(true);
+      const res = await apiService.getWarmingWallets();
+      if (res.data.success) {
+        setWarmedWallets(res.data.wallets || []);
+      }
+    } catch (error) {
+      console.error('Failed to load warmed wallets:', error);
+    } finally {
+      setLoadingWarmedWallets(false);
+    }
+  };
   
   // Reload wallet info when settings change (wallet counts/amounts)
   useEffect(() => {
@@ -1021,7 +1041,13 @@ export default function TokenLaunch({ onLaunch }) {
       await apiService.updateSettings(settingsToSave);
 
       // Launch token - this will clear current-run.json and start fresh
-      const res = await apiService.launchToken();
+      // Include warmed wallet selections if using warmed wallets
+      const launchData = useWarmedWallets ? {
+        useWarmedWallets: true,
+        bundleWalletAddresses: selectedBundleWallets,
+        holderWalletAddresses: selectedHolderWallets
+      } : {};
+      const res = await apiService.launchToken(launchData);
       
       // Clear wallet info immediately (since current-run.json was cleared)
       setWalletInfo(null);
@@ -1452,6 +1478,136 @@ export default function TokenLaunch({ onLaunch }) {
           )}
         </div>
 
+        {/* Wallet Source Selection */}
+        <div className="mb-6 p-4 bg-blue-900/20 rounded-lg border border-blue-500/30">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <WalletIcon className="w-5 h-5 text-blue-400" />
+              <div>
+                <label className="text-sm font-semibold text-white cursor-pointer">
+                  Wallet Source
+                </label>
+                <p className="text-xs text-gray-400 mt-1">
+                  Choose to create fresh wallets or use warmed wallets with transaction history
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setUseWarmedWallets(false)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  !useWarmedWallets
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                Create Fresh Wallets
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUseWarmedWallets(true);
+                  loadWarmedWallets();
+                }}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  useWarmedWallets
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                Use Warmed Wallets
+              </button>
+            </div>
+          </div>
+          {useWarmedWallets && (
+            <div className="mt-4 space-y-4">
+              <div className="p-3 bg-gray-900/50 rounded border border-gray-800">
+                <p className="text-xs text-gray-400 mb-2">
+                  Available Warmed Wallets: {warmedWallets.length} | 
+                  Selected Bundle: {selectedBundleWallets.length} | 
+                  Selected Holder: {selectedHolderWallets.length}
+                </p>
+                {loadingWarmedWallets ? (
+                  <p className="text-xs text-gray-500">Loading warmed wallets...</p>
+                ) : warmedWallets.length === 0 ? (
+                  <p className="text-xs text-yellow-400">
+                    No warmed wallets available. Go to the Warming tab to create or add wallets.
+                  </p>
+                ) : (
+                  <div className="max-h-60 overflow-y-auto space-y-2">
+                    {warmedWallets.map((wallet) => {
+                      const isBundle = selectedBundleWallets.includes(wallet.address);
+                      const isHolder = selectedHolderWallets.includes(wallet.address);
+                      return (
+                        <div
+                          key={wallet.address}
+                          className="flex items-center justify-between p-2 bg-gray-800/50 rounded border border-gray-700"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-mono text-white truncate">
+                              {wallet.address.slice(0, 8)}...{wallet.address.slice(-8)}
+                            </p>
+                            <div className="flex gap-2 mt-1">
+                              <span className="text-xs text-gray-500">
+                                Trades: {wallet.totalTrades || wallet.transactionCount || 0}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                SOL: {(wallet.solBalance || 0).toFixed(4)}
+                              </span>
+                              {wallet.tags && wallet.tags.length > 0 && (
+                                <span className="text-xs text-blue-400">
+                                  {wallet.tags.join(', ')}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex gap-2 ml-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isBundle) {
+                                  setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
+                                } else {
+                                  setSelectedBundleWallets(prev => [...prev, wallet.address]);
+                                }
+                              }}
+                              className={`px-2 py-1 text-xs rounded ${
+                                isBundle
+                                  ? 'bg-green-600 text-white'
+                                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                              }`}
+                            >
+                              Bundle
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isHolder) {
+                                  setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
+                                } else {
+                                  setSelectedHolderWallets(prev => [...prev, wallet.address]);
+                                }
+                              }}
+                              className={`px-2 py-1 text-xs rounded ${
+                                isHolder
+                                  ? 'bg-yellow-600 text-white'
+                                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                              }`}
+                            >
+                              Holder
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Bundle Wallets */}
           <div className="p-4 bg-gray-900/50 rounded-lg border-l-4 border-green-500">
@@ -1462,15 +1618,31 @@ export default function TokenLaunch({ onLaunch }) {
             </label>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Count</label>
+                <label className="block text-xs text-gray-400 mb-1">
+                  Count {useWarmedWallets && selectedBundleWallets.length > 0 && (
+                    <span className="text-green-400">({selectedBundleWallets.length} selected)</span>
+                  )}
+                </label>
                 <input
                   type="number"
                   min="0"
                   max="10"
-                  value={settings.BUNDLE_WALLET_COUNT || '0'}
-                  onChange={(e) => handleChange('BUNDLE_WALLET_COUNT', e.target.value)}
-                  className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  value={useWarmedWallets ? selectedBundleWallets.length : (settings.BUNDLE_WALLET_COUNT || '0')}
+                  onChange={(e) => {
+                    if (!useWarmedWallets) {
+                      handleChange('BUNDLE_WALLET_COUNT', e.target.value);
+                    }
+                  }}
+                  disabled={useWarmedWallets}
+                  className={`w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500 ${
+                    useWarmedWallets ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 />
+                {useWarmedWallets && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select warmed wallets above to use as bundle wallets
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Amounts (comma-separated SOL)</label>
@@ -1512,15 +1684,31 @@ export default function TokenLaunch({ onLaunch }) {
             </label>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Count</label>
+                <label className="block text-xs text-gray-400 mb-1">
+                  Count {useWarmedWallets && selectedHolderWallets.length > 0 && (
+                    <span className="text-yellow-400">({selectedHolderWallets.length} selected)</span>
+                  )}
+                </label>
                 <input
                   type="number"
                   min="0"
                   max="50"
-                  value={settings.HOLDER_WALLET_COUNT || '0'}
-                  onChange={(e) => handleChange('HOLDER_WALLET_COUNT', e.target.value)}
-                  className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  value={useWarmedWallets ? selectedHolderWallets.length : (settings.HOLDER_WALLET_COUNT || '0')}
+                  onChange={(e) => {
+                    if (!useWarmedWallets) {
+                      handleChange('HOLDER_WALLET_COUNT', e.target.value);
+                    }
+                  }}
+                  disabled={useWarmedWallets}
+                  className={`w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 ${
+                    useWarmedWallets ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 />
+                {useWarmedWallets && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select warmed wallets above to use as holder wallets
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Amounts (comma-separated SOL)</label>
