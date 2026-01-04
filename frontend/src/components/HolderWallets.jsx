@@ -635,6 +635,12 @@ export default function HolderWallets() {
                     <span className="text-xs text-gray-500">Tokens:</span>
                     <span className="text-sm font-bold text-yellow-400">{wallet.tokenBalance.toFixed(4)}</span>
                   </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-500">% of Supply:</span>
+                    <span className="text-sm font-bold text-blue-400">
+                      {((wallet.tokenBalance / 1000000000) * 100).toFixed(4)}%
+                    </span>
+                  </div>
                 </div>
 
                 {/* Quick Buy Buttons */}
