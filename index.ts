@@ -397,20 +397,127 @@ const main = async () => {
   }
   // Note: If BUYER_WALLET was not set, the wallet was already created and funded above using distributeSol
 
-  if (bundleWalletCount === 0) {
-    console.log("⚠️  BUNDLE_WALLET_COUNT is 0 - no bundle wallets will be created")
-    console.log("   Set BUNDLE_WALLET_COUNT in .env to create bundle wallets")
+  // Check for warmed wallets file (created by API server if user selected warmed wallets)
+  const warmedWalletsPath = path.join(process.cwd(), 'keys', 'warmed-wallets-for-launch.json')
+  let useWarmedWallets = false
+  let warmedBundleWallets: Keypair[] = []
+  let warmedHolderWallets: Keypair[] = []
+  
+  if (fs.existsSync(warmedWalletsPath)) {
+    try {
+      const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
+      if (warmedData.bundleWalletKeys && warmedData.bundleWalletKeys.length > 0) {
+        warmedBundleWallets = warmedData.bundleWalletKeys.map((key: string) => 
+          Keypair.fromSecretKey(base58.decode(key))
+        )
+        console.log(`\n🔥 Using ${warmedBundleWallets.length} warmed bundle wallet(s) from wallet warming system`)
+        useWarmedWallets = true
+      }
+      if (warmedData.holderWalletKeys && warmedData.holderWalletKeys.length > 0) {
+        warmedHolderWallets = warmedData.holderWalletKeys.map((key: string) => 
+          Keypair.fromSecretKey(base58.decode(key))
+        )
+        console.log(`🔥 Using ${warmedHolderWallets.length} warmed holder wallet(s) from wallet warming system`)
+        useWarmedWallets = true
+      }
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to load warmed wallets: ${error.message}`)
+      console.warn(`   Will create fresh wallets instead`)
+    }
+  }
+  
+  if (bundleWalletCount === 0 && warmedBundleWallets.length === 0) {
+    console.log("⚠️  BUNDLE_WALLET_COUNT is 0 and no warmed bundle wallets - no bundle wallets will be created")
+    console.log("   Set BUNDLE_WALLET_COUNT in .env to create bundle wallets, or select warmed wallets in the UI")
   }
 
-  console.log("Distributing SOL to wallets...")
-  const swapAmountsForDistribution = bundleSwapAmounts.length > 0 ? bundleSwapAmounts : undefined
-  
-  let result = await distributeSol(connection, mainKp, bundleWalletCount, swapAmountsForDistribution, USE_MIXING_WALLETS)
-  if (!result) {
-    console.log("Distribution failed")
-    return
+  // Use warmed wallets if available, otherwise create fresh ones
+  if (warmedBundleWallets.length > 0) {
+    console.log(`\n💰 Funding ${warmedBundleWallets.length} warmed bundle wallet(s)...`)
+    kps = warmedBundleWallets
+    
+    // Fund warmed wallets with required amounts
+    const swapAmountsForDistribution = bundleSwapAmounts.length > 0 ? bundleSwapAmounts : undefined
+    const amountsToUse = swapAmountsForDistribution || Array(warmedBundleWallets.length).fill(SWAP_AMOUNT)
+    
+    for (let i = 0; i < warmedBundleWallets.length; i++) {
+      const wallet = warmedBundleWallets[i]
+      const amount = amountsToUse[i] || SWAP_AMOUNT
+      const requiredAmount = amount + 0.01 // Add buffer for fees
+      
+      const currentBalance = await connection.getBalance(wallet.publicKey)
+      const currentBalanceSol = currentBalance / 1e9
+      
+      if (currentBalanceSol < requiredAmount) {
+        const fundingNeeded = requiredAmount - currentBalanceSol
+        console.log(`   💰 Funding wallet ${i + 1}/${warmedBundleWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
+        
+        if (USE_MIXING_WALLETS) {
+          const mixingWallets = loadMixingWallets()
+          if (mixingWallets.length > 0) {
+            const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
+            if (!success) {
+              console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1}`)
+              return
+            }
+          } else {
+            // Direct funding fallback
+            const latestBlockhash = await connection.getLatestBlockhash()
+            const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+            const transferMsg = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: latestBlockhash.blockhash,
+              instructions: [
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: wallet.publicKey,
+                  lamports: fundingLamports
+                })
+              ]
+            }).compileToV0Message()
+            const transferTx = new VersionedTransaction(transferMsg)
+            transferTx.sign([mainKp])
+            const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+            await connection.confirmTransaction(sig, 'confirmed')
+          }
+        } else {
+          // Direct funding
+          const latestBlockhash = await connection.getLatestBlockhash()
+          const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+          const transferMsg = new TransactionMessage({
+            payerKey: mainKp.publicKey,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions: [
+              SystemProgram.transfer({
+                fromPubkey: mainKp.publicKey,
+                toPubkey: wallet.publicKey,
+                lamports: fundingLamports
+              })
+            ]
+          }).compileToV0Message()
+          const transferTx = new VersionedTransaction(transferMsg)
+          transferTx.sign([mainKp])
+          const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+          await connection.confirmTransaction(sig, 'confirmed')
+        }
+      } else {
+        console.log(`   ✅ Wallet ${i + 1}/${warmedBundleWallets.length} already has sufficient balance: ${currentBalanceSol.toFixed(4)} SOL`)
+      }
+    }
+    console.log(`✅ Funded ${warmedBundleWallets.length} warmed bundle wallet(s)`)
+  } else if (bundleWalletCount > 0) {
+    console.log("Distributing SOL to fresh bundle wallets...")
+    const swapAmountsForDistribution = bundleSwapAmounts.length > 0 ? bundleSwapAmounts : undefined
+    
+    let result = await distributeSol(connection, mainKp, bundleWalletCount, swapAmountsForDistribution, USE_MIXING_WALLETS)
+    if (!result) {
+      console.log("Distribution failed")
+      return
+    } else {
+      kps = result
+    }
   } else {
-    kps = result
+    kps = []
   }
   
   // CRITICAL: Save custom BUYER_WALLET to data.json for consistency (if not auto-created)
@@ -445,9 +552,84 @@ const main = async () => {
   }
 
   // Create holder wallets (buy separately, not in bundle)
+  // Use warmed holder wallets if available, otherwise create fresh ones
   let holderWallets: Keypair[] = []
-  if (holderWalletCount > 0) {
-    console.log(`\n👥 Creating ${holderWalletCount} holder wallets...`)
+  if (warmedHolderWallets.length > 0) {
+    console.log(`\n💰 Funding ${warmedHolderWallets.length} warmed holder wallet(s)...`)
+    holderWallets = warmedHolderWallets
+    
+    // Fund warmed holder wallets with required amounts
+    const holderAmountsToUse = holderSwapAmounts.length > 0 
+      ? holderSwapAmounts 
+      : Array(warmedHolderWallets.length).fill(holderWalletAmount)
+    
+    for (let i = 0; i < warmedHolderWallets.length; i++) {
+      const wallet = warmedHolderWallets[i]
+      const amount = holderAmountsToUse[i] || holderWalletAmount
+      const requiredAmount = amount + 0.01 // Add buffer for fees
+      
+      const currentBalance = await connection.getBalance(wallet.publicKey)
+      const currentBalanceSol = currentBalance / 1e9
+      
+      if (currentBalanceSol < requiredAmount) {
+        const fundingNeeded = requiredAmount - currentBalanceSol
+        console.log(`   💰 Funding holder wallet ${i + 1}/${warmedHolderWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
+        
+        if (USE_MIXING_WALLETS) {
+          const mixingWallets = loadMixingWallets()
+          if (mixingWallets.length > 0) {
+            const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
+            if (!success) {
+              console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1}`)
+              return
+            }
+          } else {
+            // Direct funding fallback
+            const latestBlockhash = await connection.getLatestBlockhash()
+            const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+            const transferMsg = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: latestBlockhash.blockhash,
+              instructions: [
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: wallet.publicKey,
+                  lamports: fundingLamports
+                })
+              ]
+            }).compileToV0Message()
+            const transferTx = new VersionedTransaction(transferMsg)
+            transferTx.sign([mainKp])
+            const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+            await connection.confirmTransaction(sig, 'confirmed')
+          }
+        } else {
+          // Direct funding
+          const latestBlockhash = await connection.getLatestBlockhash()
+          const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+          const transferMsg = new TransactionMessage({
+            payerKey: mainKp.publicKey,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions: [
+              SystemProgram.transfer({
+                fromPubkey: mainKp.publicKey,
+                toPubkey: wallet.publicKey,
+                lamports: fundingLamports
+              })
+            ]
+          }).compileToV0Message()
+          const transferTx = new VersionedTransaction(transferMsg)
+          transferTx.sign([mainKp])
+          const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+          await connection.confirmTransaction(sig, 'confirmed')
+        }
+      } else {
+        console.log(`   ✅ Holder wallet ${i + 1}/${warmedHolderWallets.length} already has sufficient balance: ${currentBalanceSol.toFixed(4)} SOL`)
+      }
+    }
+    console.log(`✅ Funded ${warmedHolderWallets.length} warmed holder wallet(s)`)
+  } else if (holderWalletCount > 0) {
+    console.log(`\n👥 Creating ${holderWalletCount} fresh holder wallets...`)
     
     // Parse holder amounts (use fresh values from process.env)
     let holderAmounts: number[] = []
@@ -473,7 +655,7 @@ const main = async () => {
       console.log("   ⚠️  Holder wallet distribution failed, continuing without holder wallets")
     }
   } else {
-    console.log("   ℹ️  HOLDER_WALLET_COUNT is 0 - no holder wallets will be created")
+    console.log("   ℹ️  HOLDER_WALLET_COUNT is 0 and no warmed holder wallets - no holder wallets will be created")
   }
 
   // CRITICAL: Save current-run.json IMMEDIATELY after wallets are created

@@ -22,7 +22,7 @@ export const apiService = {
   },
   
   // Token launch
-  launchToken: () => api.post('/launch-token'),
+  launchToken: (data = {}) => api.post('/launch-token', data),
   getNextPumpAddress: () => api.get('/next-pump-address'),
   
   // Deployer wallet
