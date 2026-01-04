@@ -81,8 +81,54 @@ async function gatherAllWallets() {
         }
       }
       
+      // Add bundle wallets from current-run.json (includes warmed wallets)
+      // PRIORITY: bundleWalletKeys (new format), FALLBACK: walletKeys (old format)
+      if (currentRunData.bundleWalletKeys && Array.isArray(currentRunData.bundleWalletKeys)) {
+        let bundleCount = 0
+        for (const privateKey of currentRunData.bundleWalletKeys) {
+          try {
+            const kp = Keypair.fromSecretKey(base58.decode(privateKey))
+            const balance = await connection.getBalance(kp.publicKey)
+            if (balance > 100000) {
+              const alreadyAdded = walletsToProcess.some(existing => existing.publicKey.equals(kp.publicKey))
+              if (!alreadyAdded) {
+                walletsToProcess.push(kp)
+                bundleCount++
+              }
+            }
+          } catch (e) {
+            // Skip invalid keys
+          }
+        }
+        if (bundleCount > 0) {
+          console.log(`   ✅ Added ${bundleCount} bundle wallets from current-run.json (includes warmed wallets)`)
+        }
+      } else if (currentRunData.walletKeys && Array.isArray(currentRunData.walletKeys)) {
+        // Fallback: Use walletKeys (old format - assume all are bundle wallets)
+        let bundleCount = 0
+        for (const privateKey of currentRunData.walletKeys) {
+          try {
+            const kp = Keypair.fromSecretKey(base58.decode(privateKey))
+            const balance = await connection.getBalance(kp.publicKey)
+            if (balance > 100000) {
+              const alreadyAdded = walletsToProcess.some(existing => existing.publicKey.equals(kp.publicKey))
+              if (!alreadyAdded) {
+                walletsToProcess.push(kp)
+                bundleCount++
+              }
+            }
+          } catch (e) {
+            // Skip invalid keys
+          }
+        }
+        if (bundleCount > 0) {
+          console.log(`   ✅ Added ${bundleCount} bundle wallets from current-run.json (old format)`)
+        }
+      }
+      
       // Add holder wallets if they exist
       if (currentRunData.holderWalletKeys && Array.isArray(currentRunData.holderWalletKeys)) {
+        let holderCount = 0
         for (const privateKey of currentRunData.holderWalletKeys) {
           try {
             const kp = Keypair.fromSecretKey(base58.decode(privateKey))
@@ -91,13 +137,16 @@ async function gatherAllWallets() {
               const alreadyAdded = walletsToProcess.some(existing => existing.publicKey.equals(kp.publicKey))
               if (!alreadyAdded) {
                 walletsToProcess.push(kp)
+                holderCount++
               }
             }
           } catch (e) {
             // Skip invalid keys
           }
         }
-        console.log(`   ✅ Added holder wallets from current-run.json`)
+        if (holderCount > 0) {
+          console.log(`   ✅ Added ${holderCount} holder wallets from current-run.json`)
+        }
       }
     } catch (e: any) {
       console.log(`   ⚠️  Error reading current-run.json: ${e.message}`)
