@@ -239,14 +239,25 @@ async function warmWallets(
 ) {
   // Fetch trending tokens if enabled
   if (config.useTrendingTokens) {
-    console.log('📡 Fetching trending pump.fun tokens...')
+    console.log('📡 Fetching trending pump.fun tokens from API...')
     const trendingTokens = await getTrendingTokens(true)
     if (trendingTokens.length > 0) {
       tokenList = trendingTokens
-      console.log(`✅ Found ${trendingTokens.length} trending tokens`)
+      console.log(`✅ Successfully fetched ${trendingTokens.length} trending tokens from API`)
+      console.log(`   Sample tokens: ${trendingTokens.slice(0, 3).map(t => t.substring(0, 8) + '...').join(', ')}`)
     } else {
-      console.log('⚠️  No trending tokens found, using file-based tokens')
+      console.log('⚠️  No trending tokens found from API, falling back to file-based tokens')
+      const fileTokens = getTokensFromList()
+      if (fileTokens.length > 0) {
+        tokenList = fileTokens
+        console.log(`   Using ${fileTokens.length} tokens from warmup-tokens.json`)
+      } else {
+        console.log('   ❌ No tokens available from file either!')
+      }
     }
+  } else {
+    console.log('📄 Using tokens from warmup-tokens.json file (trending tokens disabled)')
+    tokenList = getTokensFromList()
   }
   
   if (tokenList.length === 0) {
