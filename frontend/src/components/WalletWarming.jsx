@@ -188,6 +188,27 @@ export default function WalletWarming() {
     });
   };
 
+  const toggleSelectAllFiltered = () => {
+    const filteredAddresses = filteredAndSortedWallets.map(w => w.address);
+    const allSelected = filteredAddresses.every(addr => selectedWallets.includes(addr));
+    
+    if (allSelected) {
+      // Deselect all filtered wallets
+      setSelectedWallets(prev => prev.filter(addr => !filteredAddresses.includes(addr)));
+    } else {
+      // Select all filtered wallets (add to existing selection)
+      setSelectedWallets(prev => {
+        const newSelection = [...prev];
+        filteredAddresses.forEach(addr => {
+          if (!newSelection.includes(addr)) {
+            newSelection.push(addr);
+          }
+        });
+        return newSelection;
+      });
+    }
+  };
+
   const formatDate = (dateString) => {
     if (!dateString) return 'Never';
     return new Date(dateString).toLocaleString();
@@ -428,6 +449,28 @@ export default function WalletWarming() {
             Wallets ({filteredAndSortedWallets.length} of {wallets.length} shown, {selectedWallets.length} selected)
           </h3>
           <div className="flex gap-2">
+            <button
+              onClick={toggleSelectAllFiltered}
+              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                filteredAndSortedWallets.length === 0
+                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  : filteredAndSortedWallets.every(w => selectedWallets.includes(w.address))
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+              disabled={filteredAndSortedWallets.length === 0}
+              title={
+                filteredAndSortedWallets.length === 0
+                  ? "No wallets to select"
+                  : filteredAndSortedWallets.every(w => selectedWallets.includes(w.address))
+                  ? "Deselect all filtered wallets"
+                  : "Select all filtered wallets"
+              }
+            >
+              {filteredAndSortedWallets.every(w => selectedWallets.includes(w.address))
+                ? '❌ Deselect All'
+                : '✅ Select All'}
+            </button>
             <button
               onClick={async () => {
                 if (selectedWallets.length === 0) {
