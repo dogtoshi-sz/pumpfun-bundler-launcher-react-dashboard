@@ -434,6 +434,9 @@ export default function WalletWarming() {
                   alert('Please select wallets to update stats from blockchain');
                   return;
                 }
+                if (!confirm(`Update stats from blockchain for ${selectedWallets.length} wallet(s)? This will make RPC calls.`)) {
+                  return;
+                }
                 setLoading(true);
                 try {
                   const res = await apiService.updateWalletStats(selectedWallets);
@@ -449,11 +452,17 @@ export default function WalletWarming() {
                   setLoading(false);
                 }
               }}
-              disabled={loading || selectedWallets.length === 0}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Fetch transaction history from blockchain for selected wallets (RPC call)"
+              disabled={loading}
+              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                selectedWallets.length === 0
+                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white'
+              } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={selectedWallets.length === 0 
+                ? "Select wallets first to update stats from blockchain" 
+                : "Fetch transaction history from blockchain for selected wallets (RPC call)"}
             >
-              📡 Update Stats from Blockchain
+              📡 Update Stats from Blockchain {selectedWallets.length > 0 && `(${selectedWallets.length})`}
             </button>
             <button
               onClick={loadWallets}
