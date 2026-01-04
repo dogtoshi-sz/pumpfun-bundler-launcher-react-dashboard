@@ -33,7 +33,8 @@
     "master": "ts-node master-menu.ts",
     "test-wallet": "ts-node test-wallet-trading.ts",
     "retry-bundle": "ts-node retry-bundle.ts",
-    "find-creator": "ts-node find-creator-wallet.ts"
+    "find-creator": "ts-node find-creator-wallet.ts",
+    "warm-wallets": "ts-node warm-wallets.ts"
   },
   "license": "ISC",
   "devDependencies": {
