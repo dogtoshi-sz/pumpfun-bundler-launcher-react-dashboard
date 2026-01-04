@@ -105,7 +105,7 @@ export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp:
 
 
 // Load mixing wallets from file (if exists)
-const loadMixingWallets = (): Keypair[] => {
+export const loadMixingWallets = (): Keypair[] => {
   try {
     const mixingPath = path.join(process.cwd(), 'keys', 'mixing-wallets.json')
     if (fs.existsSync(mixingPath)) {
@@ -658,6 +658,178 @@ const distributeSolWithMixing = async (
   } catch (error) {
     console.log(`❌ Failed to distribute SOL with mixing:`, error)
     return null
+  }
+}
+
+// Helper function: Fund an existing wallet through mixer wallets
+// Route: mainKp -> mixing wallet -> existing wallet
+// This breaks the direct connection trail for existing wallets
+export const fundExistingWalletWithMixing = async (
+  connection: Connection,
+  mainKp: Keypair,
+  targetWallet: Keypair,
+  amount: number,
+  mixingWallets: Keypair[] = []
+): Promise<boolean> => {
+  try {
+    if (mixingWallets.length === 0) {
+      console.log(`   ⚠️  No mixing wallets available, using direct funding...`)
+      return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+    }
+
+    const solAmount = Math.floor(amount * 1e9)
+    const randomDelay = () => Math.random() * 500 + 200 // 200-700ms random delay for privacy
+
+    // Select a random mixer
+    const mixerIndex = Math.floor(Math.random() * mixingWallets.length)
+    const mixer = mixingWallets[mixerIndex]
+    const mixerBalance = await connection.getBalance(mixer.publicKey)
+    const mixerNeedsFunding = mixerBalance < solAmount + 0.02 * 1e9
+
+    try {
+      // Step 1: Fund mixing wallet from mainKp (if needed)
+      if (mixerNeedsFunding) {
+        const fundingAmount = solAmount + 0.02 * 1e9 // Extra buffer for fees and rent
+        const blockhash = await connection.getLatestBlockhash()
+        
+        const fundMixerTx = new TransactionMessage({
+          payerKey: mainKp.publicKey,
+          recentBlockhash: blockhash.blockhash,
+          instructions: [
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+            SystemProgram.transfer({
+              fromPubkey: mainKp.publicKey,
+              toPubkey: mixer.publicKey,
+              lamports: fundingAmount
+            })
+          ]
+        }).compileToV0Message()
+        
+        const fundMixerV0 = new VersionedTransaction(fundMixerTx)
+        fundMixerV0.sign([mainKp])
+        const fundMixerSig = await execute(fundMixerV0, blockhash, 1)
+        
+        if (!fundMixerSig) {
+          console.log(`   ⚠️  Failed to fund mixer (tx: ${fundMixerSig || 'no signature'}), using direct funding...`)
+          return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+        }
+        
+        // CRITICAL: Wait for funding to confirm and verify balance before proceeding
+        const initialBalance = mixerBalance
+        let confirmedBalance = initialBalance
+        let attempts = 0
+        const maxAttempts = 10
+        while (attempts < maxAttempts) {
+          await sleep(500) // Wait 500ms between checks
+          confirmedBalance = await connection.getBalance(mixer.publicKey)
+          if (confirmedBalance >= initialBalance + fundingAmount - 1000) { // Allow 1000 lamport tolerance
+            break
+          }
+          attempts++
+        }
+        
+        if (confirmedBalance < initialBalance + fundingAmount - 1000) {
+          console.log(`   ⚠️  Mixer funding not confirmed after ${maxAttempts} attempts, using direct funding...`)
+          return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+        }
+        
+        console.log(`   ✅ Mixer funded and confirmed (balance: ${(confirmedBalance / 1e9).toFixed(6)} SOL)`)
+      }
+
+      // Step 2: Transfer from mixer to target wallet
+      const actualMixerBalance = await connection.getBalance(mixer.publicKey)
+      const routeBlockhash = await connection.getLatestBlockhash()
+      
+      // Calculate amount to transfer: balance minus rent exemption and transaction fees
+      const rentExemption = 890_880 // Base account rent exemption
+      const estimatedTxFee = 10_000 // Higher estimate for safety
+      const safetyBuffer = 5_000 // Extra buffer
+      const amountToTransfer = actualMixerBalance - rentExemption - estimatedTxFee - safetyBuffer
+      
+      // Only transfer if we have enough (at least the target amount)
+      if (amountToTransfer >= solAmount) {
+        const routeTx = new TransactionMessage({
+          payerKey: mixer.publicKey,
+          recentBlockhash: routeBlockhash.blockhash,
+          instructions: [
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+            SystemProgram.transfer({
+              fromPubkey: mixer.publicKey,
+              toPubkey: targetWallet.publicKey,
+              lamports: amountToTransfer
+            })
+          ]
+        }).compileToV0Message()
+        
+        const routeV0 = new VersionedTransaction(routeTx)
+        routeV0.sign([mixer])
+        const routeSig = await execute(routeV0, routeBlockhash, 1)
+        
+        if (!routeSig) {
+          console.log(`   ⚠️  Failed to route through mixer, using direct funding...`)
+          return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+        } else {
+          console.log(`   ✅ Transferred ${(amountToTransfer / 1e9).toFixed(6)} SOL from mixer to BUYER_WALLET`)
+          return true
+        }
+      } else {
+        // Not enough balance, fund directly
+        console.log(`   ⚠️  Mixer balance too low, using direct funding...`)
+        return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      console.log(`   ⚠️  Error during mixing (${errorMsg}), using direct funding...`)
+      return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+    }
+  } catch (error) {
+    console.log(`❌ Failed to fund existing wallet with mixing:`, error)
+    return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
+  }
+}
+
+// Helper function: Fund an existing wallet directly (fallback)
+const fundExistingWalletDirect = async (
+  connection: Connection,
+  mainKp: Keypair,
+  targetWallet: Keypair,
+  amount: number
+): Promise<boolean> => {
+  try {
+    const latestBlockhash = await connection.getLatestBlockhash()
+    const fundingLamports = Math.ceil(amount * 1e9)
+    const transferMsg = new TransactionMessage({
+      payerKey: mainKp.publicKey,
+      recentBlockhash: latestBlockhash.blockhash,
+      instructions: [
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+        SystemProgram.transfer({
+          fromPubkey: mainKp.publicKey,
+          toPubkey: targetWallet.publicKey,
+          lamports: fundingLamports
+        })
+      ]
+    }).compileToV0Message()
+
+    const transferTx = new VersionedTransaction(transferMsg)
+    transferTx.sign([mainKp])
+
+    const sig = await execute(transferTx, latestBlockhash, 1)
+    if (!sig) {
+      console.error(`   ❌ Failed to fund wallet directly`)
+      return false
+    }
+
+    const newBalance = await connection.getBalance(targetWallet.publicKey)
+    console.log(`   ✅ Funded wallet! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+    console.log(`   Transaction: https://solscan.io/tx/${sig}`)
+    return true
+  } catch (error: any) {
+    console.error(`   ❌ Failed to fund wallet directly: ${error.message}`)
+    return false
   }
 }
 
