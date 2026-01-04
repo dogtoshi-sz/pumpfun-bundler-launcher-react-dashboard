@@ -304,8 +304,12 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
     if (tokenConfig.tokenName !== undefined) dbConfig.token_name = tokenConfig.tokenName || null;
     if (tokenConfig.tokenSymbol !== undefined) dbConfig.token_symbol = tokenConfig.tokenSymbol || null;
     if (tokenConfig.tokenAddress !== undefined) {
-      dbConfig.token_address = tokenConfig.tokenAddress || null;
-      dbConfig.contract_address = tokenConfig.tokenAddress || null;
+      // Treat 'Not set' or empty strings as null
+      const tokenAddr = tokenConfig.tokenAddress && tokenConfig.tokenAddress !== 'Not set' && tokenConfig.tokenAddress.trim() !== '' 
+        ? tokenConfig.tokenAddress.trim() 
+        : null;
+      dbConfig.token_address = tokenAddr;
+      dbConfig.contract_address = tokenAddr;
     }
     if (tokenConfig.website !== undefined) dbConfig.website = tokenConfig.website || null;
     if (tokenConfig.telegram !== undefined) dbConfig.telegram = tokenConfig.telegram || null;
@@ -375,7 +379,7 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
       DO UPDATE SET 
         ${safeUpdateSet},
         updated_at = NOW()
-      RETURNING site_url, token_name, token_symbol, logo_url;
+      RETURNING site_url, token_name, token_symbol, logo_url, contract_address, token_address, theme_name, color_scheme, website_logo_image;
     `;
     
     // Execute query - catch column errors and retry without optional columns
@@ -401,7 +405,7 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
           DO UPDATE SET 
             ${standardUpdateSet},
             updated_at = NOW()
-          RETURNING site_url, token_name, token_symbol, logo_url;
+          RETURNING site_url, token_name, token_symbol, logo_url, contract_address, token_address, theme_name, color_scheme;
         `;
         
         result = await client.query(fallbackQuery, standardValues);
