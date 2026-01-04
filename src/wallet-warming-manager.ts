@@ -32,12 +32,21 @@ const WARMED_WALLETS_FILE = path.join(process.cwd(), 'keys', 'warmed-wallets.jso
 // Load warmed wallets
 export function loadWarmedWallets(): WarmedWallet[] {
   try {
+    console.log(`[Wallet Manager] Loading wallets from: ${WARMED_WALLETS_FILE}`)
+    console.log(`[Wallet Manager] File exists: ${fs.existsSync(WARMED_WALLETS_FILE)}`)
+    
     if (fs.existsSync(WARMED_WALLETS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(WARMED_WALLETS_FILE, 'utf8'))
-      return data.wallets || []
+      const content = fs.readFileSync(WARMED_WALLETS_FILE, 'utf8')
+      const data = JSON.parse(content)
+      const wallets = data.wallets || []
+      console.log(`[Wallet Manager] Loaded ${wallets.length} wallets from file`)
+      return wallets
+    } else {
+      console.log(`[Wallet Manager] File does not exist: ${WARMED_WALLETS_FILE}`)
     }
   } catch (error) {
-    console.error('Error loading warmed wallets:', error)
+    console.error('[Wallet Manager] Error loading warmed wallets:', error)
+    console.error('[Wallet Manager] Error stack:', error instanceof Error ? error.stack : 'No stack')
   }
   return []
 }
