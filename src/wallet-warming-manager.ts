@@ -27,7 +27,17 @@ export interface WarmedWallet {
   tags: string[] // Tags like "OLD", "recent", etc.
 }
 
-const WARMED_WALLETS_FILE = path.join(process.cwd(), 'keys', 'warmed-wallets.json')
+// Resolve path relative to project root (not api-server directory)
+const getProjectRoot = () => {
+  // If we're in api-server, go up one level
+  const cwd = process.cwd()
+  if (cwd.endsWith('api-server')) {
+    return path.join(cwd, '..')
+  }
+  return cwd
+}
+
+const WARMED_WALLETS_FILE = path.join(getProjectRoot(), 'keys', 'warmed-wallets.json')
 
 // Load warmed wallets
 export function loadWarmedWallets(): WarmedWallet[] {
