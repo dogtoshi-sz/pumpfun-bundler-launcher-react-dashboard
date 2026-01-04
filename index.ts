@@ -573,9 +573,22 @@ const main = async () => {
     holderWallets = warmedHolderWallets
     
     // Fund warmed holder wallets with required amounts
-    const holderAmountsToUse = holderSwapAmounts.length > 0 
-      ? holderSwapAmounts 
-      : Array(warmedHolderWallets.length).fill(holderWalletAmount)
+    // Pad/trim amounts array to match number of warmed wallets (same logic as fresh wallets)
+    let holderAmountsToUse: number[]
+    if (holderSwapAmounts.length > 0) {
+      holderAmountsToUse = [...holderSwapAmounts]
+      // Pad with HOLDER_WALLET_AMOUNT if we have fewer amounts than wallets
+      while (holderAmountsToUse.length < warmedHolderWallets.length) {
+        console.warn(`   ⚠️  HOLDER_SWAP_AMOUNTS has ${holderAmountsToUse.length} values but need ${warmedHolderWallets.length}. Padding with HOLDER_WALLET_AMOUNT (${holderWalletAmount})`)
+        holderAmountsToUse.push(holderWalletAmount)
+      }
+      // Trim if we have more amounts than wallets
+      holderAmountsToUse = holderAmountsToUse.slice(0, warmedHolderWallets.length)
+      console.log(`   ✅ Using custom holder amounts: [${holderAmountsToUse.join(', ')}]`)
+    } else {
+      holderAmountsToUse = Array(warmedHolderWallets.length).fill(holderWalletAmount)
+      console.log(`   ✅ Using default HOLDER_WALLET_AMOUNT (${holderWalletAmount}) for all wallets`)
+    }
     
     for (let i = 0; i < warmedHolderWallets.length; i++) {
       const wallet = warmedHolderWallets[i]
