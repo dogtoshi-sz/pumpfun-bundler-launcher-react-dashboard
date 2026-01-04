@@ -424,6 +424,22 @@ export default function WalletWarming() {
                     <span>Last Trade:</span>
                     <span className="text-gray-300">{formatDate(wallet.lastTransactionDate)}</span>
                   </div>
+                  {wallet.tags && wallet.tags.length > 0 && (
+                    <div className="flex gap-1 mt-2 flex-wrap">
+                      {wallet.tags.map((tag, tagIdx) => (
+                        <span
+                          key={tagIdx}
+                          className={`text-[10px] px-2 py-0.5 rounded ${
+                            tag === 'OLD' ? 'bg-yellow-900/50 text-yellow-400' :
+                            tag === 'recent' ? 'bg-blue-900/50 text-blue-400' :
+                            'bg-gray-800 text-gray-400'
+                          }`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );
