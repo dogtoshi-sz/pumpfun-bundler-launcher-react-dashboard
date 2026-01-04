@@ -1564,8 +1564,10 @@ let warmingProcesses = new Map(); // Track active warming processes
 // Get all warmed wallets
 app.get('/api/warming-wallets', async (req, res) => {
   try {
+    console.log('[Warming] Loading wallets...');
     const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
     const wallets = loadWarmedWallets();
+    console.log(`[Warming] Loaded ${wallets.length} wallets`);
     
     res.json({
       success: true,
@@ -1582,6 +1584,7 @@ app.get('/api/warming-wallets', async (req, res) => {
     });
   } catch (error) {
     console.error('[Warming] Get wallets error:', error);
+    console.error('[Warming] Error stack:', error.stack);
     res.status(500).json({ success: false, error: error.message || 'Failed to get wallets' });
   }
 });

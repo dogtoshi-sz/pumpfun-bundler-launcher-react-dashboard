@@ -28,12 +28,18 @@ export default function WalletWarming() {
 
   const loadWallets = async () => {
     try {
+      console.log('Loading wallets...');
       const res = await apiService.getWarmingWallets();
+      console.log('Wallets response:', res.data);
       if (res.data.success) {
         setWallets(res.data.wallets || []);
+        console.log(`Loaded ${res.data.wallets?.length || 0} wallets`);
+      } else {
+        console.error('Failed to load wallets:', res.data.error);
       }
     } catch (error) {
       console.error('Failed to load wallets:', error);
+      alert(`Error loading wallets: ${error.message || error.response?.data?.error || 'Unknown error'}`);
     }
   };
 
