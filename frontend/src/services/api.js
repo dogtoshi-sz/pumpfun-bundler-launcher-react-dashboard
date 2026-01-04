@@ -46,6 +46,14 @@ export const apiService = {
   
   // Retry bundle
   retryBundle: () => api.post('/retry-bundle'),
+  
+  // Wallet warming
+  startWarming: (walletPrivateKeys, config) => 
+    api.post('/warm-wallets/start', { walletPrivateKeys, config }),
+  getWarmingProgress: () => api.get('/warm-wallets/progress'),
+  getTrendingTokens: () => api.get('/warm-wallets/trending-tokens'),
+  addWalletsToLaunch: (walletPrivateKeys, roles) => 
+    api.post('/warm-wallets/add-to-launch', { walletPrivateKeys, roles }),
 };
 
 export default apiService;

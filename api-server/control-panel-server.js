@@ -1558,6 +1558,196 @@ app.post('/api/marketing/telegram/create-group', async (req, res) => {
   }
 });
 
+// Wallet Warming Endpoints
+let warmingProcesses = new Map(); // Track active warming processes
+
+// Start wallet warming
+app.post('/api/warm-wallets/start', async (req, res) => {
+  try {
+    const { walletPrivateKeys, config } = req.body;
+    
+    if (!walletPrivateKeys || !Array.isArray(walletPrivateKeys) || walletPrivateKeys.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet private keys are required' });
+    }
+    
+    // Import warm-wallets module
+    const { warmWallets, getWarmingProgress } = require('../warm-wallets.ts');
+    
+    // Default config with cheapest settings
+    const warmConfig = {
+      walletsPerBatch: config?.walletsPerBatch || 2,
+      tradesPerWallet: config?.tradesPerWallet || 10,
+      minBuyAmount: config?.minBuyAmount || 0.001, // SUPER TINY
+      maxBuyAmount: config?.maxBuyAmount || 0.005, // SUPER TINY
+      minIntervalSeconds: config?.minIntervalSeconds || 30,
+      maxIntervalSeconds: config?.maxIntervalSeconds || 300,
+      priorityFee: 'low', // ALWAYS cheapest
+      useJupiter: true,
+      useTrendingTokens: config?.useTrendingTokens !== false // Default to true
+    };
+    
+    // Start warming in background
+    const warmingPromise = warmWallets(
+      walletPrivateKeys,
+      [], // Token list will be fetched from API
+      warmConfig,
+      (walletAddress, progress) => {
+        // Progress callback - could emit via WebSocket if needed
+        console.log(`[Warming] ${walletAddress}: ${progress.completedTrades}/${progress.totalTrades} trades`);
+      }
+    );
+    
+    // Store process for tracking
+    const processId = Date.now().toString();
+    warmingProcesses.set(processId, {
+      promise: warmingPromise,
+      walletAddresses: walletPrivateKeys.map(pk => {
+        const { Keypair } = require('@solana/web3.js');
+        const base58 = require('bs58').default || require('bs58');
+        return Keypair.fromSecretKey(base58.decode(pk)).publicKey.toBase58();
+      }),
+      startTime: Date.now(),
+      config: warmConfig
+    });
+    
+    // Don't await - return immediately
+    warmingPromise
+      .then(() => {
+        console.log(`[Warming] Process ${processId} completed`);
+        warmingProcesses.delete(processId);
+      })
+      .catch((error) => {
+        console.error(`[Warming] Process ${processId} failed:`, error);
+        warmingProcesses.delete(processId);
+      });
+    
+    res.json({
+      success: true,
+      processId,
+      message: 'Wallet warming started',
+      walletCount: walletPrivateKeys.length,
+      config: warmConfig
+    });
+  } catch (error) {
+    console.error('[Warming] Start error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to start wallet warming' });
+  }
+});
+
+// Get warming progress
+app.get('/api/warm-wallets/progress', async (req, res) => {
+  try {
+    const { getWarmingProgress } = require('../warm-wallets.ts');
+    const progress = getWarmingProgress();
+    
+    res.json({
+      success: true,
+      progress: progress || [],
+      activeProcesses: Array.from(warmingProcesses.entries()).map(([id, proc]) => ({
+        processId: id,
+        walletAddresses: proc.walletAddresses,
+        startTime: proc.startTime,
+        config: proc.config
+      }))
+    });
+  } catch (error) {
+    console.error('[Warming] Progress error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to get progress' });
+  }
+});
+
+// Get trending tokens
+app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
+  try {
+    const { getCachedTrendingTokens } = require('../src/fetch-trending-tokens.ts');
+    const tokens = await getCachedTrendingTokens(30);
+    
+    res.json({
+      success: true,
+      tokens: tokens.map(t => ({
+        mint: t.mint,
+        symbol: t.symbol,
+        name: t.name,
+        priceUsd: t.priceUsd,
+        volume24h: t.volume24h,
+        liquidity: t.liquidity
+      }))
+    });
+  } catch (error) {
+    console.error('[Warming] Trending tokens error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to fetch trending tokens' });
+  }
+});
+
+// Add warmed wallets to launch roles (bundle/holder/dev)
+app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
+  try {
+    const { walletPrivateKeys, roles } = req.body; // roles: ['bundle', 'holder', 'dev']
+    
+    if (!walletPrivateKeys || !Array.isArray(walletPrivateKeys) || walletPrivateKeys.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet private keys are required' });
+    }
+    
+    if (!roles || !Array.isArray(roles) || roles.length === 0) {
+      return res.status(400).json({ success: false, error: 'Roles are required (bundle, holder, or dev)' });
+    }
+    
+    // Read data.json
+    const dataJsonPath = path.join(__dirname, '..', 'keys', 'data.json');
+    let existingWallets = [];
+    
+    if (fs.existsSync(dataJsonPath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(dataJsonPath, 'utf8'));
+        existingWallets = Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error reading data.json:', error);
+      }
+    }
+    
+    // Add new wallets (avoid duplicates)
+    const newWallets = walletPrivateKeys.filter(pk => !existingWallets.includes(pk));
+    const allWallets = [...existingWallets, ...newWallets];
+    
+    // Save to data.json
+    fs.writeFileSync(dataJsonPath, JSON.stringify(allWallets, null, 2));
+    
+    // Update current-run.json if it exists
+    const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
+    if (fs.existsSync(currentRunPath)) {
+      const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+      
+      // Add to appropriate arrays based on roles
+      if (roles.includes('bundle')) {
+        if (!currentRun.bundleWalletKeys) currentRun.bundleWalletKeys = [];
+        currentRun.bundleWalletKeys = [...new Set([...currentRun.bundleWalletKeys, ...walletPrivateKeys])];
+      }
+      if (roles.includes('holder')) {
+        if (!currentRun.holderWalletKeys) currentRun.holderWalletKeys = [];
+        currentRun.holderWalletKeys = [...new Set([...currentRun.holderWalletKeys, ...walletPrivateKeys])];
+      }
+      if (roles.includes('dev')) {
+        // Dev wallet is typically just one, so take the first
+        if (walletPrivateKeys.length > 0) {
+          currentRun.creatorDevWalletKey = walletPrivateKeys[0];
+        }
+      }
+      
+      fs.writeFileSync(currentRunPath, JSON.stringify(currentRun, null, 2));
+    }
+    
+    res.json({
+      success: true,
+      message: `Added ${newWallets.length} new wallet(s) to data.json`,
+      totalWallets: allWallets.length,
+      addedToRoles: roles
+    });
+  } catch (error) {
+    console.error('[Warming] Add to launch error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to add wallets' });
+  }
+});
+
 // Twitter Auto-Post Endpoint
 app.post('/api/marketing/twitter/auto-post', async (req, res) => {
   try {

@@ -26,6 +26,7 @@ import TokenLaunch from './components/TokenLaunch';
 import HolderWallets from './components/HolderWallets';
 import Settings from './components/Settings';
 import WalletTester from './components/WalletTester';
+import WalletWarming from './components/WalletWarming';
 
 function App() {
   const [activeTab, setActiveTab] = useState('launch');
@@ -35,6 +36,7 @@ function App() {
   const tabs = [
     { id: 'launch', name: 'Launch', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, component: TokenLaunch },
     { id: 'holders', name: 'Holders', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
+    { id: 'warming', name: 'Warming', icon: CpuChipIcon, iconSolid: CpuChipIconSolid, component: WalletWarming },
     { id: 'test', name: 'Test', icon: BeakerIcon, iconSolid: BeakerIconSolid, component: WalletTester },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid, component: Settings },
   ];
