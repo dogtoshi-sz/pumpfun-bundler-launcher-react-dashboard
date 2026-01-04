@@ -13,118 +13,57 @@ export interface TrendingToken {
 export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<TrendingToken[]> {
   console.log(`[Trending Tokens] Fetching top ${limit} trending pump.fun tokens...`)
   
-  // Method 1: Try pump.fun recently bonded/trending API (most accurate)
+  // Method 1: Use DexScreener API - REAL documented API at https://docs.dexscreener.com/
   try {
-    console.log(`[Trending Tokens] Trying pump.fun trending API...`)
-    const pumpFunResponse = await fetch(`https://frontend-api.pump.fun/coins/trending`, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
-      }
+    console.log(`[Trending Tokens] Fetching from DexScreener API (REAL API)...`)
+    
+    // DexScreener API: Get pairs by chain (Solana)
+    // Docs: https://docs.dexscreener.com/
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/pairs/solana`, {
+      headers: { 'Accept': 'application/json' }
     })
     
-    if (pumpFunResponse.ok) {
-      const pumpFunData = await pumpFunResponse.json()
-      console.log(`[Trending Tokens] pump.fun API returned ${Array.isArray(pumpFunData) ? pumpFunData.length : 'non-array'} data`)
-      
-      if (pumpFunData && Array.isArray(pumpFunData) && pumpFunData.length > 0) {
-        const tokens: TrendingToken[] = pumpFunData.slice(0, limit).map((token: any) => ({
-          mint: token.mint || token.address || '',
-          symbol: token.symbol || 'UNKNOWN',
-          name: token.name || token.symbol || 'Unknown Token',
-          priceUsd: parseFloat(token.usd_market_cap ? (token.usd_market_cap / (token.supply || 1)) : token.price || '0') || 0,
-          volume24h: parseFloat(token.volume_24h || token.volume24h || '0') || 0,
-          liquidity: parseFloat(token.liquidity || '0') || 0
-        })).filter((t: TrendingToken) => t.mint && t.mint.length > 0)
-        
-        if (tokens.length > 0) {
-          console.log(`[Trending Tokens] ✅ Successfully fetched ${tokens.length} tokens from pump.fun API`)
-          return tokens
-        }
-      }
-    }
-  } catch (pumpFunError: any) {
-    console.warn(`[Trending Tokens] pump.fun API failed: ${pumpFunError.message}`)
-  }
-  
-  // Method 2: Use DexScreener API - search for Solana tokens and filter for pump.fun
-  try {
-    console.log(`[Trending Tokens] Trying DexScreener API...`)
-    
-    // Try multiple DexScreener endpoints
-    let pairs: any[] = []
-    
-    // Endpoint 1: Search for pump.fun
-    try {
-      const searchResponse = await fetch(`https://api.dexscreener.com/latest/dex/search?q=pump.fun`, {
-        headers: { 'Accept': 'application/json' }
-      })
-      if (searchResponse.ok) {
-        const searchData = await searchResponse.json()
-        pairs = searchData.pairs || []
-        console.log(`[Trending Tokens] DexScreener search returned ${pairs.length} pairs`)
-      }
-    } catch (e) {
-      console.warn(`[Trending Tokens] DexScreener search failed: ${e}`)
+    if (!response.ok) {
+      throw new Error(`DexScreener API error: ${response.status}`)
     }
     
-    // Endpoint 2: Get latest tokens (if search didn't work)
-    if (pairs.length === 0) {
-      try {
-        const tokensResponse = await fetch(`https://api.dexscreener.com/latest/dex/tokens`, {
-          headers: { 'Accept': 'application/json' }
-        })
-        if (tokensResponse.ok) {
-          const tokensData = await tokensResponse.json()
-          pairs = tokensData.pairs || []
-          console.log(`[Trending Tokens] DexScreener tokens endpoint returned ${pairs.length} pairs`)
-        }
-      } catch (e) {
-        console.warn(`[Trending Tokens] DexScreener tokens endpoint failed: ${e}`)
-      }
-    }
+    const data = await response.json()
+    const pairs = data.pairs || []
+    console.log(`[Trending Tokens] DexScreener returned ${pairs.length} Solana pairs`)
     
-    // Filter for pump.fun pairs
+    // Filter for pump.fun pairs - check dexId
     const pumpFunPairs = pairs.filter((pair: any) => {
-      const isPumpFun = 
-        pair.dexId === 'pump.fun' ||
-        pair.dexId === 'pumpfun' ||
-        pair.dexId?.toLowerCase().includes('pump') ||
-        pair.url?.includes('pump.fun') ||
-        pair.url?.includes('pumpfun') ||
-        pair.pairAddress?.toLowerCase().includes('pump')
-      return isPumpFun
+      // DexScreener marks pump.fun pairs with dexId === 'pump.fun'
+      return pair.dexId === 'pump.fun' || 
+             pair.dexId === 'pumpfun' ||
+             (pair.url && pair.url.includes('pump.fun'))
     })
     
-    console.log(`[Trending Tokens] Found ${pumpFunPairs.length} pump.fun pairs from DexScreener`)
+    console.log(`[Trending Tokens] Found ${pumpFunPairs.length} pump.fun pairs`)
     
     if (pumpFunPairs.length > 0) {
-      const uniqueTokens = new Map<string, TrendingToken>()
-      
-      for (const pair of pumpFunPairs.slice(0, limit * 3)) {
-        const baseToken = pair.baseToken
-        if (baseToken?.address && !uniqueTokens.has(baseToken.address)) {
-          uniqueTokens.set(baseToken.address, {
-            mint: baseToken.address,
-            symbol: baseToken.symbol || 'UNKNOWN',
-            name: baseToken.name || baseToken.symbol || 'Unknown Token',
-            priceUsd: parseFloat(pair.priceUsd || '0'),
-            volume24h: parseFloat(pair.volume?.h24 || pair.volume24h || '0'),
-            liquidity: parseFloat(pair.liquidity?.usd || pair.liquidity || '0')
-          })
-          
-          if (uniqueTokens.size >= limit) break
-        }
-      }
-      
-      const tokensArray = Array.from(uniqueTokens.values())
-        .filter(t => t.mint && t.mint.length > 0)
-        .sort((a, b) => b.volume24h - a.volume24h)
+      // Sort by volume and get top tokens
+      const sortedPairs = pumpFunPairs
+        .filter((p: any) => p.baseToken?.address && parseFloat(p.volume?.h24 || '0') > 0)
+        .sort((a: any, b: any) => {
+          const volA = parseFloat(a.volume?.h24 || '0')
+          const volB = parseFloat(b.volume?.h24 || '0')
+          return volB - volA
+        })
         .slice(0, limit)
       
-      if (tokensArray.length > 0) {
-        console.log(`[Trending Tokens] ✅ Successfully fetched ${tokensArray.length} tokens from DexScreener`)
-        return tokensArray
+      const tokens: TrendingToken[] = sortedPairs.map((pair: any) => ({
+        mint: pair.baseToken.address,
+        symbol: pair.baseToken.symbol || 'UNKNOWN',
+        name: pair.baseToken.name || pair.baseToken.symbol || 'Unknown Token',
+        priceUsd: parseFloat(pair.priceUsd || '0'),
+        volume24h: parseFloat(pair.volume?.h24 || '0'),
+        liquidity: parseFloat(pair.liquidity?.usd || '0')
+      }))
+      
+      if (tokens.length > 0) {
+        console.log(`[Trending Tokens] ✅ Successfully fetched ${tokens.length} tokens from DexScreener`)
+        return tokens
       }
     }
   } catch (dexscreenerError: any) {
