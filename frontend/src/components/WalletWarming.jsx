@@ -427,12 +427,41 @@ export default function WalletWarming() {
           <h3 className="text-lg font-bold text-white">
             Wallets ({filteredAndSortedWallets.length} of {wallets.length} shown, {selectedWallets.length} selected)
           </h3>
-          <button
-            onClick={loadWallets}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm transition-colors"
-          >
-            🔄 Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                if (selectedWallets.length === 0) {
+                  alert('Please select wallets to update stats from blockchain');
+                  return;
+                }
+                setLoading(true);
+                try {
+                  const res = await apiService.updateWalletStats(selectedWallets);
+                  if (res.data.success) {
+                    alert(`✅ Updated ${res.data.updated} wallet(s) from blockchain${res.data.failed > 0 ? `\n⚠️ ${res.data.failed} failed` : ''}`);
+                    await loadWallets();
+                  } else {
+                    alert(`Failed: ${res.data.error}`);
+                  }
+                } catch (error) {
+                  alert(`Error: ${error.response?.data?.error || error.message}`);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || selectedWallets.length === 0}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Fetch transaction history from blockchain for selected wallets (RPC call)"
+            >
+              📡 Update Stats from Blockchain
+            </button>
+            <button
+              onClick={loadWallets}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm transition-colors"
+            >
+              🔄 Refresh
+            </button>
+          </div>
         </div>
 
         {/* Filters and Sort Controls */}
