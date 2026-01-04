@@ -16,6 +16,13 @@ export default function WalletWarming() {
   const [selectedWallets, setSelectedWallets] = useState([]);
   const [trendingStatus, setTrendingStatus] = useState({ loading: false, lastFetch: null, error: null });
   const [newWalletPrivateKey, setNewWalletPrivateKey] = useState('');
+  
+  // Filter and sort state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [tagFilter, setTagFilter] = useState('all'); // 'all', 'OLD', 'recent', or any tag
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'idle', 'warming', 'ready'
+  const [sortBy, setSortBy] = useState('createdAt'); // 'createdAt', 'transactionCount', 'totalTrades', 'firstTransactionDate', 'lastTransactionDate'
+  const [sortOrder, setSortOrder] = useState('desc'); // 'asc' or 'desc'
 
   useEffect(() => {
     loadWallets();
@@ -186,6 +193,70 @@ export default function WalletWarming() {
     return new Date(dateString).toLocaleString();
   };
 
+  // Get unique tags from all wallets
+  const allTags = [...new Set(wallets.flatMap(w => w.tags || []))];
+
+  // Filter and sort wallets
+  const filteredAndSortedWallets = wallets
+    .filter(wallet => {
+      // Search filter
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        if (!wallet.address.toLowerCase().includes(query)) {
+          return false;
+        }
+      }
+      
+      // Tag filter
+      if (tagFilter !== 'all') {
+        if (!wallet.tags || !wallet.tags.includes(tagFilter)) {
+          return false;
+        }
+      }
+      
+      // Status filter
+      if (statusFilter !== 'all') {
+        if (wallet.status !== statusFilter) {
+          return false;
+        }
+      }
+      
+      return true;
+    })
+    .sort((a, b) => {
+      let aValue, bValue;
+      
+      switch (sortBy) {
+        case 'transactionCount':
+          aValue = a.transactionCount || 0;
+          bValue = b.transactionCount || 0;
+          break;
+        case 'totalTrades':
+          aValue = a.totalTrades || 0;
+          bValue = b.totalTrades || 0;
+          break;
+        case 'firstTransactionDate':
+          aValue = a.firstTransactionDate ? new Date(a.firstTransactionDate).getTime() : 0;
+          bValue = b.firstTransactionDate ? new Date(b.firstTransactionDate).getTime() : 0;
+          break;
+        case 'lastTransactionDate':
+          aValue = a.lastTransactionDate ? new Date(a.lastTransactionDate).getTime() : 0;
+          bValue = b.lastTransactionDate ? new Date(b.lastTransactionDate).getTime() : 0;
+          break;
+        case 'createdAt':
+        default:
+          aValue = new Date(a.createdAt).getTime();
+          bValue = new Date(b.createdAt).getTime();
+          break;
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue - bValue;
+      } else {
+        return bValue - aValue;
+      }
+    });
+
   return (
     <div className="bg-gray-900/50 rounded-lg p-6">
       <div className="mb-6">
@@ -354,7 +425,7 @@ export default function WalletWarming() {
       <div className="mb-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold text-white">
-            Wallets ({wallets.length} total, {selectedWallets.length} selected)
+            Wallets ({filteredAndSortedWallets.length} of {wallets.length} shown, {selectedWallets.length} selected)
           </h3>
           <button
             onClick={loadWallets}
@@ -364,8 +435,127 @@ export default function WalletWarming() {
           </button>
         </div>
 
+        {/* Filters and Sort Controls */}
+        <div className="mb-4 bg-gray-900/50 rounded-lg p-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            {/* Search */}
+            <div className="lg:col-span-2">
+              <label className="text-xs text-gray-400 mb-1 block">🔍 Search Address</label>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by wallet address..."
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+              />
+            </div>
+            
+            {/* Tag Filter */}
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">🏷️ Filter by Tag</label>
+              <select
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+              >
+                <option value="all">All Tags</option>
+                {allTags.map(tag => (
+                  <option key={tag} value={tag}>{tag}</option>
+                ))}
+              </select>
+            </div>
+            
+            {/* Status Filter */}
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">📊 Filter by Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+              >
+                <option value="all">All Status</option>
+                <option value="idle">⏸️ Idle</option>
+                <option value="warming">🔥 Warming</option>
+                <option value="ready">✅ Ready</option>
+              </select>
+            </div>
+            
+            {/* Sort By */}
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">🔀 Sort By</label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm mb-2"
+              >
+                <option value="createdAt">Created Date</option>
+                <option value="transactionCount">Transactions</option>
+                <option value="totalTrades">Total Trades</option>
+                <option value="firstTransactionDate">First Trade</option>
+                <option value="lastTransactionDate">Last Trade</option>
+              </select>
+              <button
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                className="w-full px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs transition-colors"
+              >
+                {sortOrder === 'asc' ? '⬆️ Ascending' : '⬇️ Descending'}
+              </button>
+            </div>
+          </div>
+          
+          {/* Quick Filter Buttons */}
+          <div className="mt-3 flex gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                setTagFilter('all');
+                setStatusFilter('all');
+                setSearchQuery('');
+              }}
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs transition-colors"
+            >
+              Clear Filters
+            </button>
+            <button
+              onClick={() => {
+                setTagFilter('OLD');
+                setStatusFilter('all');
+              }}
+              className="px-3 py-1 bg-yellow-900/50 hover:bg-yellow-800/50 text-yellow-400 rounded text-xs transition-colors"
+            >
+              OLD Wallets
+            </button>
+            <button
+              onClick={() => {
+                setTagFilter('recent');
+                setStatusFilter('all');
+              }}
+              className="px-3 py-1 bg-blue-900/50 hover:bg-blue-800/50 text-blue-400 rounded text-xs transition-colors"
+            >
+              Recent Wallets
+            </button>
+            <button
+              onClick={() => {
+                setStatusFilter('ready');
+                setTagFilter('all');
+              }}
+              className="px-3 py-1 bg-green-900/50 hover:bg-green-800/50 text-green-400 rounded text-xs transition-colors"
+            >
+              Ready Only
+            </button>
+            <button
+              onClick={() => {
+                setStatusFilter('warming');
+                setTagFilter('all');
+              }}
+              className="px-3 py-1 bg-orange-900/50 hover:bg-orange-800/50 text-orange-400 rounded text-xs transition-colors"
+            >
+              Warming Only
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
-          {wallets.map((wallet, idx) => {
+          {filteredAndSortedWallets.map((wallet, idx) => {
             const isSelected = selectedWallets.includes(wallet.address);
             
             return (
@@ -455,6 +645,12 @@ export default function WalletWarming() {
         {wallets.length === 0 && (
           <div className="text-center py-8 text-gray-500">
             <p>No wallets yet. Create or add a wallet to get started.</p>
+          </div>
+        )}
+        
+        {wallets.length > 0 && filteredAndSortedWallets.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            <p>No wallets match your filters. Try adjusting your search or filter criteria.</p>
           </div>
         )}
       </div>
