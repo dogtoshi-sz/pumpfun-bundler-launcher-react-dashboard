@@ -1670,9 +1670,13 @@ app.put('/api/warming-wallets/:address/tags', async (req, res) => {
 // Update wallet stats from blockchain (RPC call - only when user requests)
 app.post('/api/warming-wallets/update-stats', async (req, res) => {
   try {
+    console.log('[Warming] Update stats endpoint called');
+    console.log('[Warming] Request body:', req.body);
+    
     const { walletAddresses } = req.body;
     
     if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      console.log('[Warming] Invalid request: walletAddresses missing or empty');
       return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
     }
     
@@ -1680,6 +1684,7 @@ app.post('/api/warming-wallets/update-stats', async (req, res) => {
     const { updateMultipleWalletsFromBlockchain } = require('../src/wallet-warming-manager.ts');
     const result = await updateMultipleWalletsFromBlockchain(walletAddresses);
     
+    console.log(`[Warming] Update complete: ${result.updated} updated, ${result.failed} failed`);
     res.json({
       success: true,
       message: `Updated ${result.updated} wallet(s), ${result.failed} failed`,
@@ -1689,6 +1694,7 @@ app.post('/api/warming-wallets/update-stats', async (req, res) => {
     });
   } catch (error) {
     console.error('[Warming] Update stats error:', error);
+    console.error('[Warming] Error stack:', error.stack);
     res.status(500).json({ success: false, error: error.message || 'Failed to update wallet stats' });
   }
 });
