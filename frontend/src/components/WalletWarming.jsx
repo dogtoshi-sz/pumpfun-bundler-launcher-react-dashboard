@@ -684,6 +684,19 @@ export default function WalletWarming() {
         )}
       </div>
 
+      {/* Warming Explanation */}
+      <div className="mb-4 bg-blue-900/20 border border-blue-700 rounded-lg p-4">
+        <h4 className="text-sm font-bold text-blue-400 mb-2">🔥 What Happens When You Start Warming:</h4>
+        <div className="text-xs text-gray-300 space-y-1">
+          <div>1. Selected wallets are auto-funded from your main wallet (if needed)</div>
+          <div>2. Each wallet performs {config.tradesPerWallet} random buy/sell trades on trending tokens</div>
+          <div>3. Wallets keep 1-5% of tokens after each sell to look active</div>
+          <div>4. Transaction counts and dates are tracked and saved automatically</div>
+          <div>5. Wallets are marked as "ready" when warming completes</div>
+          <div className="text-blue-400 mt-2">💡 Use "📡 Update Stats from Blockchain" to fetch existing transaction history before warming</div>
+        </div>
+      </div>
+      
       {/* Actions */}
       <div className="flex gap-4">
         <button
