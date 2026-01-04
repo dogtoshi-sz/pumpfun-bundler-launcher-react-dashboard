@@ -1656,9 +1656,10 @@ app.get('/api/warm-wallets/progress', async (req, res) => {
   }
 });
 
-// Get trending tokens
+// Get trending tokens (NEW, BONDING, GRADUATED from Moralis)
 app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
   try {
+    console.log('[Warming] Fetching trending tokens from Moralis (NEW, BONDING, GRADUATED)...');
     const { getCachedTrendingTokens } = require('../src/fetch-trending-tokens.ts');
     const tokens = await getCachedTrendingTokens(30);
     
@@ -1670,7 +1671,8 @@ app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
         name: t.name,
         priceUsd: t.priceUsd,
         volume24h: t.volume24h,
-        liquidity: t.liquidity
+        liquidity: t.liquidity,
+        type: t.type // Include type (new, bonding, graduated)
       }))
     });
   } catch (error) {

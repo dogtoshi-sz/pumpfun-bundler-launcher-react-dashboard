@@ -37,16 +37,18 @@ const DEFAULT_CONFIG: WarmConfig = {
   useTrendingTokens: true // Use trending tokens from API
 }
 
-// Get trending tokens - uses API if enabled, otherwise falls back to file
+// Get trending tokens - uses Moralis API (NEW, BONDING, GRADUATED), otherwise falls back to file
 async function getTrendingTokens(useAPI: boolean): Promise<string[]> {
   if (useAPI) {
     try {
-      const tokens = await getCachedTrendingTokens(30) // Get top 30 trending
+      // Get tokens from Moralis (NEW, BONDING, GRADUATED - randomly mixed)
+      const tokens = await getCachedTrendingTokens(30) // Get 30 tokens (mix of all types)
       if (tokens.length > 0) {
+        console.log(`   ✅ Fetched ${tokens.length} tokens from Moralis (NEW/BONDING/GRADUATED)`)
         return tokens.map(t => t.mint)
       }
     } catch (error) {
-      console.warn('Failed to fetch trending tokens from API, falling back to file:', error)
+      console.warn('Failed to fetch trending tokens from Moralis API, falling back to file:', error)
     }
   }
   
