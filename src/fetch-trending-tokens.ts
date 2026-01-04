@@ -42,26 +42,40 @@ export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<Tr
     
     console.log(`[Trending Tokens] Found ${pumpFunPairs.length} pump.fun pairs`)
     
-    // Get unique tokens (by base token address)
-    const uniqueTokens = new Map<string, TrendingToken>()
-    
-    for (const pair of pumpFunPairs.slice(0, limit * 2)) {
-      const baseToken = pair.baseToken
-      if (baseToken?.address && !uniqueTokens.has(baseToken.address)) {
-        uniqueTokens.set(baseToken.address, {
-          mint: baseToken.address,
-          symbol: baseToken.symbol || 'UNKNOWN',
-          name: baseToken.name || baseToken.symbol || 'Unknown Token',
-          priceUsd: parseFloat(pair.priceUsd || '0'),
-          volume24h: parseFloat(pair.volume?.h24 || '0'),
-          liquidity: parseFloat(pair.liquidity?.usd || '0')
-        })
-        
-        if (uniqueTokens.size >= limit) break
+      // Get unique tokens (by base token address)
+      const uniqueTokens = new Map<string, TrendingToken>()
+      
+      for (const pair of pumpFunPairs.slice(0, limit * 3)) {
+        const baseToken = pair.baseToken
+        if (baseToken?.address && !uniqueTokens.has(baseToken.address)) {
+          uniqueTokens.set(baseToken.address, {
+            mint: baseToken.address,
+            symbol: baseToken.symbol || 'UNKNOWN',
+            name: baseToken.name || baseToken.symbol || 'Unknown Token',
+            priceUsd: parseFloat(pair.priceUsd || '0'),
+            volume24h: parseFloat(pair.volume?.h24 || pair.volume24h || '0'),
+            liquidity: parseFloat(pair.liquidity?.usd || pair.liquidity || '0')
+          })
+          
+          if (uniqueTokens.size >= limit) break
+        }
       }
+      
+      // Sort by volume and return top tokens
+      const tokensArray = Array.from(uniqueTokens.values())
+        .filter(t => t.mint && t.mint.length > 0) // Only valid mints
+        .sort((a, b) => b.volume24h - a.volume24h)
+        .slice(0, limit)
+      
+      if (tokensArray.length > 0) {
+        console.log(`[Trending Tokens] Successfully fetched ${tokensArray.length} tokens from DexScreener`)
+        return tokensArray
+      }
+    } catch (dexscreenerError: any) {
+      console.warn(`[Trending Tokens] DexScreener API failed: ${dexscreenerError.message}`)
     }
     
-    // If we didn't get enough from DexScreener, try alternative method
+    // Method 3: Try Birdeye API if available
     if (uniqueTokens.size < limit) {
       // Alternative: Fetch from Birdeye API if available
       const birdeyeApiKey = process.env.BIRDEYE_API_KEY
