@@ -6,6 +6,7 @@ export default function WalletWarming() {
   const [progress, setProgress] = useState([]);
   const [trendingTokens, setTrendingTokens] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [trendingStatus, setTrendingStatus] = useState({ loading: false, lastFetch: null, error: null });
   const [config, setConfig] = useState({
     tradesPerWallet: 10,
     minBuyAmount: 0.001,
@@ -46,14 +47,32 @@ export default function WalletWarming() {
     }
   };
 
-  const loadTrendingTokens = async () => {
+  const loadTrendingTokens = async (showLoading = false) => {
+    if (showLoading) setTrendingStatus({ loading: true, lastFetch: null, error: null });
     try {
       const res = await apiService.getTrendingTokens();
       if (res.data.success) {
-        setTrendingTokens(res.data.tokens || []);
+        const tokens = res.data.tokens || [];
+        setTrendingTokens(tokens);
+        setTrendingStatus({ 
+          loading: false, 
+          lastFetch: new Date(), 
+          error: null,
+          count: tokens.length 
+        });
+        if (tokens.length === 0) {
+          setTrendingStatus(prev => ({ ...prev, error: 'No trending tokens found. Check API connection.' }));
+        }
+      } else {
+        setTrendingStatus({ loading: false, lastFetch: null, error: res.data.error || 'Failed to fetch' });
       }
     } catch (error) {
       console.error('Failed to load trending tokens:', error);
+      setTrendingStatus({ 
+        loading: false, 
+        lastFetch: null, 
+        error: error.response?.data?.error || error.message || 'Failed to fetch trending tokens' 
+      });
     }
   };
 
@@ -217,11 +236,40 @@ export default function WalletWarming() {
       </div>
 
       {/* Trending Tokens */}
-      {trendingTokens.length > 0 && (
-        <div className="mb-6 bg-gray-900/50 rounded-lg p-4">
-          <h3 className="text-lg font-bold text-white mb-2">
-            📈 Trending Tokens ({trendingTokens.length})
+      <div className="mb-6 bg-gray-900/50 rounded-lg p-4">
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-lg font-bold text-white">
+            📈 Trending Tokens
+            {trendingTokens.length > 0 && ` (${trendingTokens.length})`}
           </h3>
+          <button
+            onClick={() => loadTrendingTokens(true)}
+            disabled={trendingStatus.loading}
+            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors disabled:opacity-50"
+          >
+            {trendingStatus.loading ? '⏳ Loading...' : '🔄 Refresh'}
+          </button>
+        </div>
+        
+        {/* Status indicator */}
+        <div className="mb-3 text-xs">
+          {trendingStatus.loading && (
+            <div className="text-yellow-400">⏳ Fetching trending tokens from API...</div>
+          )}
+          {trendingStatus.error && (
+            <div className="text-red-400">❌ {trendingStatus.error}</div>
+          )}
+          {trendingStatus.lastFetch && !trendingStatus.error && trendingTokens.length > 0 && (
+            <div className="text-green-400">
+              ✅ Last updated: {new Date(trendingStatus.lastFetch).toLocaleTimeString()} ({trendingStatus.count} tokens)
+            </div>
+          )}
+          {!trendingStatus.lastFetch && !trendingStatus.loading && !trendingStatus.error && (
+            <div className="text-gray-400">Click "Refresh" to fetch trending tokens</div>
+          )}
+        </div>
+        
+        {trendingTokens.length > 0 && (
           <div className="max-h-32 overflow-y-auto">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
               {trendingTokens.slice(0, 12).map((token, idx) => (
@@ -233,8 +281,16 @@ export default function WalletWarming() {
               ))}
             </div>
           </div>
-        </div>
-      )}
+        )}
+        
+        {trendingTokens.length === 0 && !trendingStatus.loading && (
+          <div className="text-center py-4 text-gray-500 text-sm">
+            {trendingStatus.error 
+              ? 'Failed to load trending tokens. Will use tokens from warmup-tokens.json file instead.'
+              : 'No trending tokens loaded. Click "Refresh" to fetch from API.'}
+          </div>
+        )}
+      </div>
 
       {/* Wallet Selection */}
       <div className="mb-6">

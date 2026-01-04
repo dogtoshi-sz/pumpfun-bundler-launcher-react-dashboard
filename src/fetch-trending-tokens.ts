@@ -12,6 +12,8 @@ export interface TrendingToken {
 
 export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<TrendingToken[]> {
   try {
+    console.log(`[Trending Tokens] Fetching top ${limit} trending pump.fun tokens...`)
+    
     // DexScreener API endpoint for pump.fun tokens
     // We'll search for tokens on pump.fun by querying the pump.fun program
     // Alternative: Use Birdeye API if available
@@ -28,6 +30,7 @@ export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<Tr
     }
     
     const data = await response.json()
+    console.log(`[Trending Tokens] DexScreener returned ${data.pairs?.length || 0} pairs`)
     
     // Filter for pump.fun pairs and extract token info
     const pumpFunPairs = (data.pairs || []).filter((pair: any) => {
@@ -36,6 +39,8 @@ export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<Tr
              pair.url?.includes('pump.fun') ||
              pair.pairAddress?.startsWith('pump')
     })
+    
+    console.log(`[Trending Tokens] Found ${pumpFunPairs.length} pump.fun pairs`)
     
     // Get unique tokens (by base token address)
     const uniqueTokens = new Map<string, TrendingToken>()
@@ -104,10 +109,16 @@ export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<Tr
       .sort((a, b) => b.volume24h - a.volume24h)
       .slice(0, limit)
     
+    console.log(`[Trending Tokens] Returning ${tokensArray.length} tokens (top by volume)`)
+    if (tokensArray.length > 0) {
+      console.log(`[Trending Tokens] Top token: ${tokensArray[0].symbol} (${tokensArray[0].mint.substring(0, 8)}...) - Volume: $${tokensArray[0].volume24h.toFixed(2)}`)
+    }
+    
     return tokensArray
     
   } catch (error: any) {
-    console.error('Error fetching trending tokens:', error.message)
+    console.error('[Trending Tokens] Error fetching trending tokens:', error.message)
+    console.error('[Trending Tokens] Stack:', error.stack)
     
     // Fallback: Return empty array or use cached tokens
     return []
