@@ -437,8 +437,22 @@ const main = async () => {
     kps = warmedBundleWallets
     
     // Fund warmed wallets with required amounts
-    const swapAmountsForDistribution = bundleSwapAmounts.length > 0 ? bundleSwapAmounts : undefined
-    const amountsToUse = swapAmountsForDistribution || Array(warmedBundleWallets.length).fill(SWAP_AMOUNT)
+    // Pad/trim amounts array to match number of warmed wallets (same logic as fresh wallets)
+    let amountsToUse: number[]
+    if (bundleSwapAmounts.length > 0) {
+      amountsToUse = [...bundleSwapAmounts]
+      // Pad with SWAP_AMOUNT if we have fewer amounts than wallets
+      while (amountsToUse.length < warmedBundleWallets.length) {
+        console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS has ${amountsToUse.length} values but need ${warmedBundleWallets.length}. Padding with SWAP_AMOUNT (${SWAP_AMOUNT})`)
+        amountsToUse.push(SWAP_AMOUNT)
+      }
+      // Trim if we have more amounts than wallets
+      amountsToUse = amountsToUse.slice(0, warmedBundleWallets.length)
+      console.log(`   ✅ Using custom amounts: [${amountsToUse.join(', ')}]`)
+    } else {
+      amountsToUse = Array(warmedBundleWallets.length).fill(SWAP_AMOUNT)
+      console.log(`   ✅ Using default SWAP_AMOUNT (${SWAP_AMOUNT}) for all wallets`)
+    }
     
     for (let i = 0; i < warmedBundleWallets.length; i++) {
       const wallet = warmedBundleWallets[i]
