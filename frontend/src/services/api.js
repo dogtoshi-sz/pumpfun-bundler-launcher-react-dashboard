@@ -47,13 +47,17 @@ export const apiService = {
   // Retry bundle
   retryBundle: () => api.post('/retry-bundle'),
   
-  // Wallet warming
-  startWarming: (walletPrivateKeys, config) => 
-    api.post('/warm-wallets/start', { walletPrivateKeys, config }),
+  // Wallet warming (SIMPLIFIED)
+  getWarmingWallets: () => api.get('/warming-wallets'),
+  createWarmingWallet: () => api.post('/warming-wallets/create'),
+  addWarmingWallet: (privateKey) => api.post('/warming-wallets/add', { privateKey }),
+  deleteWarmingWallet: (address) => api.delete(`/warming-wallets/${address}`),
+  startWarming: (walletAddresses, config) => 
+    api.post('/warm-wallets/start', { walletAddresses, config }),
   getWarmingProgress: () => api.get('/warm-wallets/progress'),
   getTrendingTokens: (limit = 100) => api.get(`/warm-wallets/trending-tokens?limit=${limit}`),
-  addWalletsToLaunch: (walletPrivateKeys, roles) => 
-    api.post('/warm-wallets/add-to-launch', { walletPrivateKeys, roles }),
+  addWalletsToLaunch: (walletAddresses, roles) => 
+    api.post('/warm-wallets/add-to-launch', { walletAddresses, roles }),
 };
 
 export default apiService;

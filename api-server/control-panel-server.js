@@ -1558,20 +1558,115 @@ app.post('/api/marketing/telegram/create-group', async (req, res) => {
   }
 });
 
-// Wallet Warming Endpoints
+// Wallet Warming Endpoints - SIMPLIFIED SYSTEM
 let warmingProcesses = new Map(); // Track active warming processes
 
-// Start wallet warming
-app.post('/api/warm-wallets/start', async (req, res) => {
+// Get all warmed wallets
+app.get('/api/warming-wallets', async (req, res) => {
   try {
-    const { walletPrivateKeys, config } = req.body;
+    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const wallets = loadWarmedWallets();
     
-    if (!walletPrivateKeys || !Array.isArray(walletPrivateKeys) || walletPrivateKeys.length === 0) {
-      return res.status(400).json({ success: false, error: 'Wallet private keys are required' });
+    res.json({
+      success: true,
+      wallets: wallets.map(w => ({
+        address: w.address,
+        transactionCount: w.transactionCount,
+        firstTransactionDate: w.firstTransactionDate,
+        lastTransactionDate: w.lastTransactionDate,
+        totalTrades: w.totalTrades,
+        createdAt: w.createdAt,
+        status: w.status
+      }))
+    });
+  } catch (error) {
+    console.error('[Warming] Get wallets error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to get wallets' });
+  }
+});
+
+// Create new wallet
+app.post('/api/warming-wallets/create', async (req, res) => {
+  try {
+    const { createWarmingWallet } = require('../src/wallet-warming-manager.ts');
+    const wallet = createWarmingWallet();
+    
+    res.json({
+      success: true,
+      wallet: {
+        address: wallet.address,
+        transactionCount: wallet.transactionCount,
+        firstTransactionDate: wallet.firstTransactionDate,
+        lastTransactionDate: wallet.lastTransactionDate,
+        totalTrades: wallet.totalTrades,
+        createdAt: wallet.createdAt,
+        status: wallet.status
+      }
+    });
+  } catch (error) {
+    console.error('[Warming] Create wallet error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to create wallet' });
+  }
+});
+
+// Add existing wallet
+app.post('/api/warming-wallets/add', async (req, res) => {
+  try {
+    const { privateKey } = req.body;
+    if (!privateKey) {
+      return res.status(400).json({ success: false, error: 'Private key is required' });
     }
     
-    // Import warm-wallets module
-    const { warmWallets, getWarmingProgress } = require('../warm-wallets.ts');
+    const { addWarmingWallet } = require('../src/wallet-warming-manager.ts');
+    const wallet = addWarmingWallet(privateKey);
+    
+    res.json({
+      success: true,
+      wallet: {
+        address: wallet.address,
+        transactionCount: wallet.transactionCount,
+        firstTransactionDate: wallet.firstTransactionDate,
+        lastTransactionDate: wallet.lastTransactionDate,
+        totalTrades: wallet.totalTrades,
+        createdAt: wallet.createdAt,
+        status: wallet.status
+      }
+    });
+  } catch (error) {
+    console.error('[Warming] Add wallet error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to add wallet' });
+  }
+});
+
+// Delete wallet
+app.delete('/api/warming-wallets/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    const { deleteWarmingWallet } = require('../src/wallet-warming-manager.ts');
+    const deleted = deleteWarmingWallet(address);
+    
+    if (deleted) {
+      res.json({ success: true, message: 'Wallet deleted' });
+    } else {
+      res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+  } catch (error) {
+    console.error('[Warming] Delete wallet error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete wallet' });
+  }
+});
+
+// Start wallet warming (SIMPLIFIED - uses wallet addresses)
+app.post('/api/warm-wallets/start', async (req, res) => {
+  try {
+    const { walletAddresses, config } = req.body;
+    
+    if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
+    }
+    
+    // Import wallet warming manager
+    const { warmWallets } = require('../src/wallet-warming-manager.ts');
     
     // Default config with cheapest settings
     const warmConfig = {
@@ -1588,12 +1683,11 @@ app.post('/api/warm-wallets/start', async (req, res) => {
     
     // Start warming in background
     const warmingPromise = warmWallets(
-      walletPrivateKeys,
-      [], // Token list will be fetched from API
+      walletAddresses,
       warmConfig,
-      (walletAddress, progress) => {
-        // Progress callback - could emit via WebSocket if needed
-        console.log(`[Warming] ${walletAddress}: ${progress.completedTrades}/${progress.totalTrades} trades`);
+      (wallet) => {
+        // Progress callback
+        console.log(`[Warming] ${wallet.address}: ${wallet.transactionCount} transactions, ${wallet.totalTrades} trades`);
       }
     );
     
@@ -1601,11 +1695,7 @@ app.post('/api/warm-wallets/start', async (req, res) => {
     const processId = Date.now().toString();
     warmingProcesses.set(processId, {
       promise: warmingPromise,
-      walletAddresses: walletPrivateKeys.map(pk => {
-        const { Keypair } = require('@solana/web3.js');
-        const base58 = require('bs58').default || require('bs58');
-        return Keypair.fromSecretKey(base58.decode(pk)).publicKey.toBase58();
-      }),
+      walletAddresses: walletAddresses,
       startTime: Date.now(),
       config: warmConfig
     });
@@ -1625,7 +1715,7 @@ app.post('/api/warm-wallets/start', async (req, res) => {
       success: true,
       processId,
       message: 'Wallet warming started',
-      walletCount: walletPrivateKeys.length,
+      walletCount: walletAddresses.length,
       config: warmConfig
     });
   } catch (error) {
@@ -1634,15 +1724,22 @@ app.post('/api/warm-wallets/start', async (req, res) => {
   }
 });
 
-// Get warming progress
+// Get warming progress (now just returns wallet stats)
 app.get('/api/warm-wallets/progress', async (req, res) => {
   try {
-    const { getWarmingProgress } = require('../warm-wallets.ts');
-    const progress = getWarmingProgress();
+    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const wallets = loadWarmedWallets();
     
     res.json({
       success: true,
-      progress: progress || [],
+      wallets: wallets.map(w => ({
+        address: w.address,
+        transactionCount: w.transactionCount,
+        firstTransactionDate: w.firstTransactionDate,
+        lastTransactionDate: w.lastTransactionDate,
+        totalTrades: w.totalTrades,
+        status: w.status
+      })),
       activeProcesses: Array.from(warmingProcesses.entries()).map(([id, proc]) => ({
         processId: id,
         walletAddresses: proc.walletAddresses,
@@ -1682,17 +1779,25 @@ app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
   }
 });
 
-// Add warmed wallets to launch roles (bundle/holder/dev)
+// Add warmed wallets to launch (simple - just add to data.json and current-run.json)
 app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
   try {
-    const { walletPrivateKeys, roles } = req.body; // roles: ['bundle', 'holder', 'dev']
+    const { walletAddresses, roles } = req.body; // roles: ['bundle', 'holder', 'dev'] - optional, can use any wallet for any role
     
-    if (!walletPrivateKeys || !Array.isArray(walletPrivateKeys) || walletPrivateKeys.length === 0) {
-      return res.status(400).json({ success: false, error: 'Wallet private keys are required' });
+    if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
     }
     
-    if (!roles || !Array.isArray(roles) || roles.length === 0) {
-      return res.status(400).json({ success: false, error: 'Roles are required (bundle, holder, or dev)' });
+    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const warmedWallets = loadWarmedWallets();
+    
+    // Get private keys for selected addresses
+    const walletPrivateKeys = walletAddresses
+      .map(addr => warmedWallets.find(w => w.address === addr)?.privateKey)
+      .filter(pk => pk !== undefined);
+    
+    if (walletPrivateKeys.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid wallets found' });
     }
     
     // Read data.json
@@ -1715,35 +1820,35 @@ app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
     // Save to data.json
     fs.writeFileSync(dataJsonPath, JSON.stringify(allWallets, null, 2));
     
-    // Update current-run.json if it exists
-    const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
-    if (fs.existsSync(currentRunPath)) {
-      const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
-      
-      // Add to appropriate arrays based on roles
-      if (roles.includes('bundle')) {
-        if (!currentRun.bundleWalletKeys) currentRun.bundleWalletKeys = [];
-        currentRun.bundleWalletKeys = [...new Set([...currentRun.bundleWalletKeys, ...walletPrivateKeys])];
-      }
-      if (roles.includes('holder')) {
-        if (!currentRun.holderWalletKeys) currentRun.holderWalletKeys = [];
-        currentRun.holderWalletKeys = [...new Set([...currentRun.holderWalletKeys, ...walletPrivateKeys])];
-      }
-      if (roles.includes('dev')) {
-        // Dev wallet is typically just one, so take the first
-        if (walletPrivateKeys.length > 0) {
-          currentRun.creatorDevWalletKey = walletPrivateKeys[0];
+    // Update current-run.json if it exists and roles are specified
+    if (roles && Array.isArray(roles) && roles.length > 0) {
+      const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
+      if (fs.existsSync(currentRunPath)) {
+        const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+        
+        if (roles.includes('bundle')) {
+          if (!currentRun.bundleWalletKeys) currentRun.bundleWalletKeys = [];
+          currentRun.bundleWalletKeys = [...new Set([...currentRun.bundleWalletKeys, ...walletPrivateKeys])];
         }
+        if (roles.includes('holder')) {
+          if (!currentRun.holderWalletKeys) currentRun.holderWalletKeys = [];
+          currentRun.holderWalletKeys = [...new Set([...currentRun.holderWalletKeys, ...walletPrivateKeys])];
+        }
+        if (roles.includes('dev')) {
+          if (walletPrivateKeys.length > 0) {
+            currentRun.creatorDevWalletKey = walletPrivateKeys[0];
+          }
+        }
+        
+        fs.writeFileSync(currentRunPath, JSON.stringify(currentRun, null, 2));
       }
-      
-      fs.writeFileSync(currentRunPath, JSON.stringify(currentRun, null, 2));
     }
     
     res.json({
       success: true,
       message: `Added ${newWallets.length} new wallet(s) to data.json`,
       totalWallets: allWallets.length,
-      addedToRoles: roles
+      addedWallets: walletAddresses.length
     });
   } catch (error) {
     console.error('[Warming] Add to launch error:', error);

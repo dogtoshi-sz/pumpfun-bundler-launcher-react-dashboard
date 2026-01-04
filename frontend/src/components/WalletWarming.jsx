@@ -3,10 +3,8 @@ import apiService from '../services/api';
 
 export default function WalletWarming() {
   const [wallets, setWallets] = useState([]);
-  const [progress, setProgress] = useState([]);
   const [trendingTokens, setTrendingTokens] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [trendingStatus, setTrendingStatus] = useState({ loading: false, lastFetch: null, error: null });
   const [config, setConfig] = useState({
     tradesPerWallet: 10,
     minBuyAmount: 0.001,
@@ -16,41 +14,32 @@ export default function WalletWarming() {
     useTrendingTokens: true
   });
   const [selectedWallets, setSelectedWallets] = useState([]);
-  const [selectedRoles, setSelectedRoles] = useState([]);
+  const [trendingStatus, setTrendingStatus] = useState({ loading: false, lastFetch: null, error: null });
+  const [newWalletPrivateKey, setNewWalletPrivateKey] = useState('');
 
   useEffect(() => {
     loadWallets();
     loadTrendingTokens();
     const interval = setInterval(() => {
-      loadProgress();
-    }, 2000); // Poll every 2 seconds
+      loadWallets(); // Refresh wallet stats
+    }, 3000); // Poll every 3 seconds
     return () => clearInterval(interval);
   }, []);
 
   const loadWallets = async () => {
     try {
-      const res = await apiService.getHolderWallets();
-      setWallets(res.data.wallets || []);
-    } catch (error) {
-      console.error('Failed to load wallets:', error);
-    }
-  };
-
-  const loadProgress = async () => {
-    try {
-      const res = await apiService.getWarmingProgress();
+      const res = await apiService.getWarmingWallets();
       if (res.data.success) {
-        setProgress(res.data.progress || []);
+        setWallets(res.data.wallets || []);
       }
     } catch (error) {
-      console.error('Failed to load progress:', error);
+      console.error('Failed to load wallets:', error);
     }
   };
 
   const loadTrendingTokens = async (showLoading = false) => {
     if (showLoading) setTrendingStatus({ loading: true, lastFetch: null, error: null });
     try {
-      // Request more tokens (100) for better variety
       const res = await apiService.getTrendingTokens(100);
       if (res.data.success) {
         const tokens = res.data.tokens || [];
@@ -77,6 +66,46 @@ export default function WalletWarming() {
     }
   };
 
+  const handleCreateWallet = async () => {
+    setLoading(true);
+    try {
+      const res = await apiService.createWarmingWallet();
+      if (res.data.success) {
+        await loadWallets();
+        alert('Wallet created successfully!');
+      } else {
+        alert(`Failed to create wallet: ${res.data.error}`);
+      }
+    } catch (error) {
+      alert(`Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddWallet = async () => {
+    if (!newWalletPrivateKey.trim()) {
+      alert('Please enter a private key');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiService.addWarmingWallet(newWalletPrivateKey);
+      if (res.data.success) {
+        setNewWalletPrivateKey('');
+        await loadWallets();
+        alert('Wallet added successfully!');
+      } else {
+        alert(`Failed to add wallet: ${res.data.error}`);
+      }
+    } catch (error) {
+      alert(`Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStartWarming = async () => {
     if (selectedWallets.length === 0) {
       alert('Please select at least one wallet');
@@ -85,12 +114,11 @@ export default function WalletWarming() {
 
     setLoading(true);
     try {
-      const walletPrivateKeys = selectedWallets.map(w => w.privateKey);
-      const res = await apiService.startWarming(walletPrivateKeys, config);
+      const res = await apiService.startWarming(selectedWallets, config);
       
       if (res.data.success) {
         alert(`Started warming ${selectedWallets.length} wallet(s)`);
-        loadProgress();
+        loadWallets();
       } else {
         alert(`Failed to start warming: ${res.data.error}`);
       }
@@ -101,24 +129,34 @@ export default function WalletWarming() {
     }
   };
 
+  const handleDeleteWallet = async (address) => {
+    if (!confirm(`Delete wallet ${address.substring(0, 8)}...?`)) return;
+
+    try {
+      const res = await apiService.deleteWarmingWallet(address);
+      if (res.data.success) {
+        await loadWallets();
+        setSelectedWallets(prev => prev.filter(addr => addr !== address));
+      } else {
+        alert(`Failed to delete wallet: ${res.data.error}`);
+      }
+    } catch (error) {
+      alert(`Error: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
   const handleAddToLaunch = async () => {
     if (selectedWallets.length === 0) {
       alert('Please select at least one wallet');
       return;
     }
-    if (selectedRoles.length === 0) {
-      alert('Please select at least one role (Bundle, Holder, or Dev)');
-      return;
-    }
 
     try {
-      const walletPrivateKeys = selectedWallets.map(w => w.privateKey);
-      const res = await apiService.addWalletsToLaunch(walletPrivateKeys, selectedRoles);
+      const res = await apiService.addWalletsToLaunch(selectedWallets, []);
       
       if (res.data.success) {
-        alert(`Added ${selectedWallets.length} wallet(s) to ${selectedRoles.join(', ')} role(s)`);
+        alert(`Added ${selectedWallets.length} wallet(s) to data.json - ready for launch!`);
         setSelectedWallets([]);
-        setSelectedRoles([]);
       } else {
         alert(`Failed to add wallets: ${res.data.error}`);
       }
@@ -127,29 +165,19 @@ export default function WalletWarming() {
     }
   };
 
-  const getProgressForWallet = (address) => {
-    return progress.find(p => p.walletAddress === address) || null;
-  };
-
-  const toggleWalletSelection = (wallet) => {
+  const toggleWalletSelection = (address) => {
     setSelectedWallets(prev => {
-      const exists = prev.find(w => w.address === wallet.address);
-      if (exists) {
-        return prev.filter(w => w.address !== wallet.address);
+      if (prev.includes(address)) {
+        return prev.filter(addr => addr !== address);
       } else {
-        return [...prev, wallet];
+        return [...prev, address];
       }
     });
   };
 
-  const toggleRole = (role) => {
-    setSelectedRoles(prev => {
-      if (prev.includes(role)) {
-        return prev.filter(r => r !== role);
-      } else {
-        return [...prev, role];
-      }
-    });
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Never';
+    return new Date(dateString).toLocaleString();
   };
 
   return (
@@ -157,13 +185,43 @@ export default function WalletWarming() {
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-white mb-2">🔥 Wallet Warming</h2>
         <p className="text-sm text-gray-400">
-          Warm wallets with trading history using trending pump.fun tokens. Uses cheapest fees and tiny amounts.
+          Create and warm wallets with trading history. Wallets auto-fund as needed.
         </p>
+      </div>
+
+      {/* Create/Add Wallet */}
+      <div className="mb-6 bg-gray-900/50 rounded-lg p-4">
+        <h3 className="text-lg font-bold text-white mb-4">Create or Add Wallet</h3>
+        <div className="flex gap-4">
+          <button
+            onClick={handleCreateWallet}
+            disabled={loading}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50"
+          >
+            ➕ Create New Wallet
+          </button>
+          <div className="flex-1 flex gap-2">
+            <input
+              type="password"
+              value={newWalletPrivateKey}
+              onChange={(e) => setNewWalletPrivateKey(e.target.value)}
+              placeholder="Enter private key (base58) to add existing wallet"
+              className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+            />
+            <button
+              onClick={handleAddWallet}
+              disabled={loading || !newWalletPrivateKey.trim()}
+              className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50"
+            >
+              ➕ Add Wallet
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Configuration */}
       <div className="mb-6 bg-gray-900/50 rounded-lg p-4">
-        <h3 className="text-lg font-bold text-white mb-4">Configuration</h3>
+        <h3 className="text-lg font-bold text-white mb-4">Warming Configuration</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div>
             <label className="text-xs text-gray-400 mb-1 block">Trades per Wallet</label>
@@ -252,10 +310,9 @@ export default function WalletWarming() {
           </button>
         </div>
         
-        {/* Status indicator */}
         <div className="mb-3 text-xs">
           {trendingStatus.loading && (
-            <div className="text-yellow-400">⏳ Fetching trending tokens from API...</div>
+            <div className="text-yellow-400">⏳ Fetching trending tokens from Moralis API...</div>
           )}
           {trendingStatus.error && (
             <div className="text-red-400">❌ {trendingStatus.error}</div>
@@ -264,9 +321,6 @@ export default function WalletWarming() {
             <div className="text-green-400">
               ✅ Last updated: {new Date(trendingStatus.lastFetch).toLocaleTimeString()} ({trendingStatus.count} tokens)
             </div>
-          )}
-          {!trendingStatus.lastFetch && !trendingStatus.loading && !trendingStatus.error && (
-            <div className="text-gray-400">Click "Refresh" to fetch trending tokens</div>
           )}
         </div>
         
@@ -278,26 +332,23 @@ export default function WalletWarming() {
                   <div className="font-bold text-white">{token.symbol}</div>
                   <div className="text-gray-400 text-[10px] truncate">{token.mint.substring(0, 8)}...</div>
                   <div className="text-green-400 text-[10px]">${token.priceUsd?.toFixed(6) || '0'}</div>
+                  {token.type && (
+                    <div className="text-blue-400 text-[10px] mt-1">
+                      {token.type === 'new' ? '🆕' : token.type === 'bonding' ? '🔗' : '✅'} {token.type}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         )}
-        
-        {trendingTokens.length === 0 && !trendingStatus.loading && (
-          <div className="text-center py-4 text-gray-500 text-sm">
-            {trendingStatus.error 
-              ? 'Failed to load trending tokens. Will use tokens from warmup-tokens.json file instead.'
-              : 'No trending tokens loaded. Click "Refresh" to fetch from API.'}
-          </div>
-        )}
       </div>
 
-      {/* Wallet Selection */}
+      {/* Wallet List */}
       <div className="mb-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold text-white">
-            Select Wallets ({selectedWallets.length} selected)
+            Wallets ({wallets.length} total, {selectedWallets.length} selected)
           </h3>
           <button
             onClick={loadWallets}
@@ -309,25 +360,23 @@ export default function WalletWarming() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
           {wallets.map((wallet, idx) => {
-            const walletProgress = getProgressForWallet(wallet.address);
-            const isSelected = selectedWallets.find(w => w.address === wallet.address);
+            const isSelected = selectedWallets.includes(wallet.address);
             
             return (
               <div
                 key={idx}
-                onClick={() => toggleWalletSelection(wallet)}
-                className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
                   isSelected
                     ? 'border-blue-500 bg-blue-900/20'
                     : 'border-gray-700 bg-gray-900/50 hover:border-gray-600'
                 }`}
               >
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={!!isSelected}
-                      onChange={() => toggleWalletSelection(wallet)}
+                      checked={isSelected}
+                      onChange={() => toggleWalletSelection(wallet.address)}
                       className="w-4 h-4"
                       onClick={(e) => e.stopPropagation()}
                     />
@@ -335,91 +384,89 @@ export default function WalletWarming() {
                       {wallet.address.substring(0, 8)}...{wallet.address.substring(wallet.address.length - 8)}
                     </span>
                   </div>
-                  <span className={`px-2 py-1 text-xs rounded ${
-                    wallet.type === 'holder' ? 'bg-blue-500' :
-                    wallet.type === 'bundle' ? 'bg-purple-500' :
-                    'bg-green-500'
-                  } text-white`}>
-                    {wallet.type}
-                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteWallet(wallet.address);
+                    }}
+                    className="text-red-400 hover:text-red-300 text-xs"
+                  >
+                    🗑️
+                  </button>
                 </div>
                 
                 <div className="text-xs text-gray-400 space-y-1">
-                  <div>SOL: <span className="text-green-400">{wallet.solBalance.toFixed(4)}</span></div>
-                  <div>Tokens: <span className="text-yellow-400">{wallet.tokenBalance.toFixed(2)}</span></div>
-                  
-                  {walletProgress && (
-                    <div className="mt-2 pt-2 border-t border-gray-700">
-                      <div className="text-blue-400 font-bold">
-                        {walletProgress.completedTrades}/{walletProgress.totalTrades} trades
-                      </div>
-                      <div className="text-xs">
-                        ✅ {walletProgress.successfulTrades} | ❌ {walletProgress.failedTrades}
-                      </div>
-                      <div className="w-full bg-gray-700 rounded-full h-1.5 mt-1">
-                        <div
-                          className="bg-blue-500 h-1.5 rounded-full transition-all"
-                          style={{ width: `${(walletProgress.completedTrades / walletProgress.totalTrades) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
+                  <div className="flex justify-between">
+                    <span>Status:</span>
+                    <span className={`font-bold ${
+                      wallet.status === 'ready' ? 'text-green-400' :
+                      wallet.status === 'warming' ? 'text-yellow-400' :
+                      'text-gray-500'
+                    }`}>
+                      {wallet.status === 'ready' ? '✅ Ready' :
+                       wallet.status === 'warming' ? '🔥 Warming' :
+                       '⏸️ Idle'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Transactions:</span>
+                    <span className="text-white font-bold">{wallet.transactionCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Trades:</span>
+                    <span className="text-blue-400 font-bold">{wallet.totalTrades || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>First Trade:</span>
+                    <span className="text-gray-300">{formatDate(wallet.firstTransactionDate)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Last Trade:</span>
+                    <span className="text-gray-300">{formatDate(wallet.lastTransactionDate)}</span>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
+
+        {wallets.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            <p>No wallets yet. Create or add a wallet to get started.</p>
+          </div>
+        )}
       </div>
 
       {/* Actions */}
-      <div className="flex gap-4 mb-6">
+      <div className="flex gap-4">
         <button
           onClick={handleStartWarming}
           disabled={loading || selectedWallets.length === 0}
           className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? '⏳ Starting...' : '🔥 Start Warming'}
+          {loading ? '⏳ Starting...' : '🔥 Start Warming Selected'}
         </button>
         
-        <div className="flex-1 bg-gray-900/50 rounded-lg p-4">
-          <h4 className="text-sm font-bold text-white mb-2">Add to Launch Roles</h4>
-          <div className="flex gap-2 mb-2">
-            {['bundle', 'holder', 'dev'].map(role => (
-              <button
-                key={role}
-                onClick={() => toggleRole(role)}
-                className={`px-3 py-1 text-xs rounded transition-colors ${
-                  selectedRoles.includes(role)
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                }`}
-              >
-                {role.charAt(0).toUpperCase() + role.slice(1)}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={handleAddToLaunch}
-            disabled={selectedWallets.length === 0 || selectedRoles.length === 0}
-            className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-          >
-            ➕ Add Selected to {selectedRoles.map(r => r.charAt(0).toUpperCase() + r.slice(1)).join('/')}
-          </button>
-        </div>
+        <button
+          onClick={handleAddToLaunch}
+          disabled={selectedWallets.length === 0}
+          className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          ➕ Add Selected to Launch ({selectedWallets.length})
+        </button>
       </div>
 
       {/* Cost Estimate */}
-      <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-4">
+      <div className="mt-6 bg-yellow-900/20 border border-yellow-700 rounded-lg p-4">
         <h4 className="text-sm font-bold text-yellow-400 mb-2">💰 Cost Estimate</h4>
         <div className="text-xs text-gray-300 space-y-1">
           <div>Per wallet: ~{(config.maxBuyAmount * 2 * config.tradesPerWallet + 0.1).toFixed(4)} SOL</div>
           <div>Total ({selectedWallets.length} wallets): ~{((config.maxBuyAmount * 2 * config.tradesPerWallet + 0.1) * selectedWallets.length).toFixed(4)} SOL</div>
           <div className="text-yellow-400 mt-2">
-            ⚠️ Uses cheapest fees (low priority) and tiny amounts to minimize costs
+            ⚠️ Wallets auto-fund as needed. Uses cheapest fees and tiny amounts.
           </div>
         </div>
       </div>
     </div>
   );
 }
-
