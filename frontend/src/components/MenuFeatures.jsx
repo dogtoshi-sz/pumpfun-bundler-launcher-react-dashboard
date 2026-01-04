@@ -49,16 +49,16 @@ export default function MenuFeatures() {
   };
 
   return (
-    <div className="bg-slate-800 rounded-lg p-6">
+    <div className="bg-gray-900/50 rounded-lg p-6">
       <h2 className="text-2xl font-bold mb-6 text-white">📋 Menu Features</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {commands.map((cmd) => (
-          <div key={cmd.id} className="bg-slate-700 rounded-lg p-4">
+          <div key={cmd.id} className="bg-gray-900/50 rounded-lg p-4">
             <div className="flex justify-between items-start mb-2">
               <div className="flex-1">
                 <h3 className="text-lg font-bold text-white mb-1">{cmd.name}</h3>
-                <p className="text-sm text-slate-400">{cmd.description}</p>
+                <p className="text-sm text-gray-500">{cmd.description}</p>
               </div>
               <button
                 onClick={() => executeCommand(cmd.id)}
@@ -69,7 +69,7 @@ export default function MenuFeatures() {
               </button>
             </div>
             {outputs[cmd.id] && (
-              <div className="mt-3 p-2 bg-slate-800 rounded text-xs text-slate-300 font-mono max-h-32 overflow-y-auto">
+              <div className="mt-3 p-2 bg-gray-900/50 rounded text-xs text-gray-300 font-mono max-h-32 overflow-y-auto">
                 {outputs[cmd.id]}
               </div>
             )}
@@ -79,5 +79,8 @@ export default function MenuFeatures() {
     </div>
   );
 }
+
+
+
 
 
