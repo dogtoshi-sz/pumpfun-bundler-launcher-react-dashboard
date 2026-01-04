@@ -23,7 +23,7 @@ import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WE
 // This ensures we get the latest value even if it was just updated
 const BUYER_WALLET = process.env.BUYER_WALLET || ''
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
-import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend } from "./src/main";
+import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend, fundExistingWalletWithMixing, loadMixingWallets } from "./src/main";
 import { USE_MIXING_WALLETS } from "./constants/constants";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
 import { sendBundle } from "./executor/liljito";
@@ -309,33 +309,86 @@ const main = async () => {
         console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.15 SOL (buffer for fees/rent/safety)`)
         console.log(`\n💰 Funding BUYER_WALLET with ${fundingNeeded.toFixed(4)} SOL...`)
         
-        try {
-          const latestBlockhash = await connection.getLatestBlockhash()
-          const fundingLamports = Math.ceil(fundingNeeded * 1e9)
-          const transferMsg = new TransactionMessage({
-            payerKey: mainKp.publicKey,
-            recentBlockhash: latestBlockhash.blockhash,
-            instructions: [
-              SystemProgram.transfer({
-                fromPubkey: mainKp.publicKey,
-                toPubkey: buyerKp.publicKey,
-                lamports: fundingLamports
-              })
-            ]
-          }).compileToV0Message()
+        // Use mixer wallets if enabled, otherwise direct funding
+        if (USE_MIXING_WALLETS) {
+          console.log(`   🔀 Using mixing wallets to break connection trail...`)
+          const mixingWallets = loadMixingWallets()
+          
+          if (mixingWallets.length > 0) {
+            const success = await fundExistingWalletWithMixing(connection, mainKp, buyerKp, fundingNeeded, mixingWallets)
+            if (!success) {
+              console.error(`   ❌ Failed to fund BUYER_WALLET through mixer`)
+              return
+            }
+            // Verify balance after funding
+            const newBalance = await connection.getBalance(buyerKp.publicKey)
+            console.log(`   ✅ Funded BUYER_WALLET! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+          } else {
+            console.log(`   ⚠️  No mixing wallets available, using direct funding...`)
+            // Fallback to direct funding
+            try {
+              const latestBlockhash = await connection.getLatestBlockhash()
+              const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+              const transferMsg = new TransactionMessage({
+                payerKey: mainKp.publicKey,
+                recentBlockhash: latestBlockhash.blockhash,
+                instructions: [
+                  ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                  SystemProgram.transfer({
+                    fromPubkey: mainKp.publicKey,
+                    toPubkey: buyerKp.publicKey,
+                    lamports: fundingLamports
+                  })
+                ]
+              }).compileToV0Message()
 
-          const transferTx = new VersionedTransaction(transferMsg)
-          transferTx.sign([mainKp])
+              const transferTx = new VersionedTransaction(transferMsg)
+              transferTx.sign([mainKp])
 
-          const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
-          await connection.confirmTransaction(sig, 'confirmed')
+              const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+              await connection.confirmTransaction(sig, 'confirmed')
 
-          const newBalance = await connection.getBalance(buyerKp.publicKey)
-          console.log(`   ✅ Funded BUYER_WALLET! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
-          console.log(`   Transaction: https://solscan.io/tx/${sig}`)
-        } catch (error: any) {
-          console.error(`   ❌ Failed to fund BUYER_WALLET: ${error.message}`)
-          return
+              const newBalance = await connection.getBalance(buyerKp.publicKey)
+              console.log(`   ✅ Funded BUYER_WALLET! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+              console.log(`   Transaction: https://solscan.io/tx/${sig}`)
+            } catch (error: any) {
+              console.error(`   ❌ Failed to fund BUYER_WALLET: ${error.message}`)
+              return
+            }
+          }
+        } else {
+          // Direct funding (mixing disabled)
+          try {
+            const latestBlockhash = await connection.getLatestBlockhash()
+            const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+            const transferMsg = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: latestBlockhash.blockhash,
+              instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: buyerKp.publicKey,
+                  lamports: fundingLamports
+                })
+              ]
+            }).compileToV0Message()
+
+            const transferTx = new VersionedTransaction(transferMsg)
+            transferTx.sign([mainKp])
+
+            const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+            await connection.confirmTransaction(sig, 'confirmed')
+
+            const newBalance = await connection.getBalance(buyerKp.publicKey)
+            console.log(`   ✅ Funded BUYER_WALLET! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+            console.log(`   Transaction: https://solscan.io/tx/${sig}`)
+          } catch (error: any) {
+            console.error(`   ❌ Failed to fund BUYER_WALLET: ${error.message}`)
+            return
+          }
         }
       } else {
         console.log(`\n✅ BUYER_WALLET has sufficient balance: ${existingBalanceSol.toFixed(4)} SOL`)
