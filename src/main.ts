@@ -4,6 +4,8 @@ import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import { openAsBlob } from "fs";
 import base58 from "bs58"
+import fs from "fs"
+import path from "path"
 
 import { DESCRIPTION, FILE, JITO_FEE, PUMP_PROGRAM, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, TELEGRAM, TOKEN_CREATE_ON, TOKEN_NAME, TOKEN_SHOW_NAME, TOKEN_SYMBOL, TWITTER, WEBSITE } from "../constants"
 import { saveDataToFile, sleep } from "../utils"
@@ -21,6 +23,28 @@ let kps: Keypair[] = []
 // create token instructions
 // creatorKp should be BUYER_WALLET (wallet that creates tokens, buys as DEV, and collects fees)
 export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp: Keypair) => {
+  // Handle FILE - can be a URL or local file path
+  let fileBlob: Blob;
+  if (FILE.startsWith('http://') || FILE.startsWith('https://')) {
+    // FILE is a URL - fetch it
+    console.log(`📥 Fetching image from URL: ${FILE}`);
+    const response = await fetch(FILE);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image from URL: ${response.statusText}`);
+    }
+    fileBlob = await response.blob();
+    console.log(`✅ Fetched image from URL (${fileBlob.size} bytes)`);
+  } else {
+    // FILE is a local path - open it
+    const filePath = path.isAbsolute(FILE) ? FILE : path.join(process.cwd(), FILE);
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Image file not found: ${filePath}`);
+    }
+    console.log(`📂 Opening local image file: ${filePath}`);
+    fileBlob = await openAsBlob(filePath);
+    console.log(`✅ Opened local image file (${fileBlob.size} bytes)`);
+  }
+
   const tokenInfo = {
     name: TOKEN_NAME,
     symbol: TOKEN_SYMBOL,
@@ -30,7 +54,7 @@ export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp:
     twitter: TWITTER,
     telegram: TELEGRAM,
     website: WEBSITE,
-    file: await openAsBlob(FILE),
+    file: fileBlob,
   };
   let tokenMetadata = await sdk.createTokenMetadata(tokenInfo) as any;
 
@@ -53,11 +77,25 @@ export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp:
     'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
   ];
   const jitoFeeWallet = new PublicKey(tipAccounts[Math.floor(tipAccounts.length * Math.random())])
+  // CRITICAL: Jito fee should come from creator wallet (creatorKp), not funding wallet (mainKp)
+  // This ensures the creator wallet is the one paying for everything
+  // Priority fees: Much lower for normal launches (not competing in bundles)
+  // - Token creation typically needs ~200k-500k compute units
+  // - Standard priority fee: ~1,000-5,000 microLamports per unit
+  // - High priority (for bundles): 20,000 microLamports per unit
+  // For normal launches, we use lower fees since we're not in a bundle
+  // Calculation: (units * price) / 1,000,000 = lamports
+  // Bundle: (5M * 20k) / 1M = 100k lamports = 0.0001 SOL per tx
+  // Normal: (500k * 5k) / 1M = 2.5k lamports = 0.0000025 SOL per tx (much cheaper!)
+  const isNormalLaunch = process.env.USE_NORMAL_LAUNCH === 'true' && Number(process.env.BUNDLE_WALLET_COUNT || '0') === 0
+  const computeUnitLimit = isNormalLaunch ? 500_000 : 5_000_000 // Lower limit for normal launch
+  const computeUnitPrice = isNormalLaunch ? 5_000 : 20_000 // Lower price for normal launch (~0.0025 SOL vs ~0.1 SOL per tx)
+  
   return [
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
+    ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPrice }),
     SystemProgram.transfer({
-      fromPubkey: mainKp.publicKey,
+      fromPubkey: creatorKp.publicKey, // CRITICAL: Creator wallet pays Jito fee, not funding wallet
       toPubkey: jitoFeeWallet,
       lamports: Math.floor(JITO_FEE * 10 ** 9),
     }),
@@ -66,20 +104,182 @@ export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp:
 }
 
 
-export const distributeSol = async (connection: Connection, mainKp: Keypair, distritbutionNum: number, swapAmounts?: number[]) => {
+// Load mixing wallets from file (if exists)
+const loadMixingWallets = (): Keypair[] => {
+  try {
+    const mixingPath = path.join(process.cwd(), 'keys', 'mixing-wallets.json')
+    if (fs.existsSync(mixingPath)) {
+      const data = JSON.parse(fs.readFileSync(mixingPath, 'utf8'))
+      const wallets: Keypair[] = []
+      for (const key in data) {
+        if (key !== 'createdAt' && key !== 'lastUsed' && data[key]?.privateKey) {
+          try {
+            wallets.push(Keypair.fromSecretKey(base58.decode(data[key].privateKey)))
+          } catch (e) {
+            // Skip invalid keys
+          }
+        }
+      }
+      return wallets
+    }
+  } catch (e) {
+    // If file doesn't exist or is invalid, return empty array
+  }
+  return []
+}
+
+// Save/update mixing wallets to file
+// IMPORTANT: This function PRESERVES all existing wallets and only adds/updates new ones
+// Mixing wallets are stored separately from data.json to avoid confusion
+const saveMixingWallets = (mixingWallets: Keypair[]) => {
+  try {
+    const mixingPath = path.join(process.cwd(), 'keys', 'mixing-wallets.json')
+    const keysDir = path.dirname(mixingPath)
+    
+    // Create keys directory if it doesn't exist
+    if (!fs.existsSync(keysDir)) {
+      fs.mkdirSync(keysDir, { recursive: true })
+    }
+    
+    let existingData: any = {}
+    if (fs.existsSync(mixingPath)) {
+      try {
+        existingData = JSON.parse(fs.readFileSync(mixingPath, 'utf8'))
+      } catch (e) {
+        // If file is corrupted, start fresh
+        existingData = {}
+      }
+    }
+    
+    // PRESERVE all existing wallets (don't delete any)
+    // Only update/add the wallets from the new array
+    const existingPublicKeys = new Set<string>()
+    const walletKeys: string[] = []
+    
+    // First, collect all existing wallet keys and their public keys
+    for (const key in existingData) {
+      if (key !== 'createdAt' && key !== 'lastUsed' && existingData[key]?.publicKey) {
+        existingPublicKeys.add(existingData[key].publicKey)
+        walletKeys.push(key)
+      }
+    }
+    
+    // Update or add mixing wallets from the new array
+    mixingWallets.forEach((wallet, index) => {
+      const publicKey = wallet.publicKey.toBase58()
+      const privateKey = base58.encode(wallet.secretKey)
+      
+      // Check if this wallet already exists (by public key)
+      let existingKey: string | null = null
+      for (const key in existingData) {
+        if (key !== 'createdAt' && key !== 'lastUsed' && existingData[key]?.publicKey === publicKey) {
+          existingKey = key
+          break
+        }
+      }
+      
+      // If wallet exists, update it; otherwise find next available key
+      if (existingKey) {
+        existingData[existingKey] = { publicKey, privateKey }
+      } else {
+        // Find next available wallet key (wallet1, wallet2, etc.)
+        let newKeyIndex = walletKeys.length + 1
+        let newKey = `wallet${newKeyIndex}`
+        while (existingData[newKey]) {
+          newKeyIndex++
+          newKey = `wallet${newKeyIndex}`
+        }
+        existingData[newKey] = { publicKey, privateKey }
+        walletKeys.push(newKey)
+      }
+    })
+    
+    // Update metadata
+    if (!existingData.createdAt) {
+      existingData.createdAt = new Date().toISOString()
+    }
+    existingData.lastUsed = new Date().toISOString()
+    
+    // Save to file (preserves ALL wallets - existing + new)
+    fs.writeFileSync(mixingPath, JSON.stringify(existingData, null, 2))
+    const totalWallets = Object.keys(existingData).filter(k => k !== 'createdAt' && k !== 'lastUsed').length
+    console.log(`💾 Saved ${totalWallets} mixing wallet(s) to ${mixingPath} (preserved all existing wallets)`)
+  } catch (error) {
+    console.log(`⚠️  Failed to save mixing wallets:`, error)
+  }
+}
+
+export const distributeSol = async (connection: Connection, mainKp: Keypair, distritbutionNum: number, swapAmounts?: number[], useMixing: boolean = true) => {
   try {
     // Reset kps array at the start to avoid accumulating wallets from previous runs
     kps = []
-    const sendSolTx: TransactionInstruction[] = []
-    sendSolTx.push(
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 250_000 })
-    )
+    const USE_MIXING = useMixing && (process.env.USE_MIXING_WALLETS !== 'false')
+    
+    // Load mixing wallets if enabled
+    let mixingWallets: Keypair[] = []
+    if (USE_MIXING) {
+      // Check if we should create fresh mixing wallets for each launch (better privacy)
+      const CREATE_FRESH_MIXERS = (process.env.CREATE_FRESH_MIXING_WALLETS || 'true').toLowerCase() === 'true'
+      
+      if (CREATE_FRESH_MIXERS) {
+        // Create fresh mixing wallets for each launch (better privacy - no reuse)
+        console.log("🔀 Creating fresh mixing wallets for this launch (better privacy)...")
+        const numMixers = Math.max(10, distritbutionNum + 5) // At least 10, or enough for all wallets + buffer
+        for (let i = 0; i < numMixers; i++) {
+          mixingWallets.push(Keypair.generate())
+        }
+        // Save fresh mixers (preserves old ones in history, but uses new ones)
+        saveMixingWallets(mixingWallets)
+        console.log(`✅ Created ${mixingWallets.length} fresh mixing wallets for this launch`)
+      } else {
+        // Legacy behavior: reuse existing mixing wallets
+        mixingWallets = loadMixingWallets()
+        if (mixingWallets.length === 0) {
+          console.log("⚠️  No mixing wallets found - creating new ones...")
+          // Create 10 mixing wallets if none exist (more wallets = better distribution)
+          for (let i = 0; i < 10; i++) {
+            mixingWallets.push(Keypair.generate())
+          }
+          saveMixingWallets(mixingWallets)
+          console.log(`✅ Created and saved ${mixingWallets.length} new mixing wallets`)
+        } else {
+          console.log(`🔀 Using ${mixingWallets.length} existing mixing wallets (reusing - less private)`)
+          // If we have fewer than 10 mixers and will create many wallets, add more mixers
+          if (mixingWallets.length < 10 && distritbutionNum > mixingWallets.length) {
+            const additionalNeeded = Math.max(10 - mixingWallets.length, distritbutionNum - mixingWallets.length)
+            console.log(`⚠️  Only ${mixingWallets.length} mixing wallets available, but need ${distritbutionNum} wallets. Adding ${additionalNeeded} more mixers...`)
+            for (let i = 0; i < additionalNeeded; i++) {
+              mixingWallets.push(Keypair.generate())
+            }
+            saveMixingWallets(mixingWallets)
+            console.log(`✅ Now using ${mixingWallets.length} mixing wallets`)
+          }
+          // Update lastUsed timestamp
+          saveMixingWallets(mixingWallets)
+        }
+      }
+    }
+
     const mainSolBal = await connection.getBalance(mainKp.publicKey)
     if (mainSolBal <= 4 * 10 ** 6) {
       console.log("Main wallet balance is not enough")
       return []
     }
+
+    // If using mixing wallets, fund through intermediate wallets
+    // Route: mainKp -> mixing wallet -> target wallet
+    // This breaks the direct connection trail that bubble maps detect
+    if (USE_MIXING && mixingWallets.length > 0) {
+      console.log("🔀 Using mixing wallets to break connection trail...")
+      return await distributeSolWithMixing(connection, mainKp, distritbutionNum, swapAmounts, mixingWallets)
+    }
+
+    // Original direct funding (no mixing)
+    const sendSolTx: TransactionInstruction[] = []
+    sendSolTx.push(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 250_000 })
+    )
 
     for (let i = 0; i < distritbutionNum; i++) {
       // Use custom amount if provided, otherwise use SWAP_AMOUNT
@@ -153,6 +353,254 @@ export const distributeSol = async (connection: Connection, mainKp: Keypair, dis
     return kps
   } catch (error) {
     console.log(`Failed to transfer SOL`, error)
+    return null
+  }
+}
+
+// New function: Distribute SOL through mixing wallets to break connection trail
+// Route: mainKp -> mixing wallet -> target wallet
+// This makes it harder for bubble maps to connect wallets
+// PARALLEL VERSION: Processes multiple wallets concurrently for speed
+const distributeSolWithMixing = async (
+  connection: Connection,
+  mainKp: Keypair,
+  distributionNum: number,
+  swapAmounts?: number[],
+  mixingWallets: Keypair[] = []
+): Promise<Keypair[] | null> => {
+  try {
+    const wallets: Keypair[] = []
+    const parallelBatchSize = 5 // Process 5 wallets in parallel at a time
+    const randomDelay = () => Math.random() * 500 + 200 // 200-700ms random delay for privacy
+
+    // Step 1: Generate all target wallets
+    console.log(`🔀 Generating ${distributionNum} target wallets...`)
+    for (let i = 0; i < distributionNum; i++) {
+      wallets.push(Keypair.generate())
+    }
+
+    // Step 2: Check mixer balances in parallel and prepare funding transactions
+    console.log(`🔀 Checking mixer balances and preparing funding...`)
+    const latestBlockhash = await connection.getLatestBlockhash()
+    const mixerBalances = await Promise.all(
+      mixingWallets.map(mixer => connection.getBalance(mixer.publicKey))
+    )
+
+    // Step 3: Process wallets in parallel batches
+    // Pre-assign unique mixers to each wallet to ensure no collisions
+    const mixerAssignments: number[] = []
+    const mixerUsageCount = new Array(mixingWallets.length).fill(0)
+    
+    // Assign mixers using round-robin with random start, ensuring even distribution
+    const startMixer = Math.floor(Math.random() * mixingWallets.length)
+    for (let i = 0; i < distributionNum; i++) {
+      // Round-robin with random start, but prefer less-used mixers
+      const leastUsedCount = Math.min(...mixerUsageCount)
+      const leastUsedMixers = mixerUsageCount
+        .map((count, idx) => count === leastUsedCount ? idx : -1)
+        .filter(idx => idx !== -1)
+      const mixerIndex = leastUsedMixers[Math.floor(Math.random() * leastUsedMixers.length)]
+      mixerAssignments.push(mixerIndex)
+      mixerUsageCount[mixerIndex]++
+    }
+    
+    for (let batchStart = 0; batchStart < distributionNum; batchStart += parallelBatchSize) {
+      const batchEnd = Math.min(batchStart + parallelBatchSize, distributionNum)
+      const batch = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i)
+      
+      console.log(`🔀 Processing batch ${Math.floor(batchStart / parallelBatchSize) + 1}/${Math.ceil(distributionNum / parallelBatchSize)} (wallets ${batchStart + 1}-${batchEnd})...`)
+
+      // Process this batch in parallel
+      await Promise.all(batch.map(async (i) => {
+        const swapAmount = swapAmounts && swapAmounts[i] !== undefined ? swapAmounts[i] : SWAP_AMOUNT
+        const solAmount = Math.floor((swapAmount + 0.01) * 10 ** 9)
+        const targetWallet = wallets[i]
+
+        // Use pre-assigned unique mixer for this wallet
+        const mixerIndex = mixerAssignments[i]
+        const mixer = mixingWallets[mixerIndex]
+        const mixerBalance = mixerBalances[mixerIndex]
+        const mixerNeedsFunding = mixerBalance < solAmount + 0.01 * 1e9
+
+        try {
+          // Step 1: Fund mixing wallet from mainKp (if needed) - in parallel
+          if (mixerNeedsFunding) {
+            const fundingAmount = solAmount + 0.01 * 1e9
+            const blockhash = await connection.getLatestBlockhash()
+            
+            const fundMixerTx = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: blockhash.blockhash,
+              instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: mixer.publicKey,
+                  lamports: fundingAmount
+                })
+              ]
+            }).compileToV0Message()
+            
+            const fundMixerV0 = new VersionedTransaction(fundMixerTx)
+            fundMixerV0.sign([mainKp])
+            const fundMixerSig = await execute(fundMixerV0, blockhash, 1)
+            
+            if (!fundMixerSig) {
+              console.log(`   ⚠️  Wallet ${i + 1}: Failed to fund mixer, using direct funding...`)
+              // Fallback: fund directly
+              const directBlockhash = await connection.getLatestBlockhash()
+              const directTx = new TransactionMessage({
+                payerKey: mainKp.publicKey,
+                recentBlockhash: directBlockhash.blockhash,
+                instructions: [
+                  ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                  SystemProgram.transfer({
+                    fromPubkey: mainKp.publicKey,
+                    toPubkey: targetWallet.publicKey,
+                    lamports: solAmount
+                  })
+                ]
+              }).compileToV0Message()
+              const directV0 = new VersionedTransaction(directTx)
+              directV0.sign([mainKp])
+              await execute(directV0, directBlockhash, 1)
+              return
+            }
+            
+            // Update balance cache
+            mixerBalances[mixerIndex] += fundingAmount
+            // Small delay for privacy (randomized)
+            await sleep(randomDelay())
+          }
+
+          // Step 2: Transfer from mixer to target wallet - in parallel
+          // Get actual mixer balance (may have changed if funded in this batch)
+          const actualMixerBalance = await connection.getBalance(mixer.publicKey)
+          const routeBlockhash = await connection.getLatestBlockhash()
+          
+          // Calculate amount to transfer: ALL balance minus rent exemption (~0.00089 SOL) and transaction fees (~0.00001 SOL)
+          // This ensures we don't leave SOL behind in mixing wallets
+          const rentExemption = 890_880 // Base account rent exemption
+          const estimatedTxFee = 5_000 // Estimated transaction fee
+          const amountToTransfer = actualMixerBalance - rentExemption - estimatedTxFee
+          
+          // Only transfer if we have enough (at least the target amount)
+          if (amountToTransfer >= solAmount) {
+            const routeTx = new TransactionMessage({
+              payerKey: mixer.publicKey,
+              recentBlockhash: routeBlockhash.blockhash,
+              instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                SystemProgram.transfer({
+                  fromPubkey: mixer.publicKey,
+                  toPubkey: targetWallet.publicKey,
+                  lamports: amountToTransfer // Send ALL balance (minus rent + fees)
+                })
+              ]
+            }).compileToV0Message()
+            
+            const routeV0 = new VersionedTransaction(routeTx)
+            routeV0.sign([mixer])
+            const routeSig = await execute(routeV0, routeBlockhash, 1)
+            
+            if (!routeSig) {
+              console.log(`   ⚠️  Wallet ${i + 1}: Failed to route through mixer, using direct funding...`)
+              // Fallback: fund directly
+              const directBlockhash = await connection.getLatestBlockhash()
+              const directTx = new TransactionMessage({
+                payerKey: mainKp.publicKey,
+                recentBlockhash: directBlockhash.blockhash,
+                instructions: [
+                  ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                  SystemProgram.transfer({
+                    fromPubkey: mainKp.publicKey,
+                    toPubkey: targetWallet.publicKey,
+                    lamports: solAmount
+                  })
+                ]
+              }).compileToV0Message()
+              const directV0 = new VersionedTransaction(directTx)
+              directV0.sign([mainKp])
+              await execute(directV0, directBlockhash, 1)
+            } else {
+              // Update balance cache (mixer should now have only rent exemption left)
+              mixerBalances[mixerIndex] = rentExemption
+              console.log(`   ✅ Wallet ${i + 1}: Transferred ${(amountToTransfer / 1e9).toFixed(6)} SOL from mixer (drained balance)`)
+            }
+          } else {
+            // Not enough balance, fund directly
+            console.log(`   ⚠️  Wallet ${i + 1}: Mixer balance too low, using direct funding...`)
+            const directBlockhash = await connection.getLatestBlockhash()
+            const directTx = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: directBlockhash.blockhash,
+              instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: targetWallet.publicKey,
+                  lamports: solAmount
+                })
+              ]
+            }).compileToV0Message()
+            const directV0 = new VersionedTransaction(directTx)
+            directV0.sign([mainKp])
+            await execute(directV0, directBlockhash, 1)
+          }
+        } catch (error) {
+          console.log(`   ⚠️  Wallet ${i + 1}: Error during mixing, using direct funding...`, error instanceof Error ? error.message : error)
+          // Fallback: fund directly
+          try {
+            const directBlockhash = await connection.getLatestBlockhash()
+            const directTx = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: directBlockhash.blockhash,
+              instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: targetWallet.publicKey,
+                  lamports: solAmount
+                })
+              ]
+            }).compileToV0Message()
+            const directV0 = new VersionedTransaction(directTx)
+            directV0.sign([mainKp])
+            await execute(directV0, directBlockhash, 1)
+          } catch (fallbackError) {
+            console.log(`   ❌ Wallet ${i + 1}: Direct funding also failed`)
+          }
+        }
+      }))
+
+      // Small delay between batches for privacy (randomized)
+      if (batchEnd < distributionNum) {
+        await sleep(randomDelay() * 2)
+      }
+    }
+
+    // Save target wallets to file
+    try {
+      saveDataToFile(wallets.map(kp => base58.encode(kp.secretKey)))
+    } catch (error) {
+      // Ignore save errors
+    }
+
+    // Save/update mixing wallets (update lastUsed timestamp)
+    if (mixingWallets.length > 0) {
+      saveMixingWallets(mixingWallets)
+    }
+
+    console.log("✅ Successfully distributed SOL through mixing wallets")
+    return wallets
+  } catch (error) {
+    console.log(`❌ Failed to distribute SOL with mixing:`, error)
     return null
   }
 }

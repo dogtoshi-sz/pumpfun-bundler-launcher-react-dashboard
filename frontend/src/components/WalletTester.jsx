@@ -143,15 +143,15 @@ export default function WalletTester() {
   };
 
   return (
-    <div className="bg-slate-800 rounded-lg p-6">
+    <div className="bg-gray-900/50 rounded-lg p-6">
       <h2 className="text-2xl font-bold mb-6 text-white">🧪 Wallet Trading Test</h2>
-      <p className="text-slate-400 mb-6">
+      <p className="text-gray-500 mb-6">
         Test buy/sell functionality with any wallet and any pump.fun token
       </p>
 
       {/* Wallet Input */}
       <div className="mb-6">
-        <label className="block text-sm font-medium text-slate-300 mb-2">
+        <label className="block text-sm font-medium text-gray-300 mb-2">
           Wallet Private Key (base58)
         </label>
         <div className="flex gap-2">
@@ -160,7 +160,7 @@ export default function WalletTester() {
             value={walletPrivateKey}
             onChange={(e) => setWalletPrivateKey(e.target.value)}
             placeholder="Enter wallet private key..."
-            className="flex-1 px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex-1 px-4 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button
             onClick={loadWalletInfo}
@@ -171,8 +171,8 @@ export default function WalletTester() {
           </button>
         </div>
         {walletInfo && (
-          <div className="mt-2 p-3 bg-slate-700 rounded-lg">
-            <p className="text-sm text-slate-300">Wallet Address:</p>
+          <div className="mt-2 p-3 bg-gray-900/50 rounded-lg">
+            <p className="text-sm text-gray-300">Wallet Address:</p>
             <p className="text-sm font-mono text-white break-all">{walletInfo.address}</p>
           </div>
         )}
@@ -180,7 +180,7 @@ export default function WalletTester() {
 
       {/* Mint Address Input */}
       <div className="mb-6">
-        <label className="block text-sm font-medium text-slate-300 mb-2">
+        <label className="block text-sm font-medium text-gray-300 mb-2">
           Token Mint Address
         </label>
         <input
@@ -188,9 +188,9 @@ export default function WalletTester() {
           value={mintAddress}
           onChange={(e) => setMintAddress(e.target.value)}
           placeholder="Enter pump.fun token mint address..."
-          className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full px-4 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-gray-500">
           Use any existing pump.fun token address
         </p>
       </div>
@@ -200,18 +200,18 @@ export default function WalletTester() {
         <button
           onClick={checkTokenBalance}
           disabled={loading || !walletPrivateKey.trim() || !mintAddress.trim()}
-          className="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-50"
+          className="w-full px-4 py-2 bg-gray-900/50 hover:bg-gray-800 text-white rounded-lg transition-colors disabled:opacity-50"
         >
           📊 Check Token Balance
         </button>
         {tokenBalance && (
-          <div className="mt-3 p-3 bg-slate-700 rounded-lg">
-            <p className="text-sm text-slate-300">Token Balance:</p>
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg">
+            <p className="text-sm text-gray-300">Token Balance:</p>
             <p className="text-lg font-bold text-yellow-400">
               {tokenBalance.balance?.toFixed(4) || '0'} tokens
             </p>
             {tokenBalance.solBalance && (
-              <p className="text-sm text-slate-300 mt-1">
+              <p className="text-sm text-gray-300 mt-1">
                 SOL Balance: <span className="text-green-400">{tokenBalance.solBalance.toFixed(4)} SOL</span>
               </p>
             )}
@@ -220,7 +220,7 @@ export default function WalletTester() {
       </div>
 
       {/* Buy Section */}
-      <div className="mb-6 p-4 bg-slate-700 rounded-lg">
+      <div className="mb-6 p-4 bg-gray-900/50 rounded-lg">
         <h3 className="text-lg font-bold text-white mb-3">💰 Test Buy</h3>
         <div className="space-y-2">
           <div className="flex gap-2">
@@ -230,7 +230,7 @@ export default function WalletTester() {
               value={buyAmount}
               onChange={(e) => setBuyAmount(e.target.value)}
               placeholder="SOL amount"
-              className="flex-1 px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-4 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               onClick={handleBuy}
@@ -247,7 +247,7 @@ export default function WalletTester() {
               onChange={(e) => setUseCustomReferrer(e.target.checked)}
               className="w-4 h-4"
             />
-            <label className="text-sm text-slate-300">Use custom referrer (optional)</label>
+            <label className="text-sm text-gray-300">Use custom referrer (optional)</label>
           </div>
           {useCustomReferrer && (
             <input
@@ -255,10 +255,10 @@ export default function WalletTester() {
               value={referrerPrivateKey}
               onChange={(e) => setReferrerPrivateKey(e.target.value)}
               placeholder="Referrer private key (for referral fees)"
-              className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           )}
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-gray-500">
             {useCustomReferrer 
               ? 'Using custom referrer - that wallet will get referral fees'
               : 'Using wallet\'s own key as referrer (default - works with any token)'}
@@ -267,7 +267,7 @@ export default function WalletTester() {
       </div>
 
       {/* Sell Section */}
-      <div className="mb-6 p-4 bg-slate-700 rounded-lg">
+      <div className="mb-6 p-4 bg-gray-900/50 rounded-lg">
         <h3 className="text-lg font-bold text-white mb-3">💸 Test Sell</h3>
         <div className="flex gap-2">
           <input
@@ -275,7 +275,7 @@ export default function WalletTester() {
             value={sellPercentage}
             onChange={(e) => setSellPercentage(e.target.value)}
             placeholder="Percentage (1-100 or 'all')"
-            className="flex-1 px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex-1 px-4 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <button
             onClick={handleSell}
@@ -286,7 +286,7 @@ export default function WalletTester() {
           </button>
         </div>
         {tokenBalance && tokenBalance.balance > 0 && (
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-gray-500">
             Available: {tokenBalance.balance.toFixed(4)} tokens
           </p>
         )}
@@ -302,4 +302,5 @@ export default function WalletTester() {
     </div>
   );
 }
+
 

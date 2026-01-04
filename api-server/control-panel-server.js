@@ -10,6 +10,47 @@ const { Keypair, Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/we
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } = require('@solana/spl-token');
 const WebSocket = require('ws');
 
+// Register ts-node for TypeScript support (for marketing modules)
+try {
+  // Add api-server/node_modules to module resolution path
+  const Module = require('module');
+  const originalResolveFilename = Module._resolveFilename;
+  Module._resolveFilename = function(request, parent, isMain, options) {
+    // Try original resolution first
+    try {
+      return originalResolveFilename.call(this, request, parent, isMain, options);
+    } catch (error) {
+      // If it fails, try resolving from api-server/node_modules
+      if (request === 'pg' || request.startsWith('pg/') || 
+          request === 'twitter-api-v2' || request.startsWith('twitter-api-v2/')) {
+        try {
+          const apiServerNodeModules = path.join(__dirname, 'node_modules');
+          return originalResolveFilename.call(this, request, parent, isMain, {
+            ...options,
+            paths: [apiServerNodeModules, ...(options?.paths || [])]
+          });
+        } catch (e) {
+          // Fallback to original error
+          throw error;
+        }
+      }
+      throw error;
+    }
+  };
+  
+  require('ts-node').register({
+    transpileOnly: true,
+    compilerOptions: {
+      module: 'commonjs',
+      esModuleInterop: true,
+      allowSyntheticDefaultImports: true,
+    },
+  });
+  console.log('[API Server] ✅ ts-node registered for TypeScript support');
+} catch (error) {
+  console.warn('[API Server] ⚠️ ts-node not available, TypeScript marketing modules may not work');
+}
+
 const app = express();
 const PORT = 3001;
 const execAsync = promisify(exec);
@@ -60,8 +101,9 @@ const upload = multer({
 
 // Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Increase JSON body size limit to handle base64 images (10MB)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static files from image directory
 const imageDir = path.join(__dirname, '..', 'image');
@@ -269,23 +311,75 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
-// Upload image file
-app.post('/api/upload-image', upload.single('image'), (req, res) => {
+// Upload image file - uploads to Vercel Blob and returns URL
+app.post('/api/upload-image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No image file provided' });
     }
     
-    // Return the relative path that will be saved to .env FILE variable
-    const relativePath = `./image/${req.file.filename}`;
+    // Check if Vercel Blob token is configured
+    const blobToken = process.env.BLOB1_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN;
     
-    res.json({ 
-      success: true, 
-      filePath: relativePath,
-      filename: req.file.filename,
-      message: 'Image uploaded successfully' 
-    });
+    if (blobToken) {
+      // Upload to Vercel Blob
+      try {
+        const { put } = await import('@vercel/blob');
+        const fs = require('fs');
+        
+        // Read file buffer
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const file = new File([fileBuffer], req.file.filename, { type: req.file.mimetype });
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const randomStr = Math.random().toString(36).substring(2, 9);
+        const extension = req.file.filename.split('.').pop() || 'png';
+        const filename = `website-logo-${timestamp}-${randomStr}.${extension}`;
+        
+        // Upload to Vercel Blob
+        const blob = await put(filename, file, {
+          access: 'public',
+          addRandomSuffix: false,
+          token: blobToken,
+        });
+        
+        // Delete local file after upload
+        fs.unlinkSync(req.file.path);
+        
+        console.log('[Upload Image] ✅ Uploaded to Vercel Blob:', blob.url);
+        
+        return res.json({ 
+          success: true, 
+          url: blob.url,
+          filePath: blob.url, // For backward compatibility
+          filename: filename,
+          message: 'Image uploaded to Vercel Blob successfully' 
+        });
+      } catch (blobError) {
+        console.error('[Upload Image] ❌ Vercel Blob upload failed:', blobError.message);
+        // Fall back to local file path
+        const relativePath = `./image/${req.file.filename}`;
+        return res.json({ 
+          success: true, 
+          filePath: relativePath,
+          filename: req.file.filename,
+          message: 'Image saved locally (Vercel Blob upload failed)' 
+        });
+      }
+    } else {
+      // No Vercel Blob token - use local file path
+      console.warn('[Upload Image] ⚠️ BLOB1_READ_WRITE_TOKEN not configured, using local file path');
+      const relativePath = `./image/${req.file.filename}`;
+      return res.json({ 
+        success: true, 
+        filePath: relativePath,
+        filename: req.file.filename,
+        message: 'Image saved locally (Vercel Blob not configured)' 
+      });
+    }
   } catch (error) {
+    console.error('[Upload Image] ❌ Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -295,7 +389,29 @@ app.post('/api/settings', (req, res) => {
   try {
     const updates = req.body.settings;
     console.log('[Settings] Received update request with keys:', Object.keys(updates));
-    console.log('[Settings] Update values:', updates);
+    
+    // Security warning for private key updates
+    if (updates.PRIVATE_KEY || updates.BUYER_WALLET) {
+      console.warn('⚠️  [SECURITY] Private key update detected!');
+      if (updates.PRIVATE_KEY) {
+        console.warn('   - PRIVATE_KEY (Main Funding Wallet) is being updated');
+      }
+      if (updates.BUYER_WALLET) {
+        console.warn('   - BUYER_WALLET (Buyer/Creator Wallet) is being updated');
+      }
+    }
+    
+    // Log update values (but mask private keys for security)
+    const safeUpdates = { ...updates };
+    if (safeUpdates.PRIVATE_KEY) {
+      const key = safeUpdates.PRIVATE_KEY;
+      safeUpdates.PRIVATE_KEY = key.length > 16 ? key.substring(0, 8) + '...' + key.substring(key.length - 8) : '***';
+    }
+    if (safeUpdates.BUYER_WALLET) {
+      const key = safeUpdates.BUYER_WALLET;
+      safeUpdates.BUYER_WALLET = key.length > 16 ? key.substring(0, 8) + '...' + key.substring(key.length - 8) : '***';
+    }
+    console.log('[Settings] Update values (private keys masked):', safeUpdates);
     
     // Read current .env file
     const currentEnv = readEnvFile();
@@ -511,7 +627,7 @@ const CACHE_TTL = 3000; // 3 seconds cache
 function invalidateBalanceCache(address, mintAddress) {
   const cacheKey = `${address}_${mintAddress}`;
   balanceCache.delete(cacheKey);
-  console.log(`[Cache] Invalidated balance cache for ${address.substring(0, 8)}...`);
+  // Removed verbose logging - only log errors
 }
 
 // Batch fetch balances (more efficient than individual calls)
@@ -614,11 +730,8 @@ app.get('/api/holder-wallets', async (req, res) => {
   try {
     // Use __dirname to ensure we're reading from project root, not api-server directory
     const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
-    console.log(`[All Wallets] Reading from: ${currentRunPath}`);
-    console.log(`[All Wallets] File exists: ${fs.existsSync(currentRunPath)}`);
     
     if (!fs.existsSync(currentRunPath)) {
-      console.log(`[All Wallets] No current-run.json found at ${currentRunPath}`);
       return res.json({ success: true, wallets: [], mintAddress: null });
     }
     
@@ -638,17 +751,15 @@ app.get('/api/holder-wallets', async (req, res) => {
     if (currentRun.creatorDevWalletKey) {
       // Use creator/DEV wallet from current-run.json (auto-created or persistent)
       devWalletKey = currentRun.creatorDevWalletKey;
-      console.log('[All Wallets] Using creatorDevWalletKey from current-run.json');
     } else {
       // Fallback: Use BUYER_WALLET from .env (persistent wallet)
       try {
         const env = readEnvFile();
         if (env.BUYER_WALLET && env.BUYER_WALLET.trim() !== '') {
           devWalletKey = env.BUYER_WALLET.trim();
-          console.log('[All Wallets] Using BUYER_WALLET from .env');
         }
       } catch (e) {
-        console.log('[All Wallets] Could not read BUYER_WALLET from .env');
+        // Silent fallback
       }
     }
     
@@ -673,9 +784,6 @@ app.get('/api/holder-wallets', async (req, res) => {
       allWalletKeys.push(devWalletKey);
       walletTypes.push('dev');
     }
-    
-    console.log(`[All Wallets] Found ${holderWalletKeys.length} holder, ${bundleWalletKeys.length} bundle, ${devWalletKey ? 1 : 0} dev wallets`);
-    console.log(`[All Wallets] Mint address: ${mintAddress}`);
     
     // Use batch fetching for efficiency
     const wallets = await batchFetchBalances(allWalletKeys, mintAddress);
@@ -973,17 +1081,12 @@ app.post('/api/command', async (req, res) => {
 app.get('/api/current-run', (req, res) => {
   try {
     const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
-    console.log(`[Current Run] Reading from: ${currentRunPath}`);
-    console.log(`[Current Run] File exists: ${fs.existsSync(currentRunPath)}`);
     
     if (!fs.existsSync(currentRunPath)) {
       return res.json({ success: true, data: null });
     }
     
     const data = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
-    console.log(`[Current Run] Found mint: ${data.mintAddress || 'N/A'}`);
-    console.log(`[Current Run] Holder wallets: ${data.holderWalletKeys?.length || 0}`);
-    console.log(`[Current Run] Bundle wallets: ${data.bundleWalletKeys?.length || 0}`);
     res.json({ success: true, data });
   } catch (error) {
     console.error('[Current Run] Error:', error);
@@ -1238,6 +1341,287 @@ app.get('/api/deployer-wallet', async (req, res) => {
   } catch (error) {
     console.error('[Deployer Wallet] Error in endpoint:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// MARKETING API ENDPOINTS
+// ============================================
+
+// Website Update Endpoint
+app.post('/api/marketing/website/update', async (req, res) => {
+  try {
+    console.log('[Marketing] Website update request received');
+    const { vercelSiteUrl, secret, tokenConfig } = req.body;
+    
+    // Sanitize tokenConfig for logging (truncate base64 image data)
+    const sanitizeForLog = (config) => {
+      if (!config) return config;
+      const sanitized = { ...config };
+      if (sanitized.logoUrl && sanitized.logoUrl.startsWith('data:image/')) {
+        sanitized.logoUrl = sanitized.logoUrl.substring(0, 50) + '... (base64 data, truncated)';
+      }
+      if (sanitized.tokenImageUrl && sanitized.tokenImageUrl.startsWith('data:image/')) {
+        sanitized.tokenImageUrl = sanitized.tokenImageUrl.substring(0, 50) + '... (base64 data, truncated)';
+      }
+      return sanitized;
+    };
+    
+    // Log sanitized config (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Marketing] Token config (sanitized):', JSON.stringify(sanitizeForLog(tokenConfig), null, 2));
+    }
+    
+    if (!vercelSiteUrl) {
+      return res.status(400).json({ success: false, error: 'Website URL is required' });
+    }
+    
+    if (!tokenConfig) {
+      return res.status(400).json({ success: false, error: 'Token config is required' });
+    }
+    
+    // Check if DATABASE_URL is configured
+    // Reload .env to ensure we have the latest value (like Nodematrix - Next.js auto-reloads .env)
+    const rootEnvPath = path.join(__dirname, '..', '.env');
+    if (fs.existsSync(rootEnvPath)) {
+      require('dotenv').config({ path: rootEnvPath, override: true });
+    }
+    
+    const databaseUrl = process.env.DATABASE_URL || process.env.RAILWAY_DATABASE_URL;
+    if (!databaseUrl) {
+      console.error('[Marketing] ❌ DATABASE_URL not configured');
+      console.error('[Marketing] Checked root .env at:', rootEnvPath);
+      console.error('[Marketing] Available DATABASE env vars:', Object.keys(process.env).filter(k => k.includes('DATABASE')));
+      return res.status(400).json({ 
+        success: false, 
+        error: 'DATABASE_URL not configured. Please set DATABASE_URL in your .env file with your PostgreSQL connection string.' 
+      });
+    }
+    
+    console.log('[Marketing] Using DATABASE_URL:', databaseUrl.replace(/:[^:@]+@/, ':****@')); // Mask password
+    console.log('[Marketing] DATABASE_URL host:', databaseUrl.match(/@([^:]+)/)?.[1] || 'unknown');
+    
+    // Note: secret is optional and NOT used for direct database saves
+    // It's only for Vercel API authentication (if using Vercel deployment method)
+    // For direct PostgreSQL saves, we don't need a secret
+    if (secret) {
+      console.log('[Marketing] ℹ️  Secret provided (not used for direct DB saves)');
+    }
+    
+    // CRITICAL: Ensure DATABASE_URL is set in process.env before loading TypeScript module
+    // This matches how Nodematrix (Next.js) works - Next.js auto-loads .env into process.env
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.RAILWAY_DATABASE_URL = databaseUrl;
+    
+    // If logoUrl or tokenImageUrl is a base64 data URL, upload it to Vercel Blob first
+    const { put } = require('@vercel/blob');
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB1_READ_WRITE_TOKEN;
+    
+    const uploadBase64ToBlob = async (base64DataUrl, filename) => {
+      if (!base64DataUrl || !base64DataUrl.startsWith('data:image/')) {
+        return base64DataUrl; // Not a base64 data URL, return as-is
+      }
+      
+      if (!blobToken) {
+        console.warn('[Marketing] ⚠️ BLOB_READ_WRITE_TOKEN not set, cannot upload base64 image to Vercel Blob');
+        return null; // Return null instead of base64 to avoid database spam
+      }
+      
+      try {
+        // Extract mime type and base64 data
+        const matches = base64DataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+        if (!matches) {
+          console.warn('[Marketing] ⚠️ Invalid base64 data URL format');
+          return null;
+        }
+        
+        const mimeType = matches[1];
+        const base64Data = matches[2];
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        // Upload to Vercel Blob
+        const blob = await put(filename, buffer, {
+          access: 'public',
+          addRandomSuffix: true,
+          contentType: `image/${mimeType}`,
+          token: blobToken,
+        });
+        
+        console.log(`[Marketing] ✅ Uploaded base64 image to Vercel Blob: ${blob.url}`);
+        return blob.url;
+      } catch (error) {
+        console.error('[Marketing] ❌ Failed to upload base64 image to Vercel Blob:', error.message);
+        return null; // Return null instead of base64 to avoid database spam
+      }
+    };
+    
+    // Process logoUrl and tokenImageUrl
+    if (tokenConfig.logoUrl && tokenConfig.logoUrl.startsWith('data:image/')) {
+      const filename = `logo-${Date.now()}.${tokenConfig.logoUrl.match(/data:image\/(\w+);/)?.[1] || 'png'}`;
+      tokenConfig.logoUrl = await uploadBase64ToBlob(tokenConfig.logoUrl, filename);
+    }
+    
+    if (tokenConfig.tokenImageUrl && tokenConfig.tokenImageUrl.startsWith('data:image/')) {
+      const filename = `token-image-${Date.now()}.${tokenConfig.tokenImageUrl.match(/data:image\/(\w+);/)?.[1] || 'png'}`;
+      tokenConfig.tokenImageUrl = await uploadBase64ToBlob(tokenConfig.tokenImageUrl, filename);
+    }
+    
+    // Import and use website update module (TypeScript)
+    // The module will read from process.env.DATABASE_URL (like Nodematrix does)
+    const { updateWebsiteConfig } = require('../marketing/website/website-update.ts');
+    const result = await updateWebsiteConfig({
+      siteUrl: vercelSiteUrl,
+      secret: secret || '', // Optional, not used for DB saves
+      tokenConfig: tokenConfig,
+    });
+    
+    if (result.success) {
+      console.log('[Marketing] ✅ Website config updated:', result.site_url);
+      res.json({
+        success: true,
+        site_url: result.site_url,
+        message: 'Website configuration updated successfully',
+      });
+    } else {
+      console.error('[Marketing] ❌ Website update failed:', result.error);
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to update website configuration',
+      });
+    }
+  } catch (error) {
+    // Sanitize error message to avoid logging base64 images
+    const sanitizedMessage = error.message && error.message.length > 500 
+      ? error.message.substring(0, 500) + '... (truncated)' 
+      : error.message;
+    console.error('[Marketing] ❌ Website update error:', sanitizedMessage);
+    
+    // Provide helpful error message
+    let errorMessage = sanitizedMessage || 'Unknown error';
+    if (error.message && error.message.includes('DATABASE_URL')) {
+      errorMessage = 'DATABASE_URL not configured. Please set DATABASE_URL in your .env file.';
+    } else if (error.message && error.message.includes('ECONNRESET')) {
+      errorMessage = 'Database connection failed. Check your DATABASE_URL and ensure the database is accessible. See console for details.';
+    } else if (error.message && error.message.includes('ENOTFOUND')) {
+      errorMessage = 'Database host not found. Make sure you\'re using the PUBLIC Railway database URL (not .internal).';
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? undefined : undefined // Don't include stack trace to avoid base64 spam
+    });
+  }
+});
+
+// Telegram Create Group Endpoint
+app.post('/api/marketing/telegram/create-group', async (req, res) => {
+  try {
+    console.log('[Marketing] Telegram create group request received');
+    const { config, scripted_conversations = [] } = req.body;
+    
+    if (!config || !config.telegram_api_id || !config.telegram_api_hash || !config.telegram_phone) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Telegram API credentials are required (api_id, api_hash, phone)' 
+      });
+    }
+    
+    // Import and use Telegram wrapper (TypeScript)
+    const { createTelegramGroup } = require('../marketing/telegram/telegram-wrapper.ts');
+    const result = await createTelegramGroup({
+      config: config,
+      scripted_conversations: scripted_conversations,
+    });
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        group_chat_id: result.group_chat_id,
+        channel_chat_id: result.channel_chat_id,
+        telegram_link: result.telegram_link,
+        message: result.message || 'Telegram group/channel created successfully',
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to create Telegram group/channel',
+      });
+    }
+  } catch (error) {
+    // Sanitize error message to avoid logging base64 images
+    const sanitizedMessage = error.message && error.message.length > 500 
+      ? error.message.substring(0, 500) + '... (truncated)' 
+      : error.message;
+    console.error('[Marketing] Telegram create group error:', sanitizedMessage);
+    res.status(500).json({ success: false, error: sanitizedMessage || 'Unknown error' });
+  }
+});
+
+// Twitter Auto-Post Endpoint
+app.post('/api/marketing/twitter/auto-post', async (req, res) => {
+  try {
+    console.log('[Marketing] Twitter auto-post request received');
+    const { 
+      apiKey, 
+      apiSecret, 
+      accessToken, 
+      accessTokenSecret, 
+      tweets = [], 
+      tweetDelays = [],
+      tweetImages = [],
+      updateProfile = false,
+      updateUsername = false,
+      deleteOldTweets = false,
+      profileConfig = {},
+      tokenConfig = {}
+    } = req.body;
+    
+    if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Twitter API credentials are required' 
+      });
+    }
+    
+    // Import and use Twitter poster module (TypeScript)
+    const { postToTwitter } = require('../marketing/twitter/twitter-poster.ts');
+    const result = await postToTwitter({
+      apiKey,
+      apiSecret,
+      accessToken,
+      accessTokenSecret,
+      tweets,
+      tweetDelays,
+      tweetImages,
+      updateProfile,
+      updateUsername,
+      deleteOldTweets,
+      profileConfig,
+      tokenConfig,
+    });
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        tweets: result.tweets || { tweetIds: [], errors: [] },
+        profileUpdated: result.profileUpdated || false,
+        profileError: result.profileError || null,
+        message: result.message || 'Twitter operation completed successfully',
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to post to Twitter',
+      });
+    }
+  } catch (error) {
+    // Sanitize error message to avoid logging base64 images
+    const sanitizedMessage = error.message && error.message.length > 500 
+      ? error.message.substring(0, 500) + '... (truncated)' 
+      : error.message;
+    console.error('[Marketing] Twitter auto-post error:', sanitizedMessage);
+    res.status(500).json({ success: false, error: sanitizedMessage || 'Unknown error' });
   }
 });
 

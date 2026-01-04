@@ -1,10 +1,26 @@
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
+import dotenv from "dotenv"
 import { readJson, retrieveEnvVariable, getDataDirectory } from "./utils"
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
-import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "./constants"
+
+// CRITICAL: Reload .env file to ensure we get the latest PRIVATE_KEY
+// This prevents using stale values from process.env
+const rootEnvPath = path.join(process.cwd(), '.env')
+dotenv.config({ path: rootEnvPath, override: true })
+
+// Get PRIVATE_KEY directly from process.env (after reload) instead of from constants
+// This ensures we use the current value from .env file
+const PRIVATE_KEY = process.env.PRIVATE_KEY || ''
+if (!PRIVATE_KEY) {
+  console.error('❌ PRIVATE_KEY not found in .env file')
+  process.exit(1)
+}
+
+const RPC_ENDPOINT = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com'
+const RPC_WEBSOCKET_ENDPOINT = process.env.RPC_WEBSOCKET_ENDPOINT || ''
 
 const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -15,6 +31,7 @@ const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
 
 async function gatherAllWallets() {
   console.log("💰💰💰 GATHERING FROM ALL WALLETS 💰💰💰\n")
+  console.log(`📍 Destination wallet (PRIVATE_KEY): ${mainKp.publicKey.toBase58()}\n`)
   
   const walletsToProcess: Keypair[] = []
   

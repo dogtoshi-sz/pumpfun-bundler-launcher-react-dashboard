@@ -15,11 +15,25 @@ export default function HolderWallets() {
     loadWallets();
     loadCurrentRunInfo();
     
-    // Use longer polling interval (10 seconds) to reduce RPC calls
+    // Poll more frequently during launch (1 second), then slower after launch (10 seconds)
+    let checkCount = 0;
+    let slowInterval = null;
     const interval = setInterval(() => {
       loadWallets();
       loadCurrentRunInfo();
-    }, 10000);
+      checkCount++;
+      
+      // After 2 minutes of fast polling, switch to slower polling
+      // (launch should be complete by then)
+      if (checkCount > 120 && !slowInterval) {
+        // Switch to slower polling after launch completes
+        clearInterval(interval);
+        slowInterval = setInterval(() => {
+          loadWallets();
+          loadCurrentRunInfo();
+        }, 10000);
+      }
+    }, 1000); // Fast polling during launch (1 second)
     
     // Listen for manual refresh events (e.g., after token launch)
     const handleRefresh = () => {
@@ -32,6 +46,7 @@ export default function HolderWallets() {
     
     return () => {
       clearInterval(interval);
+      if (slowInterval) clearInterval(slowInterval);
       window.removeEventListener('refresh-wallets', handleRefresh);
     };
   }, []);
@@ -309,38 +324,38 @@ export default function HolderWallets() {
 
   if (!mintAddress) {
     return (
-      <div className="bg-slate-800 rounded-lg p-6">
-        <p className="text-slate-400">No token launched yet. Launch a token first.</p>
+      <div className="bg-gray-900/50 rounded-lg p-6">
+        <p className="text-gray-500">No token launched yet. Launch a token first.</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-slate-800 rounded-lg p-6">
+    <div className="bg-gray-900/50 rounded-lg p-6">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-white">💼 All Wallets</h2>
         <button
           onClick={loadWallets}
-          className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+          className="px-4 py-2 bg-gray-900/50 hover:bg-gray-800 text-white rounded-lg transition-colors"
         >
           🔄 Refresh
         </button>
       </div>
 
       <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="p-3 bg-slate-700 rounded-lg">
-          <p className="text-sm text-slate-300 mb-1">Token Mint</p>
+        <div className="p-3 bg-gray-900/50 rounded-lg">
+          <p className="text-sm text-gray-300 mb-1">Token Mint</p>
           <p className="text-sm font-mono text-white break-all">{mintAddress}</p>
         </div>
-        <div className="p-3 bg-slate-700 rounded-lg">
-          <p className="text-sm text-slate-300 mb-2">⚡ Priority Fee Selector</p>
+        <div className="p-3 bg-gray-900/50 rounded-lg">
+          <p className="text-sm text-gray-300 mb-2">⚡ Priority Fee Selector</p>
           <div className="grid grid-cols-3 gap-2">
             <button
               onClick={() => setPriorityFee('low')}
               className={`px-2 py-2 rounded font-bold transition-colors text-xs ${
                 priorityFee === 'low'
                   ? 'bg-green-600 text-white'
-                  : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
+                  : 'bg-gray-800 text-gray-300 hover:bg-slate-500'
               }`}
             >
               LOW<br/>0.0001 SOL
@@ -350,7 +365,7 @@ export default function HolderWallets() {
               className={`px-2 py-2 rounded font-bold transition-colors text-xs ${
                 priorityFee === 'medium'
                   ? 'bg-blue-600 text-white'
-                  : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
+                  : 'bg-gray-800 text-gray-300 hover:bg-slate-500'
               }`}
             >
               MEDIUM<br/>0.0005 SOL
@@ -360,70 +375,70 @@ export default function HolderWallets() {
               className={`px-2 py-2 rounded font-bold transition-colors text-xs ${
                 priorityFee === 'high'
                   ? 'bg-yellow-600 text-white'
-                  : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
+                  : 'bg-gray-800 text-gray-300 hover:bg-slate-500'
               }`}
             >
               HIGH<br/>0.005 SOL
             </button>
           </div>
-          <p className="text-xs text-slate-400 mt-2">
+          <p className="text-xs text-gray-500 mt-2">
             {priorityFee === 'low' ? 'Cheapest but slower' : 
              priorityFee === 'medium' ? 'Fast and reasonable' : 
              'Fastest but expensive'}
           </p>
         </div>
-        <div className="p-3 bg-slate-700 rounded-lg">
-          <p className="text-sm text-slate-300 mb-1">💰 Gas Fees Per Transaction</p>
+        <div className="p-3 bg-gray-900/50 rounded-lg">
+          <p className="text-sm text-gray-300 mb-1">💰 Gas Fees Per Transaction</p>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-slate-400">Base Fee:</span>
+              <span className="text-gray-500">Base Fee:</span>
               <span className="text-white">~0.000005 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Priority (Low):</span>
+              <span className="text-gray-500">Priority (Low):</span>
               <span className="text-green-400">0.0001 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Priority (Medium):</span>
+              <span className="text-gray-500">Priority (Medium):</span>
               <span className="text-blue-400">0.0005 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Priority (High):</span>
+              <span className="text-gray-500">Priority (High):</span>
               <span className="text-yellow-400">0.005 SOL</span>
             </div>
-            <div className="flex justify-between border-t border-slate-600 pt-1 mt-1">
-              <span className="text-slate-300 font-bold">Total (Low):</span>
+            <div className="flex justify-between border-t border-gray-800 pt-1 mt-1">
+              <span className="text-gray-300 font-bold">Total (Low):</span>
               <span className="text-green-400 font-bold">~0.000105 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-300 font-bold">Total (Medium):</span>
+              <span className="text-gray-300 font-bold">Total (Medium):</span>
               <span className="text-blue-400 font-bold">~0.000505 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-300 font-bold">Total (High):</span>
+              <span className="text-gray-300 font-bold">Total (High):</span>
               <span className="text-yellow-400 font-bold">~0.005005 SOL</span>
             </div>
-            <div className="flex justify-between border-t border-slate-600 pt-1 mt-1">
-              <span className="text-slate-400 text-[10px]">Rapid Sell All:</span>
+            <div className="flex justify-between border-t border-gray-800 pt-1 mt-1">
+              <span className="text-gray-500 text-[10px]">Rapid Sell All:</span>
               <span className="text-blue-400 text-[10px]">~0.000505 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400 text-[10px]">Sell 50%:</span>
+              <span className="text-gray-500 text-[10px]">Sell 50%:</span>
               <span className="text-blue-400 text-[10px]">~0.000505 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400 text-[10px]">Sell Remaining:</span>
+              <span className="text-gray-500 text-[10px]">Sell Remaining:</span>
               <span className="text-blue-400 text-[10px]">~0.000505 SOL</span>
             </div>
-            <div className="flex justify-between border-t border-slate-600 pt-1 mt-1">
-              <span className="text-slate-400 text-[10px]">Gather SOL:</span>
+            <div className="flex justify-between border-t border-gray-800 pt-1 mt-1">
+              <span className="text-gray-500 text-[10px]">Gather SOL:</span>
               <span className="text-green-400 text-[10px]">~0.000005 SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400 text-[10px]">Collect Fees:</span>
+              <span className="text-gray-500 text-[10px]">Collect Fees:</span>
               <span className="text-green-400 text-[10px]">~0.000005 SOL</span>
             </div>
-            <p className="text-[10px] text-slate-500 mt-2">
+            <p className="text-[10px] text-gray-600 mt-2">
               Rapid sells use MEDIUM (0.0005 SOL) | Gather & Collect use no priority fees
             </p>
           </div>
@@ -431,8 +446,8 @@ export default function HolderWallets() {
       </div>
 
       {/* Quick Menu Actions */}
-      <div className="mb-4 bg-slate-700 rounded-lg overflow-hidden">
-        <div className="p-3 bg-slate-600 border-b border-slate-600">
+      <div className="mb-4 bg-gray-900/50 rounded-lg overflow-hidden">
+        <div className="p-3 bg-gray-800 border-b border-gray-800">
           <p className="text-sm font-bold text-white">⚡ Quick Actions</p>
         </div>
         <div className="p-3">
@@ -606,25 +621,25 @@ export default function HolderWallets() {
                     <span className="text-xs text-blue-300 font-bold">⭐</span>
                   )}
                 </div>
-                <p className="text-xs font-mono text-slate-300 mb-2 truncate">
+                <p className="text-xs font-mono text-gray-300 mb-2 truncate">
                   {wallet.address.substring(0, 8)}...{wallet.address.substring(wallet.address.length - 8)}
                 </p>
 
                 {/* Balances */}
                 <div className="mb-3 space-y-1">
                   <div className="flex justify-between items-center">
-                    <span className="text-xs text-slate-400">SOL:</span>
+                    <span className="text-xs text-gray-500">SOL:</span>
                     <span className="text-sm font-bold text-green-400">{wallet.solBalance.toFixed(4)}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-xs text-slate-400">Tokens:</span>
+                    <span className="text-xs text-gray-500">Tokens:</span>
                     <span className="text-sm font-bold text-yellow-400">{wallet.tokenBalance.toFixed(4)}</span>
                   </div>
                 </div>
 
                 {/* Quick Buy Buttons */}
                 <div className="mb-3">
-                  <p className="text-xs text-slate-400 mb-1.5">Buy:</p>
+                  <p className="text-xs text-gray-500 mb-1.5">Buy:</p>
                   <div className="grid grid-cols-3 gap-1 mb-1.5">
                     <button
                       onClick={() => handleQuickBuy(wallet, 0.01)}
@@ -677,7 +692,7 @@ export default function HolderWallets() {
                       value={manualInputs[`${wallet.address}-buy-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-buy-manual`]: e.target.value })}
                       placeholder="SOL"
-                      className="flex-1 px-2 py-1 text-xs bg-slate-800/50 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-green-500"
+                      className="flex-1 px-2 py-1 text-xs bg-gray-900/50/50 border border-gray-800 rounded text-white focus:outline-none focus:ring-1 focus:ring-green-500"
                     />
                     <button
                       onClick={() => handleManualBuy(wallet)}
@@ -691,7 +706,7 @@ export default function HolderWallets() {
 
                 {/* Quick Sell Buttons */}
                 <div>
-                  <p className="text-xs text-slate-400 mb-1.5">Sell:</p>
+                  <p className="text-xs text-gray-500 mb-1.5">Sell:</p>
                   <div className="grid grid-cols-4 gap-1 mb-1.5">
                     <button
                       onClick={() => handleQuickSell(wallet, 25)}
@@ -729,7 +744,7 @@ export default function HolderWallets() {
                       value={manualInputs[`${wallet.address}-sell-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-sell-manual`]: e.target.value })}
                       placeholder="%"
-                      className="flex-1 px-2 py-1 text-xs bg-slate-800/50 border border-slate-600 rounded text-white focus:outline-none focus:ring-1 focus:ring-red-500"
+                      className="flex-1 px-2 py-1 text-xs bg-gray-900/50/50 border border-gray-800 rounded text-white focus:outline-none focus:ring-1 focus:ring-red-500"
                     />
                     <button
                       onClick={() => handleManualSell(wallet)}
@@ -746,25 +761,25 @@ export default function HolderWallets() {
       </div>
 
       {wallets.length === 0 && (
-        <div className="text-center py-8 text-slate-400">
+        <div className="text-center py-8 text-gray-500">
           <p>No wallets found. Launch a token first.</p>
         </div>
       )}
 
       {/* Terminal Console */}
-      <div className="mt-6 bg-slate-900 rounded-lg border border-slate-700">
-        <div className="flex justify-between items-center p-2 border-b border-slate-700">
+      <div className="mt-6 bg-black/50 rounded-lg border border-gray-800">
+        <div className="flex justify-between items-center p-2 border-b border-gray-800">
           <h3 className="text-sm font-bold text-white">📺 Terminal</h3>
           <button
             onClick={() => setTerminalMessages([])}
-            className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded transition-colors"
+            className="px-2 py-1 text-xs bg-gray-900/50 hover:bg-gray-800 text-white rounded transition-colors"
           >
             Clear
           </button>
         </div>
         <div ref={terminalRef} className="p-3 h-48 overflow-y-auto font-mono text-xs">
           {terminalMessages.length === 0 ? (
-            <p className="text-slate-500">No messages yet...</p>
+            <p className="text-gray-600">No messages yet...</p>
           ) : (
             terminalMessages.map((msg, idx) => (
               <div
@@ -772,10 +787,10 @@ export default function HolderWallets() {
                 className={`mb-1 ${
                   msg.type === 'success' ? 'text-green-400' :
                   msg.type === 'error' ? 'text-red-400' :
-                  'text-slate-300'
+                  'text-gray-300'
                 }`}
               >
-                <span className="text-slate-500">[{msg.timestamp}]</span> {msg.message}
+                <span className="text-gray-600">[{msg.timestamp}]</span> {msg.message}
               </div>
             ))
           )}
@@ -784,3 +799,4 @@ export default function HolderWallets() {
     </div>
   );
 }
+

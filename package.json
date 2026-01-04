@@ -8,6 +8,9 @@
     "gather": "ts-node gather.ts",
     "gather-sol-only": "ts-node gather-sol-only.ts",
     "gather-all": "ts-node gather-all-wallets.ts",
+    "drain-mixers": "ts-node drain-mixing-wallets.ts",
+    "drain-all": "ts-node drain-all-wallets.ts",
+    "drain-preview": "ts-node drain-all-wallets.ts --preview",
     "gather-last": "ts-node gather-last-wallets.ts",
     "rapid-sell": "ts-node rapid-sell.ts",
     "rapid-sell-holders": "ts-node rapid-sell-holders.ts",
@@ -58,6 +61,8 @@
     "@solana/kit": "^3.0.3",
     "@types/bs58": "^4.0.4",
     "bs58": "^6.0.0",
+    "pg": "^8.11.3",
+    "twitter-api-v2": "^1.15.0",
     "typescript": "^5.3.3",
     "undici": "^6.19.2"
   }

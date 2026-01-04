@@ -20,6 +20,9 @@ export const LIL_JIT_ENDPOINT = retrieveEnvVariable('LIL_JIT_ENDPOINT', '', fals
 export const LIL_JIT_WEBSOCKET_ENDPOINT = retrieveEnvVariable('LIL_JIT_WEBSOCKET_ENDPOINT', '', false)
 
 export const LIL_JIT_MODE = (process.env.LIL_JIT_MODE || 'false').toLowerCase() === 'true'
+export const USE_NORMAL_LAUNCH = (process.env.USE_NORMAL_LAUNCH || 'false').toLowerCase() === 'true'
+export const USE_MIXING_WALLETS = (process.env.USE_MIXING_WALLETS || 'true').toLowerCase() === 'true' // Default to true for privacy
+export const CREATE_FRESH_MIXING_WALLETS = (process.env.CREATE_FRESH_MIXING_WALLETS || 'true').toLowerCase() === 'true' // Default to true - create fresh mixers each launch for better privacy
 
 export const TOKEN_NAME = retrieveEnvVariable('TOKEN_NAME', '', true)
 export const TOKEN_SYMBOL = retrieveEnvVariable('TOKEN_SYMBOL', '', true)
