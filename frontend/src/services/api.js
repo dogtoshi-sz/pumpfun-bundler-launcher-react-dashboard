@@ -51,7 +51,7 @@ export const apiService = {
   startWarming: (walletPrivateKeys, config) => 
     api.post('/warm-wallets/start', { walletPrivateKeys, config }),
   getWarmingProgress: () => api.get('/warm-wallets/progress'),
-  getTrendingTokens: () => api.get('/warm-wallets/trending-tokens'),
+  getTrendingTokens: (limit = 100) => api.get(`/warm-wallets/trending-tokens?limit=${limit}`),
   addWalletsToLaunch: (walletPrivateKeys, roles) => 
     api.post('/warm-wallets/add-to-launch', { walletPrivateKeys, roles }),
 };
