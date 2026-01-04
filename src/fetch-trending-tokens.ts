@@ -51,10 +51,12 @@ async function fetchMoralisTokens(endpoint: string, type: 'new' | 'bonding' | 'g
   }
 }
 
-export async function fetchTrendingPumpFunTokens(limit: number = 30): Promise<TrendingToken[]> {
-  console.log(`[Trending Tokens] Fetching pump.fun tokens (NEW, BONDING, GRADUATED)...`)
+export async function fetchTrendingPumpFunTokens(limit: number = 100): Promise<TrendingToken[]> {
+  console.log(`[Trending Tokens] Fetching pump.fun tokens (NEW, BONDING, GRADUATED) - target: ${limit} tokens...`)
   
-  const tokensPerType = Math.ceil(limit / 3) // Split limit across 3 types
+  // Fetch MORE tokens per type for better variety
+  // Each type gets limit/3, but we'll fetch even more to ensure we have enough after filtering
+  const tokensPerType = Math.ceil(limit / 3) * 2 // Fetch 2x to ensure we have enough after filtering
   
   // Fetch all three types in parallel
   const [newTokens, bondingTokens, graduatedTokens] = await Promise.all([
@@ -68,14 +70,25 @@ export async function fetchTrendingPumpFunTokens(limit: number = 30): Promise<Tr
   // Combine all tokens and shuffle randomly
   const allTokens = [...newTokens, ...bondingTokens, ...graduatedTokens]
   
-  // Shuffle array randomly
-  for (let i = allTokens.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [allTokens[i], allTokens[j]] = [allTokens[j], allTokens[i]]
+  // Remove duplicates by mint address
+  const uniqueTokens = new Map<string, TrendingToken>()
+  for (const token of allTokens) {
+    if (token.mint && !uniqueTokens.has(token.mint)) {
+      uniqueTokens.set(token.mint, token)
+    }
   }
   
-  // Return up to limit tokens
-  const result = allTokens.slice(0, limit)
+  const deduplicated = Array.from(uniqueTokens.values())
+  console.log(`[Trending Tokens] After deduplication: ${deduplicated.length} unique tokens`)
+  
+  // Shuffle array randomly
+  for (let i = deduplicated.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deduplicated[i], deduplicated[j]] = [deduplicated[j], deduplicated[i]]
+  }
+  
+  // Return up to limit tokens (or all if we have less)
+  const result = deduplicated.slice(0, limit)
   
   if (result.length > 0) {
     console.log(`[Trending Tokens] ✅ Returning ${result.length} tokens (randomly mixed from all types)`)
@@ -97,7 +110,7 @@ let cachedTokens: TrendingToken[] = []
 let cacheTimestamp = 0
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
-export async function getCachedTrendingTokens(limit: number = 30): Promise<TrendingToken[]> {
+export async function getCachedTrendingTokens(limit: number = 100): Promise<TrendingToken[]> {
   const now = Date.now()
   
   if (cachedTokens.length > 0 && (now - cacheTimestamp) < CACHE_DURATION) {

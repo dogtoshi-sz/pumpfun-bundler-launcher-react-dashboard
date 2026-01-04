@@ -1661,7 +1661,8 @@ app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
   try {
     console.log('[Warming] Fetching trending tokens from Moralis (NEW, BONDING, GRADUATED)...');
     const { getCachedTrendingTokens } = require('../src/fetch-trending-tokens.ts');
-    const tokens = await getCachedTrendingTokens(30);
+    const limit = parseInt(req.query.limit) || 100; // Allow custom limit, default 100
+    const tokens = await getCachedTrendingTokens(limit);
     
     res.json({
       success: true,

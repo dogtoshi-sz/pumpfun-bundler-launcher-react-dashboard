@@ -50,7 +50,8 @@ export default function WalletWarming() {
   const loadTrendingTokens = async (showLoading = false) => {
     if (showLoading) setTrendingStatus({ loading: true, lastFetch: null, error: null });
     try {
-      const res = await apiService.getTrendingTokens();
+      // Request more tokens (100) for better variety
+      const res = await apiService.getTrendingTokens(100);
       if (res.data.success) {
         const tokens = res.data.tokens || [];
         setTrendingTokens(tokens);
@@ -270,9 +271,9 @@ export default function WalletWarming() {
         </div>
         
         {trendingTokens.length > 0 && (
-          <div className="max-h-32 overflow-y-auto">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              {trendingTokens.slice(0, 12).map((token, idx) => (
+          <div className="max-h-64 overflow-y-auto">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 text-xs">
+              {trendingTokens.map((token, idx) => (
                 <div key={idx} className="bg-gray-800/50 rounded p-2">
                   <div className="font-bold text-white">{token.symbol}</div>
                   <div className="text-gray-400 text-[10px] truncate">{token.mint.substring(0, 8)}...</div>

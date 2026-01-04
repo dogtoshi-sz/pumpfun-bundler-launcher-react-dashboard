@@ -38,11 +38,11 @@ const DEFAULT_CONFIG: WarmConfig = {
 }
 
 // Get trending tokens - uses Moralis API (NEW, BONDING, GRADUATED), otherwise falls back to file
-async function getTrendingTokens(useAPI: boolean): Promise<string[]> {
+async function getTrendingTokens(useAPI: boolean, limit: number = 100): Promise<string[]> {
   if (useAPI) {
     try {
       // Get tokens from Moralis (NEW, BONDING, GRADUATED - randomly mixed)
-      const tokens = await getCachedTrendingTokens(30) // Get 30 tokens (mix of all types)
+      const tokens = await getCachedTrendingTokens(limit) // Get more tokens for variety
       if (tokens.length > 0) {
         console.log(`   ✅ Fetched ${tokens.length} tokens from Moralis (NEW/BONDING/GRADUATED)`)
         return tokens.map(t => t.mint)
@@ -241,12 +241,16 @@ async function warmWallets(
 ) {
   // Fetch trending tokens if enabled
   if (config.useTrendingTokens) {
-    console.log('📡 Fetching trending pump.fun tokens from API...')
-    const trendingTokens = await getTrendingTokens(true)
+    console.log('📡 Fetching trending pump.fun tokens from Moralis API (NEW, BONDING, GRADUATED)...')
+    // Fetch MORE tokens for better variety per wallet
+    // Calculate: at least 10 tokens per wallet, but minimum 100 for good variety
+    const minTokensNeeded = Math.max(100, walletPrivateKeys.length * 10)
+    const trendingTokens = await getTrendingTokens(true, minTokensNeeded)
     if (trendingTokens.length > 0) {
       tokenList = trendingTokens
-      console.log(`✅ Successfully fetched ${trendingTokens.length} trending tokens from API`)
-      console.log(`   Sample tokens: ${trendingTokens.slice(0, 3).map(t => t.substring(0, 8) + '...').join(', ')}`)
+      console.log(`✅ Successfully fetched ${trendingTokens.length} trending tokens from Moralis API`)
+      console.log(`   This gives ${(trendingTokens.length / walletPrivateKeys.length).toFixed(1)} tokens per wallet for variety`)
+      console.log(`   Sample tokens: ${trendingTokens.slice(0, 5).map(t => t.substring(0, 8) + '...').join(', ')}`)
     } else {
       console.log('⚠️  No trending tokens found from API, falling back to file-based tokens')
       const fileTokens = getTokensFromList()
