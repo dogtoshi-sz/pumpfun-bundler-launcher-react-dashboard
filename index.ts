@@ -412,6 +412,37 @@ const main = async () => {
   } else {
     kps = result
   }
+  
+  // CRITICAL: Save custom BUYER_WALLET to data.json for consistency (if not auto-created)
+  // This ensures all wallets used in the launch are in data.json, not just auto-created ones
+  if (currentBuyerWallet && currentBuyerWallet.trim() !== '') {
+    console.log(`\n💾 Saving custom BUYER_WALLET to data.json for consistency...`)
+    try {
+      // Read existing data.json
+      const dataPath = path.join(process.cwd(), 'keys', 'data.json')
+      let existingWallets: string[] = []
+      if (fs.existsSync(dataPath)) {
+        const dataContent = fs.readFileSync(dataPath, 'utf8')
+        existingWallets = JSON.parse(dataContent)
+        if (!Array.isArray(existingWallets)) {
+          existingWallets = []
+        }
+      }
+      
+      // Check if BUYER_WALLET is already in data.json
+      const buyerWalletKey = base58.encode(buyerKp.secretKey)
+      if (!existingWallets.includes(buyerWalletKey)) {
+        existingWallets.push(buyerWalletKey)
+        fs.writeFileSync(dataPath, JSON.stringify(existingWallets, null, 2))
+        console.log(`   ✅ Saved custom BUYER_WALLET to data.json`)
+      } else {
+        console.log(`   ℹ️  Custom BUYER_WALLET already exists in data.json`)
+      }
+    } catch (error: any) {
+      console.warn(`   ⚠️  Failed to save custom BUYER_WALLET to data.json: ${error.message}`)
+      // Don't fail the launch if this fails - it's just for consistency
+    }
+  }
 
   // Create holder wallets (buy separately, not in bundle)
   let holderWallets: Keypair[] = []
