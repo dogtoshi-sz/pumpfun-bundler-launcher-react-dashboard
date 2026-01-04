@@ -1,5 +1,5 @@
 // Fetch trending pump.fun tokens from multiple APIs with fallbacks
-// Priority: 1) pump.fun API, 2) DexScreener, 3) Birdeye
+// Priority: 1) Moralis API (pump.fun new/bonded), 2) DexScreener, 3) Birdeye
 
 export interface TrendingToken {
   mint: string
@@ -13,9 +13,63 @@ export interface TrendingToken {
 export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<TrendingToken[]> {
   console.log(`[Trending Tokens] Fetching top ${limit} trending pump.fun tokens...`)
   
-  // Method 1: Use DexScreener API - REAL documented API at https://docs.dexscreener.com/
+  // Method 1: Use Moralis API - REAL API for pump.fun new/bonded tokens
+  // Docs: https://docs.moralis.com/web3-data-api/solana/tutorials/get-new-pump-fun-tokens
+  const moralisApiKey = process.env.MORALIS_API_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6Ijc1OGIwYWZhLWNjMTgtNDU4ZS1iYmZkLTcyNTcxNWMwMzY5NyIsIm9yZ0lkIjoiNDUwNDgwIiwidXNlcklkIjoiNDYzNTAyIiwidHlwZUlkIjoiNTg5NzRiN2UtM2Q2Yy00NjQwLThjNmUtNjRiNDdhZjgzOGFjIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3NTg4NDMxNTIsImV4cCI6NDkxNDYwMzE1Mn0.To2pj_xVknxF-XlFHIlrTdlf8Ipqi-MHbeuRZwBXYuQ'
+  
+  if (moralisApiKey) {
+    try {
+      console.log(`[Trending Tokens] Fetching from Moralis API (pump.fun new/bonded tokens)...`)
+      
+      // Moralis API: Get new pump.fun tokens
+      // Endpoint: GET /token/mainnet/exchange/pumpfun/new
+      // Docs: https://docs.moralis.com/web3-data-api/solana/tutorials/get-new-pump-fun-tokens
+      const response = await fetch(`https://solana-gateway.moralis.io/token/mainnet/exchange/pumpfun/new?limit=${limit}`, {
+        headers: {
+          'Accept': 'application/json',
+          'X-API-Key': moralisApiKey
+        }
+      })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Moralis API error: ${response.status} ${response.statusText} - ${errorText}`)
+      }
+      
+      const data = await response.json()
+      console.log(`[Trending Tokens] Moralis returned data structure:`, Object.keys(data))
+      
+      // Moralis returns: { result: [...] } or direct array
+      let tokens = Array.isArray(data) ? data : (data.result || data.tokens || data.data || [])
+      
+      if (tokens && tokens.length > 0) {
+        console.log(`[Trending Tokens] Moralis returned ${tokens.length} tokens`)
+        
+        const trendingTokens: TrendingToken[] = tokens.slice(0, limit).map((token: any) => ({
+          mint: token.tokenAddress || token.mint || token.mintAddress || token.address || '',
+          symbol: token.symbol || 'UNKNOWN',
+          name: token.name || token.symbol || 'Unknown Token',
+          priceUsd: parseFloat(token.priceUsd || token.price || '0') || 0,
+          volume24h: parseFloat(token.volume24h || token.volume || '0') || 0,
+          liquidity: parseFloat(token.liquidity || '0') || 0
+        })).filter((t: TrendingToken) => t.mint && t.mint.length > 0)
+        
+        if (trendingTokens.length > 0) {
+          console.log(`[Trending Tokens] ✅ Successfully fetched ${trendingTokens.length} tokens from Moralis`)
+          console.log(`[Trending Tokens] Sample token: ${trendingTokens[0].symbol} (${trendingTokens[0].mint.substring(0, 8)}...)`)
+          return trendingTokens
+        }
+      } else {
+        console.warn(`[Trending Tokens] Moralis returned empty or invalid data structure`)
+      }
+    } catch (moralisError: any) {
+      console.warn(`[Trending Tokens] Moralis API failed: ${moralisError.message}`)
+    }
+  }
+  
+  // Method 2: Use DexScreener API - REAL documented API at https://docs.dexscreener.com/
   try {
-    console.log(`[Trending Tokens] Fetching from DexScreener API (REAL API)...`)
+    console.log(`[Trending Tokens] Fetching from DexScreener API (fallback)...`)
     
     // DexScreener API: Get pairs by chain (Solana)
     // Docs: https://docs.dexscreener.com/
