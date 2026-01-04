@@ -53,6 +53,8 @@ export const apiService = {
   addWarmingWallet: (privateKey) => api.post('/warming-wallets/add', { privateKey }),
   deleteWarmingWallet: (address) => api.delete(`/warming-wallets/${address}`),
   updateWalletStats: (walletAddresses) => api.post('/warming-wallets/update-stats', { walletAddresses }),
+  updateWalletBalances: (walletAddresses) => api.post('/warming-wallets/update-balances', { walletAddresses }),
+  gatherSolFromWallets: (walletAddresses) => api.post('/warming-wallets/gather-sol', { walletAddresses }),
   startWarming: (walletAddresses, config) => 
     api.post('/warm-wallets/start', { walletAddresses, config }),
   getWarmingProgress: () => api.get('/warm-wallets/progress'),

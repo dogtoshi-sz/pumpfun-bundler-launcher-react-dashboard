@@ -21,7 +21,7 @@ export default function WalletWarming() {
   const [searchQuery, setSearchQuery] = useState('');
   const [tagFilter, setTagFilter] = useState('all'); // 'all', 'OLD', 'recent', or any tag
   const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'idle', 'warming', 'ready'
-  const [sortBy, setSortBy] = useState('createdAt'); // 'createdAt', 'transactionCount', 'totalTrades', 'firstTransactionDate', 'lastTransactionDate'
+  const [sortBy, setSortBy] = useState('createdAt'); // 'createdAt', 'transactionCount', 'totalTrades', 'firstTransactionDate', 'lastTransactionDate', 'solBalance'
   const [sortOrder, setSortOrder] = useState('desc'); // 'asc' or 'desc'
 
   useEffect(() => {
@@ -255,6 +255,10 @@ export default function WalletWarming() {
         case 'totalTrades':
           aValue = a.totalTrades || 0;
           bValue = b.totalTrades || 0;
+          break;
+        case 'solBalance':
+          aValue = a.solBalance || 0;
+          bValue = b.solBalance || 0;
           break;
         case 'firstTransactionDate':
           aValue = a.firstTransactionDate ? new Date(a.firstTransactionDate).getTime() : 0;
@@ -508,6 +512,37 @@ export default function WalletWarming() {
               📡 Update Stats from Blockchain {selectedWallets.length > 0 && `(${selectedWallets.length})`}
             </button>
             <button
+              onClick={async () => {
+                if (selectedWallets.length === 0) {
+                  alert('Please select wallets to update balances');
+                  return;
+                }
+                setLoading(true);
+                try {
+                  const res = await apiService.updateWalletBalances(selectedWallets);
+                  if (res.data.success) {
+                    alert(`✅ Updated balances for ${res.data.updated} wallet(s)\nTotal SOL: ${res.data.totalSol.toFixed(4)} SOL${res.data.failed > 0 ? `\n⚠️ ${res.data.failed} failed` : ''}`);
+                    await loadWallets();
+                  } else {
+                    alert(`Failed: ${res.data.error}`);
+                  }
+                } catch (error) {
+                  alert(`Error: ${error.response?.data?.error || error.message}`);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || selectedWallets.length === 0}
+              className={`px-4 py-2 rounded-lg text-sm transition-colors ${
+                selectedWallets.length === 0
+                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+              } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title="Update SOL balances for selected wallets (RPC call)"
+            >
+              💰 Update Balances {selectedWallets.length > 0 && `(${selectedWallets.length})`}
+            </button>
+            <button
               onClick={loadWallets}
               className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm transition-colors"
             >
@@ -570,6 +605,7 @@ export default function WalletWarming() {
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm mb-2"
               >
                 <option value="createdAt">Created Date</option>
+                <option value="solBalance">SOL Balance</option>
                 <option value="transactionCount">Transactions</option>
                 <option value="totalTrades">Total Trades</option>
                 <option value="firstTransactionDate">First Trade</option>
@@ -765,6 +801,36 @@ export default function WalletWarming() {
           className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           ➕ Add Selected to Launch ({selectedWallets.length})
+        </button>
+        
+        <button
+          onClick={async () => {
+            if (selectedWallets.length === 0) {
+              alert('Please select wallets to gather SOL from');
+              return;
+            }
+            if (!confirm(`Gather SOL from ${selectedWallets.length} wallet(s)? This will transfer all SOL (minus 0.001 for rent) back to your main funding wallet.`)) {
+              return;
+            }
+            setLoading(true);
+            try {
+              const res = await apiService.gatherSolFromWallets(selectedWallets);
+              if (res.data.success) {
+                alert(`✅ Gathered ${res.data.totalSolGathered.toFixed(6)} SOL from ${res.data.gathered} wallet(s)${res.data.failed > 0 ? `\n⚠️ ${res.data.failed} failed` : ''}`);
+                await loadWallets();
+              } else {
+                alert(`Failed: ${res.data.error}`);
+              }
+            } catch (error) {
+              alert(`Error: ${error.response?.data?.error || error.message}`);
+            } finally {
+              setLoading(false);
+            }
+          }}
+          disabled={loading || selectedWallets.length === 0}
+          className="px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          💰 Gather SOL from Selected ({selectedWallets.length})
         </button>
       </div>
 
