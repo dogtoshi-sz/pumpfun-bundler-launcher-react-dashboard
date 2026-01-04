@@ -1579,7 +1579,9 @@ app.get('/api/warming-wallets', async (req, res) => {
         totalTrades: w.totalTrades,
         createdAt: w.createdAt,
         status: w.status,
-        tags: w.tags || []
+        tags: w.tags || [],
+        solBalance: w.solBalance || null,
+        lastBalanceUpdate: w.lastBalanceUpdate || null
       }))
     });
   } catch (error) {
@@ -1670,6 +1672,60 @@ app.put('/api/warming-wallets/:address/tags', async (req, res) => {
 // Test endpoint to verify route is accessible
 app.get('/api/warming-wallets/test', (req, res) => {
   res.json({ success: true, message: 'Update stats endpoint is accessible' });
+});
+
+// Update SOL balances for wallets
+app.post('/api/warming-wallets/update-balances', async (req, res) => {
+  try {
+    const { walletAddresses } = req.body;
+    
+    if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
+    }
+    
+    console.log(`[Warming] Updating SOL balances for ${walletAddresses.length} wallet(s)...`);
+    const { updateMultipleWalletBalances } = require('../src/wallet-warming-manager.ts');
+    const result = await updateMultipleWalletBalances(walletAddresses);
+    
+    res.json({
+      success: true,
+      message: `Updated ${result.updated} wallet(s), ${result.failed} failed`,
+      updated: result.updated,
+      failed: result.failed,
+      errors: result.errors,
+      totalSol: result.totalSol
+    });
+  } catch (error) {
+    console.error('[Warming] Update balances error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to update balances' });
+  }
+});
+
+// Gather SOL from wallets back to main wallet
+app.post('/api/warming-wallets/gather-sol', async (req, res) => {
+  try {
+    const { walletAddresses } = req.body;
+    
+    if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
+    }
+    
+    console.log(`[Warming] Gathering SOL from ${walletAddresses.length} wallet(s)...`);
+    const { gatherSolFromWallets } = require('../src/wallet-warming-manager.ts');
+    const result = await gatherSolFromWallets(walletAddresses);
+    
+    res.json({
+      success: true,
+      message: `Gathered ${result.totalSolGathered.toFixed(6)} SOL from ${result.gathered} wallet(s), ${result.failed} failed`,
+      gathered: result.gathered,
+      failed: result.failed,
+      errors: result.errors,
+      totalSolGathered: result.totalSolGathered
+    });
+  } catch (error) {
+    console.error('[Warming] Gather SOL error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to gather SOL' });
+  }
 });
 
 // Update wallet stats from blockchain (RPC call - only when user requests)

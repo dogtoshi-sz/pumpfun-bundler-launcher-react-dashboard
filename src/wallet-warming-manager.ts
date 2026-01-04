@@ -25,6 +25,8 @@ export interface WarmedWallet {
   createdAt: string // When wallet was added
   status: 'idle' | 'warming' | 'ready' // Current status
   tags: string[] // Tags like "OLD", "recent", etc.
+  solBalance?: number // Cached SOL balance (updated on demand)
+  lastBalanceUpdate?: string // When balance was last updated
 }
 
 // Resolve path relative to project root (not api-server directory)
@@ -519,5 +521,145 @@ export async function updateMultipleWalletsFromBlockchain(addresses: string[]): 
   }
   
   return { updated, failed, errors }
+}
+
+// Update SOL balance for a wallet
+export async function updateWalletBalance(address: string): Promise<number> {
+  try {
+    const pubkey = new PublicKey(address)
+    const balance = await connection.getBalance(pubkey)
+    const balanceSol = balance / 1e9
+    
+    const wallets = loadWarmedWallets()
+    const walletIndex = wallets.findIndex(w => w.address === address)
+    
+    if (walletIndex >= 0) {
+      wallets[walletIndex].solBalance = balanceSol
+      wallets[walletIndex].lastBalanceUpdate = new Date().toISOString()
+      saveWarmedWallets(wallets)
+    }
+    
+    return balanceSol
+  } catch (error: any) {
+    console.error(`[Wallet Manager] Error fetching balance for ${address}:`, error.message)
+    throw error
+  }
+}
+
+// Update SOL balances for multiple wallets
+export async function updateMultipleWalletBalances(addresses: string[]): Promise<{
+  updated: number
+  failed: number
+  errors: string[]
+  totalSol: number
+}> {
+  let updated = 0
+  let failed = 0
+  const errors: string[] = []
+  let totalSol = 0
+  
+  for (const address of addresses) {
+    try {
+      const balance = await updateWalletBalance(address)
+      totalSol += balance
+      updated++
+      // Small delay to avoid rate limiting
+      await sleep(200)
+    } catch (error: any) {
+      failed++
+      errors.push(`${address}: ${error.message}`)
+      console.error(`[Wallet Manager] Failed to update balance for ${address}:`, error.message)
+    }
+  }
+  
+  return { updated, failed, errors, totalSol }
+}
+
+// Gather SOL from wallets back to main wallet
+export async function gatherSolFromWallets(addresses: string[]): Promise<{
+  gathered: number
+  failed: number
+  errors: string[]
+  totalSolGathered: number
+}> {
+  try {
+    const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
+    let gathered = 0
+    let failed = 0
+    const errors: string[] = []
+    let totalSolGathered = 0
+    
+    for (const address of addresses) {
+      try {
+        const wallets = loadWarmedWallets()
+        const wallet = wallets.find(w => w.address === address)
+        
+        if (!wallet) {
+          failed++
+          errors.push(`${address}: Wallet not found`)
+          continue
+        }
+        
+        const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey))
+        const balance = await connection.getBalance(walletKp.publicKey)
+        const balanceSol = balance / 1e9
+        
+        // Keep 0.001 SOL for rent exemption
+        const rentExemption = 0.001
+        const amountToTransfer = balanceSol - rentExemption
+        
+        if (amountToTransfer <= 0) {
+          console.log(`   ⚠️  ${address}: Insufficient balance (${balanceSol.toFixed(6)} SOL)`)
+          continue
+        }
+        
+        console.log(`   💰 Gathering ${amountToTransfer.toFixed(6)} SOL from ${address.substring(0, 8)}...`)
+        
+        const latestBlockhash = await connection.getLatestBlockhash()
+        const transferMsg = new TransactionMessage({
+          payerKey: walletKp.publicKey,
+          recentBlockhash: latestBlockhash.blockhash,
+          instructions: [
+            SystemProgram.transfer({
+              fromPubkey: walletKp.publicKey,
+              toPubkey: mainKp.publicKey,
+              lamports: Math.floor(amountToTransfer * 1e9)
+            })
+          ]
+        }).compileToV0Message()
+        
+        const transferTx = new VersionedTransaction(transferMsg)
+        transferTx.sign([walletKp])
+        
+        const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+        await connection.confirmTransaction(sig, 'confirmed')
+        
+        totalSolGathered += amountToTransfer
+        gathered++
+        
+        // Update balance in wallet record
+        const walletIndex = wallets.findIndex(w => w.address === address)
+        if (walletIndex >= 0) {
+          wallets[walletIndex].solBalance = rentExemption
+          wallets[walletIndex].lastBalanceUpdate = new Date().toISOString()
+          saveWarmedWallets(wallets)
+        }
+        
+        console.log(`   ✅ Gathered ${amountToTransfer.toFixed(6)} SOL. Tx: https://solscan.io/tx/${sig}`)
+        
+        // Small delay between transfers
+        await sleep(1000)
+      } catch (error: any) {
+        failed++
+        errors.push(`${address}: ${error.message}`)
+        console.error(`[Wallet Manager] Failed to gather from ${address}:`, error.message)
+      }
+    }
+    
+    return { gathered, failed, errors, totalSolGathered }
+  } catch (error: any) {
+    console.error('[Wallet Manager] Error gathering SOL:', error.message)
+    throw error
+  }
 }
 
