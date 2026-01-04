@@ -737,6 +737,18 @@ export default function WalletWarming() {
                     <span>Last Trade:</span>
                     <span className="text-gray-300">{formatDate(wallet.lastTransactionDate)}</span>
                   </div>
+                  <div className="flex justify-between">
+                    <span>SOL Balance:</span>
+                    <span className={`font-bold ${
+                      wallet.solBalance !== undefined && wallet.solBalance !== null
+                        ? wallet.solBalance > 0.1 ? 'text-green-400' : wallet.solBalance > 0.01 ? 'text-yellow-400' : 'text-gray-400'
+                        : 'text-gray-500'
+                    }`}>
+                      {wallet.solBalance !== undefined && wallet.solBalance !== null
+                        ? `${wallet.solBalance.toFixed(4)} SOL`
+                        : 'Not loaded'}
+                    </span>
+                  </div>
                   {wallet.tags && wallet.tags.length > 0 && (
                     <div className="flex gap-1 mt-2 flex-wrap">
                       {wallet.tags.map((tag, tagIdx) => (
