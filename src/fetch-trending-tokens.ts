@@ -1,5 +1,5 @@
-// Fetch trending pump.fun tokens from DexScreener API
-// DexScreener has a pump.fun filter that we can use
+// Fetch trending pump.fun tokens from multiple APIs with fallbacks
+// Priority: 1) pump.fun API, 2) DexScreener, 3) Birdeye
 
 export interface TrendingToken {
   mint: string
@@ -11,38 +11,94 @@ export interface TrendingToken {
 }
 
 export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<TrendingToken[]> {
+  console.log(`[Trending Tokens] Fetching top ${limit} trending pump.fun tokens...`)
+  
+  // Method 1: Try pump.fun recently bonded/trending API (most accurate)
   try {
-    console.log(`[Trending Tokens] Fetching top ${limit} trending pump.fun tokens...`)
-    
-    // DexScreener API endpoint for pump.fun tokens
-    // We'll search for tokens on pump.fun by querying the pump.fun program
-    // Alternative: Use Birdeye API if available
-    
-    // Method 1: Use DexScreener search (they have pump.fun pairs)
-    const response = await fetch(`https://api.dexscreener.com/latest/dex/search?q=pump.fun`, {
+    console.log(`[Trending Tokens] Trying pump.fun trending API...`)
+    const pumpFunResponse = await fetch(`https://frontend-api.pump.fun/coins/trending`, {
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0'
       }
     })
     
-    if (!response.ok) {
-      throw new Error(`DexScreener API error: ${response.status}`)
+    if (pumpFunResponse.ok) {
+      const pumpFunData = await pumpFunResponse.json()
+      console.log(`[Trending Tokens] pump.fun API returned ${Array.isArray(pumpFunData) ? pumpFunData.length : 'non-array'} data`)
+      
+      if (pumpFunData && Array.isArray(pumpFunData) && pumpFunData.length > 0) {
+        const tokens: TrendingToken[] = pumpFunData.slice(0, limit).map((token: any) => ({
+          mint: token.mint || token.address || '',
+          symbol: token.symbol || 'UNKNOWN',
+          name: token.name || token.symbol || 'Unknown Token',
+          priceUsd: parseFloat(token.usd_market_cap ? (token.usd_market_cap / (token.supply || 1)) : token.price || '0') || 0,
+          volume24h: parseFloat(token.volume_24h || token.volume24h || '0') || 0,
+          liquidity: parseFloat(token.liquidity || '0') || 0
+        })).filter((t: TrendingToken) => t.mint && t.mint.length > 0)
+        
+        if (tokens.length > 0) {
+          console.log(`[Trending Tokens] ✅ Successfully fetched ${tokens.length} tokens from pump.fun API`)
+          return tokens
+        }
+      }
+    }
+  } catch (pumpFunError: any) {
+    console.warn(`[Trending Tokens] pump.fun API failed: ${pumpFunError.message}`)
+  }
+  
+  // Method 2: Use DexScreener API - search for Solana tokens and filter for pump.fun
+  try {
+    console.log(`[Trending Tokens] Trying DexScreener API...`)
+    
+    // Try multiple DexScreener endpoints
+    let pairs: any[] = []
+    
+    // Endpoint 1: Search for pump.fun
+    try {
+      const searchResponse = await fetch(`https://api.dexscreener.com/latest/dex/search?q=pump.fun`, {
+        headers: { 'Accept': 'application/json' }
+      })
+      if (searchResponse.ok) {
+        const searchData = await searchResponse.json()
+        pairs = searchData.pairs || []
+        console.log(`[Trending Tokens] DexScreener search returned ${pairs.length} pairs`)
+      }
+    } catch (e) {
+      console.warn(`[Trending Tokens] DexScreener search failed: ${e}`)
     }
     
-    const data = await response.json()
-    console.log(`[Trending Tokens] DexScreener returned ${data.pairs?.length || 0} pairs`)
+    // Endpoint 2: Get latest tokens (if search didn't work)
+    if (pairs.length === 0) {
+      try {
+        const tokensResponse = await fetch(`https://api.dexscreener.com/latest/dex/tokens`, {
+          headers: { 'Accept': 'application/json' }
+        })
+        if (tokensResponse.ok) {
+          const tokensData = await tokensResponse.json()
+          pairs = tokensData.pairs || []
+          console.log(`[Trending Tokens] DexScreener tokens endpoint returned ${pairs.length} pairs`)
+        }
+      } catch (e) {
+        console.warn(`[Trending Tokens] DexScreener tokens endpoint failed: ${e}`)
+      }
+    }
     
-    // Filter for pump.fun pairs and extract token info
-    const pumpFunPairs = (data.pairs || []).filter((pair: any) => {
-      // Check if it's a pump.fun pair
-      return pair.dexId === 'pump.fun' || 
-             pair.url?.includes('pump.fun') ||
-             pair.pairAddress?.startsWith('pump')
+    // Filter for pump.fun pairs
+    const pumpFunPairs = pairs.filter((pair: any) => {
+      const isPumpFun = 
+        pair.dexId === 'pump.fun' ||
+        pair.dexId === 'pumpfun' ||
+        pair.dexId?.toLowerCase().includes('pump') ||
+        pair.url?.includes('pump.fun') ||
+        pair.url?.includes('pumpfun') ||
+        pair.pairAddress?.toLowerCase().includes('pump')
+      return isPumpFun
     })
     
-    console.log(`[Trending Tokens] Found ${pumpFunPairs.length} pump.fun pairs`)
+    console.log(`[Trending Tokens] Found ${pumpFunPairs.length} pump.fun pairs from DexScreener`)
     
-      // Get unique tokens (by base token address)
+    if (pumpFunPairs.length > 0) {
       const uniqueTokens = new Map<string, TrendingToken>()
       
       for (const pair of pumpFunPairs.slice(0, limit * 3)) {
@@ -61,82 +117,66 @@ export async function fetchTrendingPumpFunTokens(limit: number = 20): Promise<Tr
         }
       }
       
-      // Sort by volume and return top tokens
       const tokensArray = Array.from(uniqueTokens.values())
-        .filter(t => t.mint && t.mint.length > 0) // Only valid mints
+        .filter(t => t.mint && t.mint.length > 0)
         .sort((a, b) => b.volume24h - a.volume24h)
         .slice(0, limit)
       
       if (tokensArray.length > 0) {
-        console.log(`[Trending Tokens] Successfully fetched ${tokensArray.length} tokens from DexScreener`)
+        console.log(`[Trending Tokens] ✅ Successfully fetched ${tokensArray.length} tokens from DexScreener`)
         return tokensArray
       }
-    } catch (dexscreenerError: any) {
-      console.warn(`[Trending Tokens] DexScreener API failed: ${dexscreenerError.message}`)
     }
-    
-    // Method 3: Try Birdeye API if available
-    if (uniqueTokens.size < limit) {
-      // Alternative: Fetch from Birdeye API if available
-      const birdeyeApiKey = process.env.BIRDEYE_API_KEY
-      if (birdeyeApiKey) {
-        try {
-          const birdeyeResponse = await fetch(
-            `https://public-api.birdeye.so/defi/tokenlist?sort_by=v24hUSD&sort_type=desc&offset=0&limit=${limit}`,
-            {
-              headers: {
-                'X-API-KEY': birdeyeApiKey,
-                'Accept': 'application/json'
-              }
-            }
-          )
-          
-          if (birdeyeResponse.ok) {
-            const birdeyeData = await birdeyeResponse.json()
-            const tokens = birdeyeData.data?.tokens || []
-            
-            for (const token of tokens) {
-              if (token.address && !uniqueTokens.has(token.address)) {
-                // Check if it's a pump.fun token (you might need to filter by program ID)
-                uniqueTokens.set(token.address, {
-                  mint: token.address,
-                  symbol: token.symbol || 'UNKNOWN',
-                  name: token.name || token.symbol || 'Unknown Token',
-                  priceUsd: parseFloat(token.price || '0'),
-                  volume24h: parseFloat(token.v24hUSD || '0'),
-                  liquidity: parseFloat(token.liquidity || '0')
-                })
-                
-                if (uniqueTokens.size >= limit) break
-              }
-            }
+  } catch (dexscreenerError: any) {
+    console.warn(`[Trending Tokens] DexScreener API failed: ${dexscreenerError.message}`)
+  }
+  
+  // Method 3: Try Birdeye API if available
+  const birdeyeApiKey = process.env.BIRDEYE_API_KEY
+  if (birdeyeApiKey) {
+    try {
+      console.log(`[Trending Tokens] Trying Birdeye API...`)
+      const birdeyeResponse = await fetch(
+        `https://public-api.birdeye.so/defi/tokenlist?sort_by=v24hUSD&sort_type=desc&offset=0&limit=${limit * 2}`,
+        {
+          headers: {
+            'X-API-KEY': birdeyeApiKey,
+            'Accept': 'application/json'
           }
-        } catch (birdeyeError) {
-          console.warn('Birdeye API error:', birdeyeError)
+        }
+      )
+      
+      if (birdeyeResponse.ok) {
+        const birdeyeData = await birdeyeResponse.json()
+        const tokens = birdeyeData.data?.tokens || []
+        console.log(`[Trending Tokens] Birdeye returned ${tokens.length} tokens`)
+        
+        // Filter for Solana tokens (long addresses)
+        const solanaTokens = tokens
+          .filter((token: any) => token.address && token.address.length > 30)
+          .slice(0, limit)
+          .map((token: any) => ({
+            mint: token.address,
+            symbol: token.symbol || 'UNKNOWN',
+            name: token.name || token.symbol || 'Unknown Token',
+            priceUsd: parseFloat(token.price || '0'),
+            volume24h: parseFloat(token.v24hUSD || '0'),
+            liquidity: parseFloat(token.liquidity || '0')
+          }))
+        
+        if (solanaTokens.length > 0) {
+          console.log(`[Trending Tokens] ✅ Successfully fetched ${solanaTokens.length} tokens from Birdeye`)
+          return solanaTokens
         }
       }
+    } catch (birdeyeError: any) {
+      console.warn(`[Trending Tokens] Birdeye API error: ${birdeyeError.message}`)
     }
-    
-    // Sort by volume and return top tokens
-    const tokensArray = Array.from(uniqueTokens.values())
-      .filter(t => t.volume24h > 0) // Only tokens with volume
-      .sort((a, b) => b.volume24h - a.volume24h)
-      .slice(0, limit)
-    
-    console.log(`[Trending Tokens] Returning ${tokensArray.length} tokens (top by volume)`)
-    if (tokensArray.length > 0) {
-      console.log(`[Trending Tokens] Top token: ${tokensArray[0].symbol} (${tokensArray[0].mint.substring(0, 8)}...) - Volume: $${tokensArray[0].volume24h.toFixed(2)}`)
-    }
-    
-    return tokensArray
-    
-  } catch (error: any) {
-    console.error('[Trending Tokens] Error fetching trending tokens:', error.message)
-    console.error('[Trending Tokens] Stack:', error.stack)
-    
-    // Fallback: Return empty array or use cached tokens
-    return []
   }
+  
+  // All methods failed
+  console.warn(`[Trending Tokens] ❌ All API methods failed, returning empty array`)
+  return []
 }
 
 // Cache tokens for a short period to avoid rate limits
@@ -148,6 +188,7 @@ export async function getCachedTrendingTokens(limit: number = 20): Promise<Trend
   const now = Date.now()
   
   if (cachedTokens.length > 0 && (now - cacheTimestamp) < CACHE_DURATION) {
+    console.log(`[Trending Tokens] Using cached tokens (${cachedTokens.length} tokens)`)
     return cachedTokens.slice(0, limit)
   }
   
@@ -157,4 +198,3 @@ export async function getCachedTrendingTokens(limit: number = 20): Promise<Trend
   
   return tokens
 }
-
