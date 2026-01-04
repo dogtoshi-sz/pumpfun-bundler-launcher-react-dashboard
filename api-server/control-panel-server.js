@@ -1677,9 +1677,13 @@ app.get('/api/warming-wallets/test', (req, res) => {
 // Update SOL balances for wallets
 app.post('/api/warming-wallets/update-balances', async (req, res) => {
   try {
+    console.log('[Warming] Update balances endpoint called');
+    console.log('[Warming] Request body:', req.body);
+    
     const { walletAddresses } = req.body;
     
     if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      console.log('[Warming] Invalid request: walletAddresses missing or empty');
       return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
     }
     
@@ -1687,6 +1691,7 @@ app.post('/api/warming-wallets/update-balances', async (req, res) => {
     const { updateMultipleWalletBalances } = require('../src/wallet-warming-manager.ts');
     const result = await updateMultipleWalletBalances(walletAddresses);
     
+    console.log(`[Warming] Balance update complete: ${result.updated} updated, ${result.failed} failed, total: ${result.totalSol.toFixed(4)} SOL`);
     res.json({
       success: true,
       message: `Updated ${result.updated} wallet(s), ${result.failed} failed`,
@@ -1697,6 +1702,7 @@ app.post('/api/warming-wallets/update-balances', async (req, res) => {
     });
   } catch (error) {
     console.error('[Warming] Update balances error:', error);
+    console.error('[Warming] Error stack:', error.stack);
     res.status(500).json({ success: false, error: error.message || 'Failed to update balances' });
   }
 });
@@ -1704,9 +1710,13 @@ app.post('/api/warming-wallets/update-balances', async (req, res) => {
 // Gather SOL from wallets back to main wallet
 app.post('/api/warming-wallets/gather-sol', async (req, res) => {
   try {
+    console.log('[Warming] Gather SOL endpoint called');
+    console.log('[Warming] Request body:', req.body);
+    
     const { walletAddresses } = req.body;
     
     if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      console.log('[Warming] Invalid request: walletAddresses missing or empty');
       return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
     }
     
@@ -1714,6 +1724,7 @@ app.post('/api/warming-wallets/gather-sol', async (req, res) => {
     const { gatherSolFromWallets } = require('../src/wallet-warming-manager.ts');
     const result = await gatherSolFromWallets(walletAddresses);
     
+    console.log(`[Warming] Gather complete: ${result.gathered} gathered, ${result.failed} failed, total: ${result.totalSolGathered.toFixed(6)} SOL`);
     res.json({
       success: true,
       message: `Gathered ${result.totalSolGathered.toFixed(6)} SOL from ${result.gathered} wallet(s), ${result.failed} failed`,
@@ -1724,6 +1735,7 @@ app.post('/api/warming-wallets/gather-sol', async (req, res) => {
     });
   } catch (error) {
     console.error('[Warming] Gather SOL error:', error);
+    console.error('[Warming] Error stack:', error.stack);
     res.status(500).json({ success: false, error: error.message || 'Failed to gather SOL' });
   }
 });
