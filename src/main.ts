@@ -771,7 +771,7 @@ export const fundExistingWalletWithMixing = async (
           console.log(`   ⚠️  Failed to route through mixer, using direct funding...`)
           return await fundExistingWalletDirect(connection, mainKp, targetWallet, amount)
         } else {
-          console.log(`   ✅ Transferred ${(amountToTransfer / 1e9).toFixed(6)} SOL from mixer to BUYER_WALLET`)
+          console.log(`   ✅ Transferred ${(amountToTransfer / 1e9).toFixed(6)} SOL from mixer to ${targetWallet.publicKey.toBase58().slice(0, 8)}...`)
           return true
         }
       } else {
