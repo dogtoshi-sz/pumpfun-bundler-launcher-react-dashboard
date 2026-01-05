@@ -423,7 +423,28 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
       console.log(`   Logo URL: ${sanitizeUrl(updated.logo_url)}`);
       console.log(`   Website Logo Image: ${sanitizeUrl(updated.website_logo_image)}`);
       console.log(`   Theme: ${updated.theme_name || updated.color_scheme || 'NULL'}`);
-      console.log(`[Website Update] 💡 To verify, query: SELECT * FROM site_config WHERE site_url = '${updated.site_url}'`);
+      
+      // CRITICAL: Verify the update was actually saved by querying it back
+      try {
+        const verifyResult = await client.query(
+          `SELECT * FROM site_config WHERE site_url = $1`,
+          [baseDomain]
+        );
+        if (verifyResult.rows.length > 0) {
+          const verified = verifyResult.rows[0];
+          console.log(`[Website Update] ✅ VERIFICATION: Config confirmed in database`);
+          console.log(`   Verified Site URL: ${verified.site_url}`);
+          console.log(`   Verified Token: ${verified.token_name} (${verified.token_symbol})`);
+          console.log(`   Verified Contract: ${verified.contract_address || verified.token_address || 'NULL'}`);
+        } else {
+          console.error(`[Website Update] ❌ VERIFICATION FAILED: Config not found after update!`);
+          console.error(`   Searched for site_url: ${baseDomain}`);
+        }
+      } catch (verifyError: any) {
+        console.error(`[Website Update] ⚠️  Could not verify update:`, verifyError.message);
+      }
+      
+      console.log(`[Website Update] 💡 To verify manually, query: SELECT * FROM site_config WHERE site_url = '${updated.site_url}'`);
       
       return {
         success: true,
@@ -434,13 +455,27 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
     }
   } catch (error: any) {
     console.error('[Website Update] ❌ Error:', error.message);
+    console.error('[Website Update] ❌ Error stack:', error.stack);
+    console.error('[Website Update] ❌ Error code:', error.code);
+    
+    // Log more details for connection errors
+    if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
+      console.error('[Website Update] ❌ Database connection error - check DATABASE_URL');
+      console.error('[Website Update] ❌ DATABASE_URL host:', databaseUrl.match(/@([^:]+)/)?.[1] || 'unknown');
+    }
+    
     return {
       success: false,
       error: error.message,
     };
   } finally {
     if (client) {
-      await client.end();
+      try {
+        await client.end();
+        console.log('[Website Update] ✅ Database connection closed');
+      } catch (closeError: any) {
+        console.warn('[Website Update] ⚠️  Error closing connection:', closeError.message);
+      }
     }
   }
 }
