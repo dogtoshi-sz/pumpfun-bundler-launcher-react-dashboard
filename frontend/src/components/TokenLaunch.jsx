@@ -248,9 +248,9 @@ export default function TokenLaunch({ onLaunch }) {
         const amountsArray = currentAmounts ? currentAmounts.split(',').map(a => a.trim()).filter(a => a) : [];
         const defaultAmount = settings.SWAP_AMOUNT || '0.01';
         
-        if (bundleCount !== amountsArray.length) {
-          let newAmounts: string[];
-          if (bundleCount > amountsArray.length) {
+          if (bundleCount !== amountsArray.length) {
+            let newAmounts;
+            if (bundleCount > amountsArray.length) {
             // Pad with default amount
             newAmounts = [...amountsArray];
             while (newAmounts.length < bundleCount) {
