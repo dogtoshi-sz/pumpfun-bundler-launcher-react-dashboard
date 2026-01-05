@@ -283,7 +283,7 @@ export default function TokenLaunch({ onLaunch }) {
         const defaultAmount = settings.HOLDER_WALLET_AMOUNT || '0.01';
         
         if (holderCount !== amountsArray.length) {
-          let newAmounts: string[];
+          let newAmounts;
           if (holderCount > amountsArray.length) {
             // Pad with default amount
             newAmounts = [...amountsArray];
