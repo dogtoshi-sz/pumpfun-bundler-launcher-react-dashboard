@@ -232,7 +232,7 @@ const main = async () => {
   // This ensures we use the values that were just saved by the API server
   const bundleWalletCount = Number(process.env.BUNDLE_WALLET_COUNT || process.env.DISTRIBUTION_WALLETNUM || '0');
   const bundleSwapAmountsString = process.env.BUNDLE_SWAP_AMOUNTS || '';
-  const bundleSwapAmounts = bundleSwapAmountsString
+  let bundleSwapAmounts = bundleSwapAmountsString
     ? bundleSwapAmountsString.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
     : [];
   const holderWalletCount = Number(process.env.HOLDER_WALLET_COUNT || '0');
