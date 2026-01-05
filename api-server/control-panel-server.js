@@ -390,6 +390,22 @@ app.post('/api/settings', (req, res) => {
     const updates = req.body.settings;
     console.log('[Settings] Received update request with keys:', Object.keys(updates));
     
+    // CRITICAL: Clear amounts when wallet count is set to 0
+    if (updates.BUNDLE_WALLET_COUNT !== undefined) {
+      const bundleCount = parseInt(updates.BUNDLE_WALLET_COUNT) || 0;
+      if (bundleCount === 0) {
+        console.log('[Settings] BUNDLE_WALLET_COUNT is 0 - clearing BUNDLE_SWAP_AMOUNTS');
+        updates.BUNDLE_SWAP_AMOUNTS = '';
+      }
+    }
+    if (updates.HOLDER_WALLET_COUNT !== undefined) {
+      const holderCount = parseInt(updates.HOLDER_WALLET_COUNT) || 0;
+      if (holderCount === 0) {
+        console.log('[Settings] HOLDER_WALLET_COUNT is 0 - clearing HOLDER_SWAP_AMOUNTS');
+        updates.HOLDER_SWAP_AMOUNTS = '';
+      }
+    }
+    
     // Security warning for private key updates
     if (updates.PRIVATE_KEY || updates.BUYER_WALLET) {
       console.warn('⚠️  [SECURITY] Private key update detected!');

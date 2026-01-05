@@ -227,6 +227,82 @@ export default function TokenLaunch({ onLaunch }) {
     }
   }, [settings.BUNDLE_WALLET_COUNT, settings.HOLDER_WALLET_COUNT, settings.BUNDLE_SWAP_AMOUNTS, settings.HOLDER_SWAP_AMOUNTS, settings.BUYER_WALLET, settings.BUYER_AMOUNT, settings.SWAP_AMOUNT, settings.HOLDER_WALLET_AMOUNT, settings.USE_NORMAL_LAUNCH]);
 
+  // Sync amounts with warmed wallet selections
+  useEffect(() => {
+    if (useWarmedWallets) {
+      const bundleCount = selectedBundleWallets.length;
+      const holderCount = selectedHolderWallets.length;
+      
+      // Sync bundle amounts
+      if (bundleCount === 0) {
+        // Clear amounts if no wallets selected
+        if (settings.BUNDLE_SWAP_AMOUNTS) {
+          handleChange('BUNDLE_SWAP_AMOUNTS', '');
+        }
+        if (settings.BUNDLE_WALLET_COUNT !== '0') {
+          handleChange('BUNDLE_WALLET_COUNT', '0');
+        }
+      } else {
+        // Adjust amounts to match selected wallet count
+        const currentAmounts = settings.BUNDLE_SWAP_AMOUNTS || '';
+        const amountsArray = currentAmounts ? currentAmounts.split(',').map(a => a.trim()).filter(a => a) : [];
+        const defaultAmount = settings.SWAP_AMOUNT || '0.01';
+        
+        if (bundleCount !== amountsArray.length) {
+          let newAmounts: string[];
+          if (bundleCount > amountsArray.length) {
+            // Pad with default amount
+            newAmounts = [...amountsArray];
+            while (newAmounts.length < bundleCount) {
+              newAmounts.push(defaultAmount);
+            }
+          } else {
+            // Trim to match count
+            newAmounts = amountsArray.slice(0, bundleCount);
+          }
+          handleChange('BUNDLE_SWAP_AMOUNTS', newAmounts.join(','));
+        }
+        if (settings.BUNDLE_WALLET_COUNT !== bundleCount.toString()) {
+          handleChange('BUNDLE_WALLET_COUNT', bundleCount.toString());
+        }
+      }
+      
+      // Sync holder amounts
+      if (holderCount === 0) {
+        // Clear amounts if no wallets selected
+        if (settings.HOLDER_SWAP_AMOUNTS) {
+          handleChange('HOLDER_SWAP_AMOUNTS', '');
+        }
+        if (settings.HOLDER_WALLET_COUNT !== '0') {
+          handleChange('HOLDER_WALLET_COUNT', '0');
+        }
+      } else {
+        // Adjust amounts to match selected wallet count
+        const currentAmounts = settings.HOLDER_SWAP_AMOUNTS || '';
+        const amountsArray = currentAmounts ? currentAmounts.split(',').map(a => a.trim()).filter(a => a) : [];
+        const defaultAmount = settings.HOLDER_WALLET_AMOUNT || '0.01';
+        
+        if (holderCount !== amountsArray.length) {
+          let newAmounts: string[];
+          if (holderCount > amountsArray.length) {
+            // Pad with default amount
+            newAmounts = [...amountsArray];
+            while (newAmounts.length < holderCount) {
+              newAmounts.push(defaultAmount);
+            }
+          } else {
+            // Trim to match count
+            newAmounts = amountsArray.slice(0, holderCount);
+          }
+          handleChange('HOLDER_SWAP_AMOUNTS', newAmounts.join(','));
+        }
+        if (settings.HOLDER_WALLET_COUNT !== holderCount.toString()) {
+          handleChange('HOLDER_WALLET_COUNT', holderCount.toString());
+        }
+      }
+    }
+  }, [useWarmedWallets, selectedBundleWallets.length, selectedHolderWallets.length]);
+
   // Load tweet list from settings
   useEffect(() => {
     if (settings.TWITTER_TWEETS) {
@@ -951,6 +1027,11 @@ export default function TokenLaunch({ onLaunch }) {
       const amountsArray = value ? value.split(',').map(a => a.trim()).filter(a => a) : [];
       if (amountsArray.length > 0) {
         newSettings.BUNDLE_WALLET_COUNT = amountsArray.length.toString();
+      } else {
+        // If amounts cleared, reset count to 0 (unless using warmed wallets)
+        if (!useWarmedWallets) {
+          newSettings.BUNDLE_WALLET_COUNT = '0';
+        }
       }
     } else if (key === 'HOLDER_WALLET_COUNT') {
       const count = parseInt(value) || 0;
