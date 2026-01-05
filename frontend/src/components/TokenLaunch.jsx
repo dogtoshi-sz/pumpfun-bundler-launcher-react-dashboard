@@ -526,12 +526,12 @@ export default function TokenLaunch({ onLaunch }) {
           tokenConfig: {
             tokenName: settings.TOKEN_NAME || '',
             tokenSymbol: settings.TOKEN_SYMBOL || '',
-            tokenAddress: nextAddress?.address || settings.TOKEN_ADDRESS || 'Not set',
+            tokenAddress: settings.CUSTOM_TOKEN_ADDRESS || nextAddress?.address || settings.TOKEN_ADDRESS || 'Not set',
             website: settings.WEBSITE || '',
             telegram: settings.TELEGRAM || '',
             twitter: settings.TWITTER || '',
             description: settings.DESCRIPTION || '',
-            chain: 'solana',
+            chain: settings.WEBSITE_CHAIN || 'solana',
             logoUrl: websiteLogoUrl || null, // Use website logo for logoUrl (saves to website_logo_image)
             tokenImageUrl: tokenImageUrl || null, // Use token image for tokenImageUrl
             ...(colorScheme !== undefined && { colorScheme: colorScheme }), // Only include if defined (DEFAULT theme won't update)
@@ -612,7 +612,7 @@ export default function TokenLaunch({ onLaunch }) {
       const websiteUrl = settings.WEBSITE_URL || (settings.WEBSITE ? extractDomain(settings.WEBSITE) : '');
       
       const filterScript = (settings.TELEGRAM_FILTER_SCRIPT || '/filter CA {contract_address}\n/filter website {website}\n/filter X {twitter}')
-        .replace('{contract_address}', nextAddress?.address || settings.TOKEN_ADDRESS || '{contract_address}')
+        .replace('{contract_address}', settings.CUSTOM_TOKEN_ADDRESS || nextAddress?.address || settings.TOKEN_ADDRESS || '{contract_address}')
         .replace('{website}', settings.WEBSITE || '')
         .replace('{twitter}', settings.TWITTER || '');
       
@@ -626,7 +626,8 @@ export default function TokenLaunch({ onLaunch }) {
             telegram_phone: settings.TELEGRAM_PHONE,
             token_name: settings.TOKEN_NAME || '',
             token_symbol: settings.TOKEN_SYMBOL || '',
-            token_address: nextAddress?.address || settings.TOKEN_ADDRESS || 'Not set',
+            token_address: settings.CUSTOM_TOKEN_ADDRESS || nextAddress?.address || settings.TOKEN_ADDRESS || 'Not set',
+            chain: settings.WEBSITE_CHAIN || 'solana',
             website: settings.WEBSITE || '',
             telegram: settings.TELEGRAM || '',
             twitter: settings.TWITTER || '',
@@ -731,7 +732,7 @@ export default function TokenLaunch({ onLaunch }) {
           return t.text
             .replace(/\[token_name\]/gi, settings.TOKEN_NAME || 'Token')
             .replace(/\[token_symbol\]/gi, settings.TOKEN_SYMBOL || '$TOKEN')
-            .replace(/\[CA\]/gi, nextAddress?.address || settings.TOKEN_ADDRESS || '[CA]')
+            .replace(/\[CA\]/gi, settings.CUSTOM_TOKEN_ADDRESS || nextAddress?.address || settings.TOKEN_ADDRESS || '[CA]')
             .replace(/\[website\]/gi, settings.WEBSITE || '')
             .replace(/\[telegram\]/gi, settings.TELEGRAM || '')
             .replace(/\[twitter\]/gi, settings.TWITTER || '');
@@ -756,7 +757,7 @@ export default function TokenLaunch({ onLaunch }) {
           tweet
             .replace(/\[token_name\]/gi, settings.TOKEN_NAME || 'Token')
             .replace(/\[token_symbol\]/gi, settings.TOKEN_SYMBOL || '$TOKEN')
-            .replace(/\[CA\]/gi, nextAddress?.address || settings.TOKEN_ADDRESS || '[CA]')
+            .replace(/\[CA\]/gi, settings.CUSTOM_TOKEN_ADDRESS || nextAddress?.address || settings.TOKEN_ADDRESS || '[CA]')
             .replace(/\[website\]/gi, settings.WEBSITE || '')
             .replace(/\[telegram\]/gi, settings.TELEGRAM || '')
             .replace(/\[twitter\]/gi, settings.TWITTER || '')
@@ -789,7 +790,8 @@ export default function TokenLaunch({ onLaunch }) {
           tokenConfig: {
             tokenName: settings.TOKEN_NAME || '',
             tokenSymbol: settings.TOKEN_SYMBOL || '',
-            tokenAddress: nextAddress?.address || settings.TOKEN_ADDRESS || 'Not set',
+            tokenAddress: settings.CUSTOM_TOKEN_ADDRESS || nextAddress?.address || settings.TOKEN_ADDRESS || 'Not set',
+            chain: settings.WEBSITE_CHAIN || 'solana',
             website: settings.WEBSITE || '',
             telegram: settings.TELEGRAM || '',
             twitter: settings.TWITTER || '',
@@ -2420,6 +2422,45 @@ export default function TokenLaunch({ onLaunch }) {
                           className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="API Secret (optional)"
                         />
+                        <div>
+                          <label className="block text-xs font-medium text-gray-300 mb-1">
+                            ⛓️ Chain
+                          </label>
+                          <select
+                            value={settings.WEBSITE_CHAIN || 'solana'}
+                            onChange={(e) => handleChange('WEBSITE_CHAIN', e.target.value)}
+                            className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="solana">Solana</option>
+                            <option value="ethereum">Ethereum</option>
+                            <option value="base">Base</option>
+                            <option value="bsc">BSC (Binance Smart Chain)</option>
+                            <option value="polygon">Polygon</option>
+                            <option value="avalanche">Avalanche</option>
+                            <option value="arbitrum">Arbitrum</option>
+                            <option value="optimism">Optimism</option>
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">Select the blockchain for website display (does not affect launch)</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-300 mb-1">
+                            📍 Custom Contract Address (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={settings.CUSTOM_TOKEN_ADDRESS || ''}
+                            onChange={(e) => handleChange('CUSTOM_TOKEN_ADDRESS', e.target.value)}
+                            className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                            placeholder={nextAddress?.address || 'Enter contract address or leave empty to use next pump address'}
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            {nextAddress?.address ? (
+                              <>Next pump address: <span className="font-mono text-gray-400">{nextAddress.address.slice(0, 8)}...{nextAddress.address.slice(-8)}</span></>
+                            ) : (
+                              'Leave empty to use next pump address when available'
+                            )}
+                          </p>
+                        </div>
                         <div>
                           <label className="block text-xs font-medium text-gray-300 mb-1">
                             🎨 Website Theme
