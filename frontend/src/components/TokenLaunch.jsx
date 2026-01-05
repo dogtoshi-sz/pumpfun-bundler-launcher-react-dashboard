@@ -111,6 +111,8 @@ export default function TokenLaunch({ onLaunch }) {
     telegram: null,
     twitter: null,
   });
+  const [twitterAccountInfo, setTwitterAccountInfo] = useState(null);
+  const [loadingTwitterAccount, setLoadingTwitterAccount] = useState(false);
   const [tweetList, setTweetList] = useState([]); // Array of { text: string, image: File | null, imagePreview: string | null }
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [showBuyerWallet, setShowBuyerWallet] = useState(false);
@@ -753,6 +755,38 @@ export default function TokenLaunch({ onLaunch }) {
       alert(`❌ Telegram creation test error:\n\n${error.message}`);
     } finally {
       setTestingMarketing({ ...testingMarketing, telegram: false });
+    }
+  };
+
+  // Get Twitter Account Info
+  const getTwitterAccountInfo = async () => {
+    if (!settings.TWITTER_API_KEY || !settings.TWITTER_API_SECRET || !settings.TWITTER_ACCESS_TOKEN || !settings.TWITTER_ACCESS_TOKEN_SECRET) {
+      alert('Please fill in Twitter API credentials first (API Key, API Secret, Access Token, Access Token Secret)');
+      return;
+    }
+    
+    setLoadingTwitterAccount(true);
+    try {
+      const response = await apiService.getTwitterAccountInfo(
+        settings.TWITTER_API_KEY,
+        settings.TWITTER_API_SECRET,
+        settings.TWITTER_ACCESS_TOKEN,
+        settings.TWITTER_ACCESS_TOKEN_SECRET
+      );
+      
+      if (response.data.success) {
+        setTwitterAccountInfo(response.data.account);
+        alert(`✅ Account verified!\n\nUsername: @${response.data.account.username}\nName: ${response.data.account.name}${response.data.account.verified ? '\n✓ Verified Account' : ''}`);
+      } else {
+        alert(`❌ Failed to verify account: ${response.data.error || 'Unknown error'}`);
+        setTwitterAccountInfo(null);
+      }
+    } catch (error) {
+      console.error('Failed to get Twitter account info:', error);
+      alert(`❌ Failed to verify account: ${error.response?.data?.error || error.message || 'Unknown error'}`);
+      setTwitterAccountInfo(null);
+    } finally {
+      setLoadingTwitterAccount(false);
     }
   };
 
@@ -2708,34 +2742,101 @@ export default function TokenLaunch({ onLaunch }) {
                     </div>
                     {settings.ENABLE_TWITTER_POSTING === 'true' && (
                       <div className="pl-6 space-y-2">
+                        {/* Account Info Display */}
+                        {twitterAccountInfo && (
+                          <div className="p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
+                            <div className="flex items-center gap-3">
+                              {twitterAccountInfo.profileImageUrl && (
+                                <img 
+                                  src={twitterAccountInfo.profileImageUrl} 
+                                  alt="Profile" 
+                                  className="w-10 h-10 rounded-full"
+                                />
+                              )}
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-white">{twitterAccountInfo.name}</span>
+                                  {twitterAccountInfo.verified && (
+                                    <span className="text-blue-400" title="Verified Account">✓</span>
+                                  )}
+                                </div>
+                                <div className="text-sm text-gray-300">@{twitterAccountInfo.username}</div>
+                                {twitterAccountInfo.followersCount !== undefined && (
+                                  <div className="text-xs text-gray-400 mt-1">
+                                    {twitterAccountInfo.followersCount.toLocaleString()} followers
+                                  </div>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setTwitterAccountInfo(null)}
+                                className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        
                         <input
                           type="password"
                           value={settings.TWITTER_API_KEY || ''}
-                          onChange={(e) => handleChange('TWITTER_API_KEY', e.target.value)}
+                          onChange={(e) => {
+                            handleChange('TWITTER_API_KEY', e.target.value);
+                            setTwitterAccountInfo(null); // Clear account info when keys change
+                          }}
                           className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="Twitter API Key"
                         />
                         <input
                           type="password"
                           value={settings.TWITTER_API_SECRET || ''}
-                          onChange={(e) => handleChange('TWITTER_API_SECRET', e.target.value)}
+                          onChange={(e) => {
+                            handleChange('TWITTER_API_SECRET', e.target.value);
+                            setTwitterAccountInfo(null); // Clear account info when keys change
+                          }}
                           className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="Twitter API Secret"
                         />
                         <input
                           type="password"
                           value={settings.TWITTER_ACCESS_TOKEN || ''}
-                          onChange={(e) => handleChange('TWITTER_ACCESS_TOKEN', e.target.value)}
+                          onChange={(e) => {
+                            handleChange('TWITTER_ACCESS_TOKEN', e.target.value);
+                            setTwitterAccountInfo(null); // Clear account info when keys change
+                          }}
                           className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="Twitter Access Token"
                         />
                         <input
                           type="password"
                           value={settings.TWITTER_ACCESS_TOKEN_SECRET || ''}
-                          onChange={(e) => handleChange('TWITTER_ACCESS_TOKEN_SECRET', e.target.value)}
+                          onChange={(e) => {
+                            handleChange('TWITTER_ACCESS_TOKEN_SECRET', e.target.value);
+                            setTwitterAccountInfo(null); // Clear account info when keys change
+                          }}
                           className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="Twitter Access Token Secret"
                         />
+                        <button
+                          type="button"
+                          onClick={getTwitterAccountInfo}
+                          disabled={loadingTwitterAccount || !settings.TWITTER_API_KEY || !settings.TWITTER_API_SECRET || !settings.TWITTER_ACCESS_TOKEN || !settings.TWITTER_ACCESS_TOKEN_SECRET}
+                          className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                        >
+                          {loadingTwitterAccount ? (
+                            <>
+                              <span className="animate-spin">⏳</span> Verifying...
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              Verify Account
+                            </>
+                          )}
+                        </button>
                         {/* Tweet List */}
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
