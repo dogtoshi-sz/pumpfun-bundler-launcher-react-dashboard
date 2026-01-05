@@ -99,8 +99,13 @@ function getDatabaseUrl(): string {
  * Normalize domain (extract base domain)
  */
 function extractBaseDomain(domain: string): string {
+  if (!domain || !domain.trim()) {
+    console.warn('[Website Update] ⚠️  Empty domain provided, using localhost');
+    return 'localhost';
+  }
+  
   // Remove protocol (https://, http://)
-  let normalized = domain.replace(/^https?:\/\//, '');
+  let normalized = domain.trim().replace(/^https?:\/\//, '');
   
   // Remove trailing slash
   normalized = normalized.replace(/\/$/, '');
@@ -115,11 +120,19 @@ function extractBaseDomain(domain: string): string {
   normalized = normalized.replace(/^docs\./, '');
   
   // For any other subdomain, keep only domain.tld (last 2 parts)
+  // BUT: Only if it's clearly a subdomain (more than 2 parts)
   const parts = normalized.split('.');
   if (parts.length > 2) {
-    // Has subdomain, keep only last 2 parts (domain.tld)
+    // Check if it's a known TLD with subdomain (e.g., example.co.uk should keep co.uk)
+    // For now, simple approach: if more than 2 parts, keep last 2
+    // This handles: subdomain.example.com -> example.com
     normalized = parts.slice(-2).join('.');
   }
+  
+  // Convert to lowercase for consistency
+  normalized = normalized.toLowerCase();
+  
+  console.log(`[Website Update] Domain normalization: "${domain}" -> "${normalized}"`);
   
   return normalized;
 }
