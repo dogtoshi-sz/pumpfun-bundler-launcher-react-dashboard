@@ -115,6 +115,74 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Get Twitter account information
+ */
+export async function getTwitterAccountInfo(credentials: {
+  apiKey: string;
+  apiSecret: string;
+  accessToken: string;
+  accessTokenSecret: string;
+}): Promise<{
+  success: boolean;
+  account?: {
+    id: string;
+    username: string;
+    name: string;
+    description?: string;
+    profileImageUrl?: string;
+    verified?: boolean;
+    followersCount?: number;
+    followingCount?: number;
+    tweetCount?: number;
+  };
+  error?: string;
+}> {
+  try {
+    const { apiKey, apiSecret, accessToken, accessTokenSecret } = credentials;
+
+    if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
+      throw new Error('Missing Twitter API credentials');
+    }
+
+    // Initialize Twitter client
+    const client = new TwitterApi({
+      appKey: apiKey,
+      appSecret: apiSecret,
+      accessToken: accessToken,
+      accessSecret: accessTokenSecret,
+    });
+
+    const rwClient = client.readWrite;
+
+    // Get account info using v2 API
+    const user = await rwClient.v2.me({
+      'user.fields': ['description', 'profile_image_url', 'verified', 'public_metrics']
+    });
+
+    return {
+      success: true,
+      account: {
+        id: user.data.id,
+        username: user.data.username,
+        name: user.data.name,
+        description: user.data.description,
+        profileImageUrl: user.data.profile_image_url,
+        verified: user.data.verified || false,
+        followersCount: user.data.public_metrics?.followers_count,
+        followingCount: user.data.public_metrics?.following_count,
+        tweetCount: user.data.public_metrics?.tweet_count,
+      },
+    };
+  } catch (error: any) {
+    console.error('[Twitter] Get account info error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to get Twitter account info',
+    };
+  }
+}
+
+/**
  * Post tweets and update Twitter profile
  */
 export async function postToTwitter(options: TwitterPostOptions): Promise<{

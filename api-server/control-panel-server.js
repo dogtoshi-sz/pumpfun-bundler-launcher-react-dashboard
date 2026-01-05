@@ -2053,6 +2053,53 @@ app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
   }
 });
 
+// Twitter Get Account Info Endpoint
+app.post('/api/marketing/twitter/get-account-info', async (req, res) => {
+  try {
+    console.log('[Marketing] Twitter get account info request received');
+    const { apiKey, apiSecret, accessToken, accessTokenSecret } = req.body;
+    
+    if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Twitter API credentials are required' 
+      });
+    }
+    
+    // Import and use Twitter poster module (TypeScript)
+    const { getTwitterAccountInfo } = require('../marketing/twitter/twitter-poster.ts');
+    const result = await getTwitterAccountInfo({
+      apiKey,
+      apiSecret,
+      accessToken,
+      accessTokenSecret,
+    });
+    
+    if (result.success) {
+      console.log('[Marketing] ✅ Twitter account info retrieved:', result.account?.username);
+      res.json({
+        success: true,
+        account: result.account,
+      });
+    } else {
+      console.error('[Marketing] ❌ Twitter get account info failed:', result.error);
+      res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to get Twitter account info',
+      });
+    }
+  } catch (error) {
+    const sanitizedMessage = error.message && error.message.length > 500 
+      ? error.message.substring(0, 500) + '... (truncated)' 
+      : error.message;
+    console.error('[Marketing] ❌ Twitter get account info error:', sanitizedMessage);
+    res.status(500).json({ 
+      success: false, 
+      error: sanitizedMessage || 'Unknown error',
+    });
+  }
+});
+
 // Twitter Auto-Post Endpoint
 app.post('/api/marketing/twitter/auto-post', async (req, res) => {
   try {

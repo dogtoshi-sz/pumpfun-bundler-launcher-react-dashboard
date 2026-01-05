@@ -61,6 +61,10 @@ export const apiService = {
   getTrendingTokens: (limit = 100) => api.get(`/warm-wallets/trending-tokens?limit=${limit}`),
   addWalletsToLaunch: (walletAddresses, roles) => 
     api.post('/warm-wallets/add-to-launch', { walletAddresses, roles }),
+  
+  // Twitter
+  getTwitterAccountInfo: (apiKey, apiSecret, accessToken, accessTokenSecret) =>
+    api.post('/marketing/twitter/get-account-info', { apiKey, apiSecret, accessToken, accessTokenSecret }),
 };
 
 export default apiService;
