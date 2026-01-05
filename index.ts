@@ -429,6 +429,11 @@ const main = async () => {
   if (bundleWalletCount === 0 && warmedBundleWallets.length === 0) {
     console.log("⚠️  BUNDLE_WALLET_COUNT is 0 and no warmed bundle wallets - no bundle wallets will be created")
     console.log("   Set BUNDLE_WALLET_COUNT in .env to create bundle wallets, or select warmed wallets in the UI")
+    // CRITICAL: Clear BUNDLE_SWAP_AMOUNTS if no wallets will be created
+    if (bundleSwapAmounts.length > 0) {
+      console.log("   ⚠️  Clearing BUNDLE_SWAP_AMOUNTS since no bundle wallets will be created")
+      bundleSwapAmounts = []
+    }
   }
 
   // Use warmed wallets if available, otherwise create fresh ones
