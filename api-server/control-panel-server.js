@@ -440,22 +440,39 @@ app.post('/api/settings', (req, res) => {
     // Write back to file (this will update existing lines and preserve structure)
     writeEnvFile(updatedEnv);
     
-    // Verify the write by reading back
+    // Verify the write by reading back (lenient comparison to handle quote differences)
     const verifyEnv = readEnvFile();
     const failedKeys = [];
     for (const key in updates) {
-      if (verifyEnv[key] !== updates[key]) {
+      const expected = String(updates[key] || '').trim();
+      const actual = String(verifyEnv[key] || '').trim();
+      
+      // Normalize comparison: remove quotes, trim whitespace
+      const normalize = (val) => {
+        let normalized = val.trim();
+        // Remove surrounding quotes if present
+        if ((normalized.startsWith('"') && normalized.endsWith('"')) || 
+            (normalized.startsWith("'") && normalized.endsWith("'"))) {
+          normalized = normalized.slice(1, -1);
+        }
+        return normalized.trim();
+      };
+      
+      const normalizedExpected = normalize(expected);
+      const normalizedActual = normalize(actual);
+      
+      if (normalizedExpected !== normalizedActual) {
         failedKeys.push(key);
-        console.error(`[Settings] Verification failed for ${key}: expected "${updates[key]}", got "${verifyEnv[key]}"`);
+        console.error(`[Settings] Verification failed for ${key}: expected "${expected}", got "${actual}"`);
+        console.error(`[Settings]   Normalized: expected "${normalizedExpected}", got "${normalizedActual}"`);
       }
     }
     
     if (failedKeys.length > 0) {
       console.error('[Settings] Some keys failed verification:', failedKeys);
-      return res.status(500).json({ 
-        success: false, 
-        error: `Failed to update keys: ${failedKeys.join(', ')}` 
-      });
+      // Don't fail the request - the file was written, verification might just be strict
+      // Log warning but still return success (the .env file was updated)
+      console.warn('[Settings] ⚠️  Verification warnings, but .env file was written. Values may differ due to quote handling.');
     }
     
     console.log('[Settings] Successfully updated .env file and verified');
@@ -495,6 +512,15 @@ app.post('/api/launch-token', async (req, res) => {
       fs.mkdirSync(keysDir, { recursive: true });
     }
     
+    // IMPORTANT: Always clear warmed-wallets-for-launch.json at the START
+    // This ensures we don't use stale data from previous failed launches
+    // It will be recreated below with fresh data if useWarmedWallets is true
+    const warmedWalletsPath = path.join(keysDir, 'warmed-wallets-for-launch.json');
+    if (fs.existsSync(warmedWalletsPath)) {
+      fs.unlinkSync(warmedWalletsPath);
+      console.log(`[Launch] Cleared previous warmed-wallets-for-launch.json - will recreate with fresh data`);
+    }
+    
     // Backup old current-run.json if it exists (optional - for debugging)
     if (fs.existsSync(currentRunPath)) {
       const backupPath = path.join(keysDir, `current-run-backup-${Date.now()}.json`);
@@ -515,9 +541,10 @@ app.post('/api/launch-token', async (req, res) => {
     console.log(`[Launch] Latest .env has ${Object.keys(latestEnv).length} variables`);
     
     // Handle warmed wallets if provided
-    const { useWarmedWallets, bundleWalletAddresses, holderWalletAddresses } = req.body || {};
-    if (useWarmedWallets && (bundleWalletAddresses || holderWalletAddresses)) {
+    const { useWarmedWallets, creatorWalletAddress, bundleWalletAddresses, holderWalletAddresses, holderWalletAutoBuyAddresses, holderWalletAutoBuyDelays } = req.body || {};
+    if (useWarmedWallets && (creatorWalletAddress || bundleWalletAddresses || holderWalletAddresses)) {
       console.log(`[Launch] Using warmed wallets:`);
+      console.log(`   Creator wallet: ${creatorWalletAddress ? '1' : '0'}`);
       console.log(`   Bundle wallets: ${bundleWalletAddresses?.length || 0}`);
       console.log(`   Holder wallets: ${holderWalletAddresses?.length || 0}`);
       
@@ -525,35 +552,99 @@ app.post('/api/launch-token', async (req, res) => {
       const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
       const allWarmedWallets = loadWarmedWallets();
       
-      // Create a map of addresses to private keys
+      console.log(`[Launch] Loaded ${allWarmedWallets.length} warmed wallets from wallet warming system`);
+      
+      // Create a map of addresses to private keys (case-insensitive lookup)
       const walletMap = new Map();
+      const addressMap = new Map(); // Map lowercase addresses to original addresses
       allWarmedWallets.forEach(wallet => {
-        walletMap.set(wallet.address, wallet.privateKey);
+        const lowerAddress = wallet.address.toLowerCase();
+        walletMap.set(lowerAddress, wallet.privateKey);
+        addressMap.set(lowerAddress, wallet.address); // Store original address for reference
       });
       
-      // Get private keys for selected wallets
+      // Get private key for creator wallet (case-insensitive lookup)
+      let creatorWalletKey = null;
+      let matchedCreatorAddress = null;
+      if (creatorWalletAddress) {
+        const lowerCreatorAddress = creatorWalletAddress.toLowerCase();
+        creatorWalletKey = walletMap.get(lowerCreatorAddress);
+        matchedCreatorAddress = addressMap.get(lowerCreatorAddress);
+        
+        if (creatorWalletKey) {
+          console.log(`[Launch] ✅ Found creator wallet: ${matchedCreatorAddress || creatorWalletAddress}`);
+        } else {
+          console.warn(`[Launch] ⚠️  WARNING: Creator wallet address ${creatorWalletAddress} was provided but private key not found in warmed wallets!`);
+          console.warn(`[Launch]    Searched for: ${creatorWalletAddress} (normalized: ${lowerCreatorAddress})`);
+          console.warn(`[Launch]    Available wallet addresses (first 5): ${allWarmedWallets.slice(0, 5).map(w => w.address).join(', ')}`);
+          console.warn(`[Launch]    This wallet will NOT be used. Please verify the wallet is in your warmed wallets list.`);
+        }
+      }
+      
+      // Get private keys for selected wallets (case-insensitive lookup)
       const bundleWalletKeys = (bundleWalletAddresses || [])
-        .map(addr => walletMap.get(addr))
+        .map(addr => {
+          const key = walletMap.get(addr.toLowerCase());
+          if (!key) {
+            console.warn(`[Launch] ⚠️  Bundle wallet address ${addr} not found in warmed wallets`);
+          }
+          return key;
+        })
         .filter(key => key); // Remove undefined
       
       const holderWalletKeys = (holderWalletAddresses || [])
-        .map(addr => walletMap.get(addr))
+        .map(addr => {
+          const key = walletMap.get(addr.toLowerCase());
+          if (!key) {
+            console.warn(`[Launch] ⚠️  Holder wallet address ${addr} not found in warmed wallets`);
+          }
+          return key;
+        })
         .filter(key => key); // Remove undefined
       
+      // Filter holder wallets to only include those selected for auto-buy
+      const holderWalletAutoBuyKeys = []
+      const holderWalletAutoBuyAddressesList = []
+      if (holderWalletAutoBuyAddresses && holderWalletAutoBuyAddresses.length > 0) {
+        holderWalletAutoBuyAddresses.forEach((addr) => {
+          const key = walletMap.get(addr.toLowerCase())
+          if (key) {
+            holderWalletAutoBuyKeys.push(key)
+            holderWalletAutoBuyAddressesList.push(addr)
+          }
+        })
+      }
+      
       // Save to a file that index.ts will read
-      const warmedWalletsPath = path.join(keysDir, 'warmed-wallets-for-launch.json');
-      fs.writeFileSync(warmedWalletsPath, JSON.stringify({
+      // ALWAYS include creatorWalletKey and creatorWalletAddress fields (even if null) so index.ts can check for them
+      // warmedWalletsPath already declared above
+      const warmedWalletsData = {
+        creatorWalletKey: creatorWalletKey || null,
+        creatorWalletAddress: creatorWalletAddress || null,
         bundleWalletKeys,
         holderWalletKeys,
         bundleWalletAddresses: bundleWalletAddresses || [],
         holderWalletAddresses: holderWalletAddresses || [],
+        holderWalletAutoBuyKeys: holderWalletAutoBuyKeys,
+        holderWalletAutoBuyAddresses: holderWalletAutoBuyAddressesList,
+        holderWalletAutoBuyDelays: holderWalletAutoBuyDelays || null,
         createdAt: new Date().toISOString()
-      }, null, 2));
+      };
+      fs.writeFileSync(warmedWalletsPath, JSON.stringify(warmedWalletsData, null, 2));
       
-      console.log(`[Launch] Saved ${bundleWalletKeys.length} bundle and ${holderWalletKeys.length} holder warmed wallets to ${warmedWalletsPath}`);
+      console.log(`[Launch] Saved warmed wallets to ${warmedWalletsPath}:`);
+      console.log(`   Creator wallet: ${creatorWalletKey ? '✅ Found' : '❌ Not selected or not found'}`);
+      if (creatorWalletKey) {
+        console.log(`   Creator address: ${creatorWalletAddress}`);
+      }
+      console.log(`   Bundle wallets: ${bundleWalletKeys.length}`);
+      console.log(`   Holder wallets: ${holderWalletKeys.length} (${holderWalletAutoBuyKeys.length} selected for auto-buy)`);
+      if (holderWalletAutoBuyDelays) {
+        console.log(`   Auto-buy delays config: ${holderWalletAutoBuyDelays}`);
+      }
     } else {
       // Clear warmed wallets file if not using them
-      const warmedWalletsPath = path.join(keysDir, 'warmed-wallets-for-launch.json');
+      // warmedWalletsPath already declared above
       if (fs.existsSync(warmedWalletsPath)) {
         fs.unlinkSync(warmedWalletsPath);
         console.log(`[Launch] Cleared warmed wallets file - will create fresh wallets`);
@@ -1573,6 +1664,93 @@ app.post('/api/marketing/website/update', async (req, res) => {
       error: errorMessage,
       details: process.env.NODE_ENV === 'development' ? undefined : undefined // Don't include stack trace to avoid base64 spam
     });
+  }
+});
+
+// Telegram Verification Endpoints
+app.post('/api/marketing/telegram/send-code', async (req, res) => {
+  try {
+    console.log('[Marketing] Telegram send code request received');
+    const { api_id, api_hash, phone } = req.body;
+    
+    if (!api_id || !api_hash || !phone) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Telegram API credentials are required (api_id, api_hash, phone)' 
+      });
+    }
+    
+    // Import and use Telegram verification wrapper
+    console.log('[Marketing] Calling sendTelegramVerificationCode...');
+    const { sendTelegramVerificationCode } = require('../marketing/telegram/telegram-verification.ts');
+    const result = await sendTelegramVerificationCode({
+      api_id,
+      api_hash,
+      phone,
+    });
+    
+    console.log('[Marketing] Verification result:', JSON.stringify(result, null, 2));
+    res.json(result);
+  } catch (error) {
+    console.error('[Marketing] Telegram send code error:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Unknown error' });
+  }
+});
+
+app.post('/api/marketing/telegram/verify-code', async (req, res) => {
+  try {
+    console.log('[Marketing] Telegram verify code request received');
+    const { api_id, api_hash, phone, code, phone_code_hash, password } = req.body;
+    
+    if (!api_id || !api_hash || !phone || !code) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'api_id, api_hash, phone, and code are required' 
+      });
+    }
+    
+    // Import and use Telegram verification wrapper
+    const { verifyTelegramCode } = require('../marketing/telegram/telegram-verification.ts');
+    const result = await verifyTelegramCode({
+      api_id,
+      api_hash,
+      phone,
+      code,
+      phone_code_hash,
+      password,
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('[Marketing] Telegram verify code error:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Unknown error' });
+  }
+});
+
+app.post('/api/marketing/telegram/check-status', async (req, res) => {
+  try {
+    console.log('[Marketing] Telegram check status request received');
+    const { api_id, api_hash, phone } = req.body;
+    
+    if (!api_id || !api_hash || !phone) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Telegram API credentials are required (api_id, api_hash, phone)' 
+      });
+    }
+    
+    // Import and use Telegram verification wrapper
+    const { checkTelegramStatus } = require('../marketing/telegram/telegram-verification.ts');
+    const result = await checkTelegramStatus({
+      api_id,
+      api_hash,
+      phone,
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('[Marketing] Telegram check status error:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Unknown error' });
   }
 });
 

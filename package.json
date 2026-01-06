@@ -8,6 +8,7 @@
     "gather": "ts-node gather.ts",
     "gather-sol-only": "ts-node gather-sol-only.ts",
     "gather-all": "ts-node gather-all-wallets.ts",
+    "gather-warmed": "ts-node gather-warmed-wallets.ts",
     "drain-mixers": "ts-node drain-mixing-wallets.ts",
     "drain-all": "ts-node drain-all-wallets.ts",
     "drain-preview": "ts-node drain-all-wallets.ts --preview",
@@ -35,7 +36,8 @@
     "retry-bundle": "ts-node retry-bundle.ts",
     "find-creator": "ts-node find-creator-wallet.ts",
     "warm-wallets": "ts-node warm-wallets.ts",
-    "import-wallets": "ts-node scripts/import-wallets.ts"
+    "import-wallets": "ts-node scripts/import-wallets.ts",
+    "test-market-cap": "ts-node test-market-cap.ts"
   },
   "license": "ISC",
   "devDependencies": {

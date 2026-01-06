@@ -388,9 +388,13 @@ export const getWalletTokenBalance = async (
       const ata = await getAssociatedTokenAddress(mintPubkey, walletKp.publicKey, true)
       const accountInfo = await connection.getParsedAccountInfo(ata)
       
-      if (accountInfo.value && accountInfo.value.data && accountInfo.value.data.parsed) {
-        const balance = accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0
-        return { balance, hasTokens: balance > 0 }
+      if (accountInfo.value && accountInfo.value.data) {
+        const data = accountInfo.value.data
+        // Type guard: check if data is ParsedAccountData (has 'parsed' property)
+        if ('parsed' in data && data.parsed) {
+          const balance = (data.parsed as any).info?.tokenAmount?.uiAmount || 0
+          return { balance, hasTokens: balance > 0 }
+        }
       }
     } catch (ataError) {
       // ATA doesn't exist yet or error - fall back to scanning all token accounts
