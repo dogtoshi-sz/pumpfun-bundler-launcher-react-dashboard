@@ -62,6 +62,19 @@ export const HOLDER_WALLET_AMOUNT = Number(process.env.HOLDER_WALLET_AMOUNT || '
 // Priority fee for holder wallet buys (much lower than bundle wallets - they're just for holder count)
 // Default: 1,000 microLamports (0.000001 SOL) - very cheap since speed isn't critical
 export const HOLDER_WALLET_PRIORITY_FEE = Number(process.env.HOLDER_WALLET_PRIORITY_FEE || '1000')
+// Auto-buy with holder wallets after launch (without bundling)
+// If true, holder wallets will automatically buy tokens right after launch is confirmed
+export const AUTO_HOLDER_WALLET_BUY = (process.env.AUTO_HOLDER_WALLET_BUY || 'false').toLowerCase() === 'true'
+// Holder wallet auto-buy delay configuration
+// Format: "parallel:count,delay:seconds,parallel:count,delay:seconds"
+// Example: "parallel:3,delay:0.5,parallel:2,delay:1.0" means:
+//   - First 3 wallets buy in parallel (no delay)
+//   - Wait 0.5 seconds
+//   - Next 2 wallets buy in parallel
+//   - Wait 1.0 seconds
+//   - Remaining wallets buy sequentially with default delay
+// If not set, defaults to sequential buys with 1-2 second random delays
+export const HOLDER_WALLET_AUTO_BUY_DELAYS = process.env.HOLDER_WALLET_AUTO_BUY_DELAYS || ''
 
 // Support for variable amounts per wallet (comma-separated, e.g., "0.1,0.2,0.15")
 // If not set, uses SWAP_AMOUNT for all wallets
@@ -113,6 +126,12 @@ export const WEBSOCKET_EXTERNAL_BUY_THRESHOLD = Number(process.env.WEBSOCKET_EXT
 export const WEBSOCKET_EXTERNAL_BUY_WINDOW = Number(process.env.WEBSOCKET_EXTERNAL_BUY_WINDOW || '60') // seconds
 // Ultra-fast WebSocket tracker (sub-500ms reaction time) - uses 'processed' commitment and pre-built transactions
 export const WEBSOCKET_ULTRA_FAST_MODE = (process.env.WEBSOCKET_ULTRA_FAST_MODE || 'false').toLowerCase() === 'true'
+
+// Market Cap Tracking - Auto-sell when market cap reaches threshold
+export const MARKET_CAP_TRACKING_ENABLED = (process.env.MARKET_CAP_TRACKING_ENABLED || 'false').toLowerCase() === 'true'
+export const MARKET_CAP_SELL_THRESHOLD = Number(process.env.MARKET_CAP_SELL_THRESHOLD || '100000') // USD market cap threshold
+export const MARKET_CAP_CHECK_INTERVAL = Number(process.env.MARKET_CAP_CHECK_INTERVAL || '5') // seconds between checks
+export const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || ''
 
 // Priority fees for Jupiter swaps (in lamports) - higher = faster confirmation
 // HIGH priority: Used when WebSocket threshold is met (auto-sell) - very fast but expensive!

@@ -146,6 +146,7 @@ export default function Settings() {
         { key: 'HOLDER_WALLET_COUNT', label: 'Holder Wallet Count', type: 'number', description: 'Number of holder wallets to create' },
         { key: 'HOLDER_WALLET_AMOUNT', label: 'Holder Wallet Amount (SOL)', type: 'number', description: 'Default amount for each holder wallet' },
         { key: 'HOLDER_SWAP_AMOUNTS', label: 'Holder Swap Amounts (comma-separated)', type: 'text', description: 'Custom amounts per holder wallet' },
+        { key: 'AUTO_HOLDER_WALLET_BUY', label: 'Auto Holder Wallet Buy', type: 'checkbox', description: 'Automatically execute holder wallet buys after launch is confirmed' },
       ],
     },
     options: {
@@ -205,6 +206,27 @@ export default function Settings() {
           label: 'Ultra-Fast Mode (Sub-500ms)', 
           type: 'checkbox', 
           description: 'Ultra-fast WebSocket mode for sub-500ms reaction time. Uses processed commitment and pre-built transactions.',
+        },
+        { 
+          key: 'MARKET_CAP_TRACKING_ENABLED', 
+          label: 'Market Cap Tracking (Auto-Sell at Market Cap)', 
+          type: 'checkbox', 
+          description: 'Monitor token market cap via Jupiter API (via Helius RPC) and auto-sell when threshold is reached. No API key needed! Falls back to Birdeye if BIRDEYE_API_KEY is set.',
+          icon: BellIcon
+        },
+        { 
+          key: 'MARKET_CAP_SELL_THRESHOLD', 
+          label: 'Market Cap Sell Threshold (USD)', 
+          type: 'number', 
+          description: 'Market cap in USD that triggers auto-sell. Default: 100000 ($100K). Example: 500000 = $500K market cap',
+          inputProps: { step: '1000', min: '1000' }
+        },
+        { 
+          key: 'MARKET_CAP_CHECK_INTERVAL', 
+          label: 'Market Cap Check Interval (seconds)', 
+          type: 'number', 
+          description: 'How often to check market cap. Default: 5 seconds. Lower = faster detection but more API calls.',
+          inputProps: { step: '1', min: '3', max: '60' }
         },
         { key: 'AUTO_COLLECT_FEES', label: 'Auto Collect Fees', type: 'checkbox', description: 'Automatically collect pump.fun creator fees' },
       ],

@@ -65,6 +65,14 @@ export const apiService = {
   // Twitter
   getTwitterAccountInfo: (apiKey, apiSecret, accessToken, accessTokenSecret) =>
     api.post('/marketing/twitter/get-account-info', { apiKey, apiSecret, accessToken, accessTokenSecret }),
+  
+  // Telegram Verification
+  sendTelegramCode: (api_id, api_hash, phone) =>
+    api.post('/marketing/telegram/send-code', { api_id, api_hash, phone }),
+  verifyTelegramCode: (api_id, api_hash, phone, code, phone_code_hash, password) =>
+    api.post('/marketing/telegram/verify-code', { api_id, api_hash, phone, code, phone_code_hash, password }),
+  checkTelegramStatus: (api_id, api_hash, phone) =>
+    api.post('/marketing/telegram/check-status', { api_id, api_hash, phone }),
 };
 
 export default apiService;

@@ -17,12 +17,13 @@ if (fs.existsSync(rootEnvPath)) {
   console.log(`[index.ts] Using default .env location`)
 }
 
-import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT, USE_NORMAL_LAUNCH, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, AUTO_SELL_50_PERCENT } from "./constants"
+import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT, USE_NORMAL_LAUNCH, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, AUTO_SELL_50_PERCENT, AUTO_HOLDER_WALLET_BUY, HOLDER_WALLET_PRIORITY_FEE, HOLDER_WALLET_AUTO_BUY_DELAYS, MARKET_CAP_TRACKING_ENABLED, MARKET_CAP_SELL_THRESHOLD, MARKET_CAP_CHECK_INTERVAL } from "./constants"
 
 // CRITICAL: Read BUYER_WALLET directly from process.env AFTER reloading .env
 // This ensures we get the latest value even if it was just updated
 const BUYER_WALLET = process.env.BUYER_WALLET || ''
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
+import { buyTokenSimple } from "./trading-terminal"
 import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend, fundExistingWalletWithMixing, loadMixingWallets } from "./src/main";
 import { USE_MIXING_WALLETS } from "./constants/constants";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
@@ -99,16 +100,56 @@ const main = async () => {
   console.log("Mint address of token ", mintAddress.toBase58())
   saveDataToFile([base58.encode(mintKp.secretKey)], "mint.json")
 
+  // Check for warmed wallets file early (for creator wallet)
+  const warmedWalletsPath = path.join(process.cwd(), 'keys', 'warmed-wallets-for-launch.json')
+
   // Prepare buyer wallet for dev buy (needed for createTokenTx)
-  // If BUYER_WALLET is not set, create it the SAME WAY as bundle wallets (using distributeSol)
+  // PRIORITY: 1) creatorWalletKey from warmed wallets, 2) BUYER_WALLET from .env, 3) Auto-create
   // CRITICAL: Re-read BUYER_WALLET from process.env to get latest value (in case it was just updated)
   const currentBuyerWallet = process.env.BUYER_WALLET || ''
-  console.log(`[Wallet Creation] BUYER_WALLET from .env: ${currentBuyerWallet ? currentBuyerWallet.substring(0, 8) + '...' + currentBuyerWallet.substring(currentBuyerWallet.length - 8) : '(empty - will auto-create)'}`)
+  
+  // Check for warmed creator wallet first
+  let warmedCreatorWalletKey: string | null = null
+  if (fs.existsSync(warmedWalletsPath)) {
+    try {
+      const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
+      console.log(`[Wallet Creation] Warmed wallets file found. Checking for creator wallet...`)
+      if (warmedData.creatorWalletKey && typeof warmedData.creatorWalletKey === 'string' && warmedData.creatorWalletKey.trim() !== '') {
+        warmedCreatorWalletKey = warmedData.creatorWalletKey
+        console.log(`[Wallet Creation] ✅ Found warmed creator wallet from wallet warming system`)
+        if (warmedData.creatorWalletAddress) {
+          console.log(`[Wallet Creation]    Creator wallet address: ${warmedData.creatorWalletAddress}`)
+        }
+      } else {
+        console.log(`[Wallet Creation] ⚠️  Warmed wallets file exists but no creatorWalletKey found`)
+        console.log(`[Wallet Creation]    File contains: ${Object.keys(warmedData).join(', ')}`)
+        console.log(`[Wallet Creation]    creatorWalletKey value: ${warmedData.creatorWalletKey} (type: ${typeof warmedData.creatorWalletKey})`)
+        if (warmedData.creatorWalletAddress) {
+          console.log(`[Wallet Creation]    ⚠️  creatorWalletAddress exists (${warmedData.creatorWalletAddress}) but creatorWalletKey is missing!`)
+          console.log(`[Wallet Creation]    This means the wallet was selected but the private key wasn't found in warmed wallets.`)
+          console.log(`[Wallet Creation]    💡 Solution: Make sure the creator wallet is in your warmed wallets list and try launching again.`)
+        }
+      }
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to read creator wallet from warmed wallets: ${error.message}`)
+    }
+  } else {
+    console.log(`[Wallet Creation] No warmed wallets file found at ${warmedWalletsPath}`)
+  }
+  
+  console.log(`[Wallet Creation] Priority check:`)
+  console.log(`   Warmed creator wallet: ${warmedCreatorWalletKey ? 'Found' : 'Not found'}`)
+  console.log(`   BUYER_WALLET from .env: ${currentBuyerWallet ? currentBuyerWallet.substring(0, 8) + '...' + currentBuyerWallet.substring(currentBuyerWallet.length - 8) : '(empty - will auto-create)'}`)
   
   let buyerKp: Keypair
   let buyerWalletSource: string
-  if (currentBuyerWallet && currentBuyerWallet.trim() !== '') {
-    // Use BUYER_WALLET from .env (persistent wallet)
+  if (warmedCreatorWalletKey && warmedCreatorWalletKey.trim() !== '') {
+    // PRIORITY 1: Use warmed creator wallet
+    buyerKp = Keypair.fromSecretKey(base58.decode(warmedCreatorWalletKey))
+    buyerWalletSource = 'warmed creator wallet (from wallet warming system)'
+    console.log("🔥 Using warmed creator wallet:", buyerKp.publicKey.toBase58())
+  } else if (currentBuyerWallet && currentBuyerWallet.trim() !== '') {
+    // PRIORITY 2: Use BUYER_WALLET from .env (persistent wallet)
     buyerKp = Keypair.fromSecretKey(base58.decode(currentBuyerWallet))
     buyerWalletSource = 'BUYER_WALLET env var (persistent)'
     console.log("Dev buyer wallet (from .env):", buyerKp.publicKey.toBase58())
@@ -274,11 +315,129 @@ const main = async () => {
     return
   }
 
-  // Check if existing BUYER_WALLET has enough balance (if using persistent wallet)
+  // Check if existing BUYER_WALLET or warmed creator wallet has enough balance
   // If insufficient, fund it automatically (same as auto-created wallets)
   // BUT: Skip funding if BUYER_WALLET is the same as PRIVATE_KEY (same wallet, no transfer needed)
   // CRITICAL: Use currentBuyerWallet (re-read from process.env) instead of BUYER_WALLET constant
-  if (currentBuyerWallet && currentBuyerWallet.trim() !== '') {
+  // Also check if using warmed creator wallet
+  if (warmedCreatorWalletKey && warmedCreatorWalletKey.trim() !== '') {
+    // Using warmed creator wallet - check balance and fund if needed
+    const isSameWallet = mainKp.publicKey.equals(buyerKp.publicKey)
+    
+    if (isSameWallet) {
+      // Same wallet - just check balance, no funding needed
+      const existingBalance = await connection.getBalance(buyerKp.publicKey)
+      const existingBalanceSol = existingBalance / 1e9
+      const devRequiredAmount = buyerAmount + 0.15 // BUYER_AMOUNT + 0.15 SOL buffer for fees/rent/safety
+      if (existingBalanceSol < devRequiredAmount) {
+        console.log(`\n⚠️  Warmed creator wallet is the same as PRIVATE_KEY (master wallet)`)
+        console.log(`   Current balance: ${existingBalanceSol.toFixed(4)} SOL`)
+        console.log(`   Need at least ${devRequiredAmount.toFixed(4)} SOL for DEV buy`)
+        console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.15 SOL (buffer for fees/rent/safety)`)
+        console.log(`   ⚠️  Insufficient balance - please fund the master wallet`)
+        return
+      } else {
+        console.log(`\n✅ Warmed creator wallet is the same as PRIVATE_KEY (master wallet)`)
+        console.log(`   Balance: ${existingBalanceSol.toFixed(4)} SOL (sufficient for DEV buy)`)
+      }
+    } else {
+      // Different wallet - check balance and fund if needed
+      const existingBalance = await connection.getBalance(buyerKp.publicKey)
+      const existingBalanceSol = existingBalance / 1e9
+      const devRequiredAmount = buyerAmount + 0.15 // BUYER_AMOUNT + 0.15 SOL buffer for fees/rent/safety
+      if (existingBalanceSol < devRequiredAmount) {
+        const fundingNeeded = devRequiredAmount - existingBalanceSol
+        console.log(`\n⚠️  Warmed creator wallet has insufficient balance (${existingBalanceSol.toFixed(4)} SOL)`)
+        console.log(`   Need at least ${devRequiredAmount.toFixed(4)} SOL for DEV buy`)
+        console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.15 SOL (buffer for fees/rent/safety)`)
+        console.log(`\n💰 Funding warmed creator wallet with ${fundingNeeded.toFixed(4)} SOL...`)
+        
+        // Use mixer wallets if enabled, otherwise direct funding
+        if (USE_MIXING_WALLETS) {
+          console.log(`   🔀 Using mixing wallets to break connection trail...`)
+          const mixingWallets = loadMixingWallets()
+          
+          if (mixingWallets.length > 0) {
+            const success = await fundExistingWalletWithMixing(connection, mainKp, buyerKp, fundingNeeded, mixingWallets)
+            if (!success) {
+              console.error(`   ❌ Failed to fund warmed creator wallet through mixer`)
+              return
+            }
+            // Verify balance after funding
+            const newBalance = await connection.getBalance(buyerKp.publicKey)
+            console.log(`   ✅ Funded warmed creator wallet! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+          } else {
+            console.log(`   ⚠️  No mixing wallets available, using direct funding...`)
+            // Fallback to direct funding
+            try {
+              const latestBlockhash = await connection.getLatestBlockhash()
+              const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+              const transferMsg = new TransactionMessage({
+                payerKey: mainKp.publicKey,
+                recentBlockhash: latestBlockhash.blockhash,
+                instructions: [
+                  ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                  SystemProgram.transfer({
+                    fromPubkey: mainKp.publicKey,
+                    toPubkey: buyerKp.publicKey,
+                    lamports: fundingLamports
+                  })
+                ]
+              }).compileToV0Message()
+
+              const transferTx = new VersionedTransaction(transferMsg)
+              transferTx.sign([mainKp])
+
+              const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+              await connection.confirmTransaction(sig, 'confirmed')
+
+              const newBalance = await connection.getBalance(buyerKp.publicKey)
+              console.log(`   ✅ Funded warmed creator wallet! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+              console.log(`   Transaction: https://solscan.io/tx/${sig}`)
+            } catch (error: any) {
+              console.error(`   ❌ Failed to fund warmed creator wallet: ${error.message}`)
+              return
+            }
+          }
+        } else {
+          // Direct funding (mixing disabled)
+          try {
+            const latestBlockhash = await connection.getLatestBlockhash()
+            const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+            const transferMsg = new TransactionMessage({
+              payerKey: mainKp.publicKey,
+              recentBlockhash: latestBlockhash.blockhash,
+              instructions: [
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+                SystemProgram.transfer({
+                  fromPubkey: mainKp.publicKey,
+                  toPubkey: buyerKp.publicKey,
+                  lamports: fundingLamports
+                })
+              ]
+            }).compileToV0Message()
+
+            const transferTx = new VersionedTransaction(transferMsg)
+            transferTx.sign([mainKp])
+
+            const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+            await connection.confirmTransaction(sig, 'confirmed')
+
+            const newBalance = await connection.getBalance(buyerKp.publicKey)
+            console.log(`   ✅ Funded warmed creator wallet! New balance: ${(newBalance / 1e9).toFixed(4)} SOL`)
+            console.log(`   Transaction: https://solscan.io/tx/${sig}`)
+          } catch (error: any) {
+            console.error(`   ❌ Failed to fund warmed creator wallet: ${error.message}`)
+            return
+          }
+        }
+      } else {
+        console.log(`\n✅ Warmed creator wallet has sufficient balance: ${existingBalanceSol.toFixed(4)} SOL`)
+      }
+    }
+  } else if (currentBuyerWallet && currentBuyerWallet.trim() !== '') {
     const isSameWallet = mainKp.publicKey.equals(buyerKp.publicKey)
     
     if (isSameWallet) {
@@ -398,7 +557,7 @@ const main = async () => {
   // Note: If BUYER_WALLET was not set, the wallet was already created and funded above using distributeSol
 
   // Check for warmed wallets file (created by API server if user selected warmed wallets)
-  const warmedWalletsPath = path.join(process.cwd(), 'keys', 'warmed-wallets-for-launch.json')
+  // Note: warmedWalletsPath is already defined above for creator wallet check
   let useWarmedWallets = false
   let warmedBundleWallets: Keypair[] = []
   let warmedHolderWallets: Keypair[] = []
@@ -575,7 +734,9 @@ const main = async () => {
   let holderWallets: Keypair[] = []
   if (warmedHolderWallets.length > 0) {
     console.log(`\n💰 Funding ${warmedHolderWallets.length} warmed holder wallet(s)...`)
-    holderWallets = warmedHolderWallets
+    const originalWallets = warmedHolderWallets
+    const successfullyFundedWallets: Keypair[] = []
+    const successfullyFundedAmounts: number[] = []
     
     // Fund warmed holder wallets with required amounts
     // Pad/trim amounts array to match number of warmed wallets (same logic as fresh wallets)
@@ -612,11 +773,43 @@ const main = async () => {
           if (mixingWallets.length > 0) {
             const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
             if (!success) {
-              console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1}`)
-              return
+              console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} - skipping this wallet`)
+              console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
+              continue // Skip this wallet and continue with others
             }
+            successfullyFundedWallets.push(wallet)
+            successfullyFundedAmounts.push(amount)
           } else {
             // Direct funding fallback
+            try {
+              const latestBlockhash = await connection.getLatestBlockhash()
+              const fundingLamports = Math.ceil(fundingNeeded * 1e9)
+              const transferMsg = new TransactionMessage({
+                payerKey: mainKp.publicKey,
+                recentBlockhash: latestBlockhash.blockhash,
+                instructions: [
+                  SystemProgram.transfer({
+                    fromPubkey: mainKp.publicKey,
+                    toPubkey: wallet.publicKey,
+                    lamports: fundingLamports
+                  })
+                ]
+              }).compileToV0Message()
+              const transferTx = new VersionedTransaction(transferMsg)
+              transferTx.sign([mainKp])
+              const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
+              await connection.confirmTransaction(sig, 'confirmed')
+              successfullyFundedWallets.push(wallet)
+              successfullyFundedAmounts.push(amount)
+            } catch (error: any) {
+              console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} directly: ${error.message || error}`)
+              console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
+              continue // Skip this wallet and continue with others
+            }
+          }
+        } else {
+          // Direct funding
+          try {
             const latestBlockhash = await connection.getLatestBlockhash()
             const fundingLamports = Math.ceil(fundingNeeded * 1e9)
             const transferMsg = new TransactionMessage({
@@ -634,32 +827,33 @@ const main = async () => {
             transferTx.sign([mainKp])
             const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
             await connection.confirmTransaction(sig, 'confirmed')
+            successfullyFundedWallets.push(wallet)
+            successfullyFundedAmounts.push(amount)
+          } catch (error: any) {
+            console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} directly: ${error.message || error}`)
+            console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
+            continue // Skip this wallet and continue with others
           }
-        } else {
-          // Direct funding
-          const latestBlockhash = await connection.getLatestBlockhash()
-          const fundingLamports = Math.ceil(fundingNeeded * 1e9)
-          const transferMsg = new TransactionMessage({
-            payerKey: mainKp.publicKey,
-            recentBlockhash: latestBlockhash.blockhash,
-            instructions: [
-              SystemProgram.transfer({
-                fromPubkey: mainKp.publicKey,
-                toPubkey: wallet.publicKey,
-                lamports: fundingLamports
-              })
-            ]
-          }).compileToV0Message()
-          const transferTx = new VersionedTransaction(transferMsg)
-          transferTx.sign([mainKp])
-          const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
-          await connection.confirmTransaction(sig, 'confirmed')
         }
       } else {
         console.log(`   ✅ Holder wallet ${i + 1}/${warmedHolderWallets.length} already has sufficient balance: ${currentBalanceSol.toFixed(4)} SOL`)
+        successfullyFundedWallets.push(wallet)
+        successfullyFundedAmounts.push(amount)
       }
     }
-    console.log(`✅ Funded ${warmedHolderWallets.length} warmed holder wallet(s)`)
+    
+    // Update holderWallets to only include successfully funded wallets
+    if (successfullyFundedWallets.length > 0) {
+      holderWallets = successfullyFundedWallets
+      holderAmountsToUse = successfullyFundedAmounts
+      console.log(`✅ Successfully funded ${successfullyFundedWallets.length}/${originalWallets.length} warmed holder wallet(s)`)
+      if (successfullyFundedWallets.length < originalWallets.length) {
+        console.warn(`   ⚠️  ${originalWallets.length - successfullyFundedWallets.length} wallet(s) failed to fund - continuing with funded wallets only`)
+      }
+    } else {
+      console.error(`❌ No holder wallets were successfully funded!`)
+      return
+    }
   } else if (holderWalletCount > 0) {
     console.log(`\n👥 Creating ${holderWalletCount} fresh holder wallets...`)
     
@@ -1414,6 +1608,46 @@ const main = async () => {
     console.log("   Run manually with: npm run start-tracking")
   }
   
+  // MARKET CAP TRACKING - Monitor market cap and auto-sell when threshold is reached
+  if (MARKET_CAP_TRACKING_ENABLED) {
+    console.log("\n📊📊📊 MARKET CAP TRACKING STARTING... 📊📊📊")
+    console.log(`⚡ Monitoring market cap via Birdeye API`)
+    console.log(`⚡ Threshold: $${(MARKET_CAP_SELL_THRESHOLD / 1000).toFixed(0)}K`)
+    console.log(`⚡ Check Interval: ${MARKET_CAP_CHECK_INTERVAL} seconds`)
+    console.log("⚡ When threshold is met, will INSTANTLY trigger rapid sell!\n")
+    
+    const marketCapTrackingPromise = (async () => {
+      try {
+        const MarketCapTrackerWebSocket = (await import('./market-cap-tracker-websocket')).default;
+        const autoSellType = AUTO_SELL_50_PERCENT ? 'rapid-sell-50-percent' : 'rapid-sell';
+        
+        const tracker = new MarketCapTrackerWebSocket(
+          mintAddress.toBase58(),
+          MARKET_CAP_SELL_THRESHOLD,
+          autoSellType
+        );
+        
+        const success = tracker.start();
+        
+        if (success) {
+          console.log("✅✅✅ Market cap tracking started successfully!");
+          console.log("⚡ Real-time WebSocket market cap monitoring is active");
+          console.log("⚡ Will trigger rapid sell when market cap reaches threshold\n");
+        } else {
+          console.error("❌ Failed to start market cap tracking");
+        }
+      } catch (error: any) {
+        console.error("❌ Error starting market cap tracking:", error.message || error);
+        console.error("   Make sure RPC_WEBSOCKET_ENDPOINT is set in .env");
+      }
+    })();
+    
+    // Don't await - let it run in background
+  } else {
+    console.log("\n⏸️  MARKET_CAP_TRACKING_ENABLED is disabled in .env")
+    console.log("   Market cap tracking will NOT start automatically")
+  }
+  
   // Token confirmation check runs in PARALLEL with rapid sell (non-blocking)
   // This is just for error handling - rapid sell already handles retries
   console.log("\n⏳ Token confirmation check running in background (non-blocking)...")
@@ -1625,6 +1859,210 @@ const main = async () => {
       if (usedPumpAddressPublicKey) {
         markPumpAddressAsUsed(usedPumpAddressPublicKey)
         console.log(`✅ Marked pump address as used: ${usedPumpAddressPublicKey}`)
+      }
+      
+      // ============================================
+      // AUTO HOLDER WALLET BUYS (After Launch Success)
+      // ============================================
+      if (AUTO_HOLDER_WALLET_BUY) {
+        // Check for selected auto-buy wallets from warmed wallets file
+        let autoBuyWallets: Keypair[] = []
+        let autoBuyDelaysConfig: string | null = null
+        
+        if (fs.existsSync(warmedWalletsPath)) {
+          try {
+            const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
+            if (warmedData.holderWalletAutoBuyKeys && warmedData.holderWalletAutoBuyKeys.length > 0) {
+              autoBuyWallets = warmedData.holderWalletAutoBuyKeys.map((key: string) => 
+                Keypair.fromSecretKey(base58.decode(key))
+              )
+              autoBuyDelaysConfig = warmedData.holderWalletAutoBuyDelays || null
+              console.log(`\n👥 AUTO HOLDER WALLET BUY: Found ${autoBuyWallets.length} selected wallets for auto-buy`)
+            }
+          } catch (error: any) {
+            console.warn(`⚠️  Failed to read auto-buy wallets from warmed wallets: ${error.message}`)
+          }
+        }
+        
+        // Fallback: use all holder wallets if no selection was made
+        if (autoBuyWallets.length === 0 && holderWallets.length > 0) {
+          autoBuyWallets = holderWallets
+          console.log(`\n👥 AUTO HOLDER WALLET BUY: Using all ${holderWallets.length} holder wallets (no selection made)`)
+        }
+        
+        if (autoBuyWallets.length > 0) {
+          console.log(`\n👥 AUTO HOLDER WALLET BUY: Starting automatic holder wallet buys...`)
+          console.log(`   Selected wallets: ${autoBuyWallets.length}`)
+          
+          // Get holder wallet amounts (map to selected wallets)
+          let holderAmountsToUse: number[]
+          if (holderSwapAmounts.length > 0) {
+            holderAmountsToUse = [...holderSwapAmounts]
+            while (holderAmountsToUse.length < autoBuyWallets.length) {
+              holderAmountsToUse.push(holderWalletAmount)
+            }
+            holderAmountsToUse = holderAmountsToUse.slice(0, autoBuyWallets.length)
+          } else {
+            holderAmountsToUse = Array(autoBuyWallets.length).fill(holderWalletAmount)
+          }
+          
+          console.log(`   Amounts: [${holderAmountsToUse.join(', ')}] SOL`)
+          console.log(`   Priority fee: ${HOLDER_WALLET_PRIORITY_FEE} microLamports (low - holder count only)`)
+          
+          // Parse delay configuration
+          const delaysConfig = autoBuyDelaysConfig || HOLDER_WALLET_AUTO_BUY_DELAYS || ''
+          const delayGroups: Array<{ type: 'parallel' | 'delay', value: number }> = []
+          
+          if (delaysConfig) {
+            const parts = delaysConfig.split(',')
+            for (const part of parts) {
+              const trimmed = part.trim()
+              if (trimmed.startsWith('parallel:')) {
+                const count = parseInt(trimmed.replace('parallel:', ''))
+                if (!isNaN(count) && count > 0) {
+                  delayGroups.push({ type: 'parallel', value: count })
+                }
+              } else if (trimmed.startsWith('delay:')) {
+                const seconds = parseFloat(trimmed.replace('delay:', ''))
+                if (!isNaN(seconds) && seconds >= 0) {
+                  delayGroups.push({ type: 'delay', value: seconds })
+                }
+              }
+            }
+          }
+          
+          // Execute buys with delay configuration
+          // Format: parallel:count,delay:seconds,parallel:count,delay:seconds
+          // First delay is "after launch", subsequent delays are "after previous group"
+          let walletIndex = 0
+          let isFirstGroup = true
+          
+          for (let groupIndex = 0; groupIndex < delayGroups.length && walletIndex < autoBuyWallets.length; groupIndex++) {
+            const group = delayGroups[groupIndex]
+            
+            if (group.type === 'parallel') {
+              // Check if there's a delay before this group
+              if (isFirstGroup && groupIndex + 1 < delayGroups.length && delayGroups[groupIndex + 1].type === 'delay') {
+                // First group: wait for initial delay from launch
+                const delay = delayGroups[groupIndex + 1].value
+                if (delay > 0) {
+                  console.log(`   ⏳ Waiting ${delay} seconds after launch before first buy...`)
+                  await sleep(delay * 1000)
+                }
+                groupIndex++ // Skip the delay group since we processed it
+              } else if (!isFirstGroup && groupIndex > 0 && delayGroups[groupIndex - 1].type === 'delay') {
+                // Subsequent groups: wait after previous group
+                const delay = delayGroups[groupIndex - 1].value
+                if (delay > 0) {
+                  console.log(`   ⏳ Waiting ${delay} seconds before next group...`)
+                  await sleep(delay * 1000)
+                }
+              }
+              
+              // Collect wallets for this parallel group
+              const parallelCount = group.value
+              const currentParallelGroup: Keypair[] = []
+              for (let i = 0; i < parallelCount && walletIndex < autoBuyWallets.length; i++) {
+                currentParallelGroup.push(autoBuyWallets[walletIndex])
+                walletIndex++
+              }
+              
+              // Execute all buys in parallel (with small staggered delays to avoid appearing as bundle)
+              // NOTE: These are REGULAR transactions, NOT JITO bundles
+              if (currentParallelGroup.length > 0) {
+                console.log(`\n   🔄 Executing ${currentParallelGroup.length} holder wallet buy(s) (regular transactions, NOT JITO bundles)...`)
+                const buyPromises = currentParallelGroup.map(async (wallet, idx) => {
+                  const actualIndex = walletIndex - currentParallelGroup.length + idx
+                  const amount = holderAmountsToUse[actualIndex] || holderWalletAmount
+                  
+                  // Add small random delay (0-200ms) to stagger transactions and avoid appearing as bundle
+                  // This helps distinguish holder wallet buys from bundle wallet buys
+                  const staggerDelay = Math.random() * 200
+                  if (staggerDelay > 0) {
+                    await sleep(staggerDelay)
+                  }
+                  
+                  try {
+                    console.log(`      💰 Holder wallet ${actualIndex + 1}/${autoBuyWallets.length} buying ${amount} SOL worth...`)
+                    console.log(`         Address: ${wallet.publicKey.toBase58()}`)
+                    console.log(`         ⚠️  Regular transaction (NOT JITO bundle)`)
+                    
+                    const referrerKey = base58.encode(buyerKp.secretKey)
+                    const feeLevel = HOLDER_WALLET_PRIORITY_FEE >= 1000000 ? 'high' : HOLDER_WALLET_PRIORITY_FEE >= 100000 ? 'medium' : 'low'
+                    
+                    const result = await buyTokenSimple(
+                      base58.encode(wallet.secretKey),
+                      mintAddress.toBase58(),
+                      amount,
+                      referrerKey,
+                      false,
+                      feeLevel
+                    )
+                    
+                    if (result && result.signature) {
+                      console.log(`         ✅ Buy successful! https://solscan.io/tx/${result.signature}`)
+                    }
+                    return { success: true, wallet: actualIndex + 1 }
+                  } catch (error: any) {
+                    console.error(`         ❌ Buy failed: ${error.message || error}`)
+                    return { success: false, wallet: actualIndex + 1, error }
+                  }
+                })
+                
+                await Promise.all(buyPromises)
+                isFirstGroup = false
+              }
+            }
+          }
+          
+          // Execute remaining wallets sequentially with default delay
+          // NOTE: These are REGULAR transactions, NOT JITO bundles
+          while (walletIndex < autoBuyWallets.length) {
+            const wallet = autoBuyWallets[walletIndex]
+            const amount = holderAmountsToUse[walletIndex] || holderWalletAmount
+            
+            try {
+              console.log(`\n   💰 Holder wallet ${walletIndex + 1}/${autoBuyWallets.length} buying ${amount} SOL worth...`)
+              console.log(`      Address: ${wallet.publicKey.toBase58()}`)
+              console.log(`      ⚠️  Regular transaction (NOT JITO bundle)`)
+              
+              const referrerKey = base58.encode(buyerKp.secretKey)
+              const feeLevel = HOLDER_WALLET_PRIORITY_FEE >= 1000000 ? 'high' : HOLDER_WALLET_PRIORITY_FEE >= 100000 ? 'medium' : 'low'
+              
+              const result = await buyTokenSimple(
+                base58.encode(wallet.secretKey),
+                mintAddress.toBase58(),
+                amount,
+                referrerKey,
+                false,
+                feeLevel
+              )
+              
+              if (result && result.signature) {
+                console.log(`      ✅ Buy successful!`)
+                console.log(`      Transaction: https://solscan.io/tx/${result.signature}`)
+              } else {
+                console.log(`      ⚠️  Buy may have succeeded but no signature returned`)
+              }
+              
+              // Default delay between sequential buys (1-2 seconds)
+              if (walletIndex < autoBuyWallets.length - 1) {
+                await sleep(1000 + Math.random() * 1000)
+              }
+            } catch (error: any) {
+              console.error(`      ❌ Buy failed for holder wallet ${walletIndex + 1}: ${error.message || error}`)
+            }
+            
+            walletIndex++
+          }
+          
+          console.log(`\n✅ Auto holder wallet buys completed!`)
+        } else {
+          console.log(`\n👥 No holder wallets selected for auto-buy`)
+        }
+      } else if (holderWallets.length > 0) {
+        console.log(`\n👥 Holder wallets ready (${holderWallets.length} wallets) - AUTO_HOLDER_WALLET_BUY is disabled`)
+        console.log(`   💡 Enable AUTO_HOLDER_WALLET_BUY=true in .env to auto-buy after launch`)
       }
       
       // ============================================

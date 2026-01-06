@@ -343,21 +343,40 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
     if (tokenConfig.chain !== undefined) dbConfig.chain = tokenConfig.chain || null;
     
     // Handle theme/colorScheme - prioritize theme, then themeName, then colorScheme
-    // Normalize to lowercase for CSS file names (blue.css, green.css, etc.)
+    // Theme1, Theme2, Theme3 are structured themes (not just colors)
     const themeValue = tokenConfig.theme || tokenConfig.themeName || tokenConfig.colorScheme;
     if (themeValue !== undefined && themeValue !== null) {
-      const normalizedTheme = String(themeValue).toLowerCase().trim();
-      dbConfig.color_scheme = normalizedTheme;
-      dbConfig.theme_name = normalizedTheme; // Always set theme_name for razebot (normalized to lowercase)
-      console.log(`[Website Update] Setting theme: ${normalizedTheme} (from: ${themeValue})`);
+      const themeUpper = String(themeValue).toUpperCase().trim();
+      
+      // Check if it's a structured theme (Theme1, Theme2, Theme3)
+      if (themeUpper === 'THEME1' || themeUpper === 'THEME2' || themeUpper === 'THEME3') {
+        // Structured themes - save as template and theme_name (uppercase)
+        dbConfig.template = themeUpper.toLowerCase(); // template: 'theme1', 'theme2', 'theme3'
+        dbConfig.theme_name = themeUpper; // theme_name: 'THEME1', 'THEME2', 'THEME3'
+        dbConfig.color_scheme = null; // Don't set color_scheme for structured themes
+        console.log(`[Website Update] Setting structured theme: ${themeUpper} (template: ${themeUpper.toLowerCase()})`);
+      } else {
+        // Color-based themes - normalize to lowercase for CSS file names (blue.css, green.css, etc.)
+        const normalizedTheme = String(themeValue).toLowerCase().trim();
+        dbConfig.color_scheme = normalizedTheme;
+        dbConfig.theme_name = normalizedTheme; // Always set theme_name for razebot (normalized to lowercase)
+        dbConfig.template = 'original'; // Use original template for color themes
+        console.log(`[Website Update] Setting color theme: ${normalizedTheme} (from: ${themeValue})`);
+      }
     } else if (tokenConfig.colorScheme !== undefined) {
       // Legacy support for colorScheme only
       const normalizedTheme = tokenConfig.colorScheme ? String(tokenConfig.colorScheme).toLowerCase().trim() : null;
       dbConfig.color_scheme = normalizedTheme;
       dbConfig.theme_name = normalizedTheme;
+      dbConfig.template = 'original';
     }
     
     if (tokenConfig.darkMode !== undefined) dbConfig.dark_mode = tokenConfig.darkMode || null;
+    
+    // Ensure template is set (default to 'original' if not a structured theme)
+    if (!dbConfig.template) {
+      dbConfig.template = 'original';
+    }
     
     // Build UPSERT query - EXACTLY like Nodematrix
     const columns = Object.keys(dbConfig);
@@ -392,7 +411,7 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
       DO UPDATE SET 
         ${safeUpdateSet},
         updated_at = NOW()
-      RETURNING site_url, token_name, token_symbol, logo_url, contract_address, token_address, theme_name, color_scheme, website_logo_image;
+      RETURNING site_url, token_name, token_symbol, logo_url, contract_address, token_address, theme_name, color_scheme, website_logo_image, template;
     `;
     
     // Execute query - catch column errors and retry without optional columns
@@ -418,7 +437,7 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
           DO UPDATE SET 
             ${standardUpdateSet},
             updated_at = NOW()
-          RETURNING site_url, token_name, token_symbol, logo_url, contract_address, token_address, theme_name, color_scheme;
+          RETURNING site_url, token_name, token_symbol, logo_url, contract_address, token_address, theme_name, color_scheme, template;
         `;
         
         result = await client.query(fallbackQuery, standardValues);
@@ -436,6 +455,7 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
       console.log(`   Logo URL: ${sanitizeUrl(updated.logo_url)}`);
       console.log(`   Website Logo Image: ${sanitizeUrl(updated.website_logo_image)}`);
       console.log(`   Theme: ${updated.theme_name || updated.color_scheme || 'NULL'}`);
+      console.log(`   Template: ${updated.template || 'original'}`);
       
       // CRITICAL: Verify the update was actually saved by querying it back
       try {

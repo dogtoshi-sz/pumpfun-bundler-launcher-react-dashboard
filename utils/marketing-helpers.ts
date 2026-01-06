@@ -63,20 +63,23 @@ export async function updateWebsite(
   
   // Handle theme - match Nodematrix logic
   const websiteTheme = process.env.WEBSITE_THEME || 'DEFAULT'
-  let colorScheme = 'blue' // Default
+  let colorScheme: string | undefined = undefined // Don't set default - let database keep existing value
   let darkMode = false
   
   if (websiteTheme === 'CUSTOM' && process.env.WEBSITE_CUSTOM_COLOR) {
     colorScheme = process.env.WEBSITE_CUSTOM_COLOR
     darkMode = false
   } else if (websiteTheme && websiteTheme !== 'DEFAULT' && websiteTheme !== 'CUSTOM') {
-    colorScheme = websiteTheme.toUpperCase()
-    darkMode = false
-  } else {
-    // DEFAULT theme
-    colorScheme = 'blue'
+    // Handle Theme1, Theme2, Theme3 as structured themes (not just colors)
+    if (websiteTheme === 'THEME1' || websiteTheme === 'THEME2' || websiteTheme === 'THEME3') {
+      colorScheme = websiteTheme.toUpperCase()
+    } else {
+      // Other themes (BLUE, GREEN, etc.) are color-based
+      colorScheme = websiteTheme.toUpperCase()
+    }
     darkMode = false
   }
+  // If DEFAULT, leave colorScheme as undefined so it doesn't update the database field (uses original theme)
   
   const response = await fetch(`${apiUrl}/api/marketing/website/update`, {
     method: 'POST',
@@ -95,7 +98,7 @@ export async function updateWebsite(
         chain: tokenData.chain,
         logoUrl: process.env.WEBSITE_LOGO || tokenData.websiteLogoUrl || null,
         tokenImageUrl: tokenData.tokenLogoUrl || null,
-        colorScheme: colorScheme,
+        ...(colorScheme !== undefined && { colorScheme: colorScheme }), // Only include if defined (DEFAULT theme won't update)
         darkMode: darkMode,
       }
     })

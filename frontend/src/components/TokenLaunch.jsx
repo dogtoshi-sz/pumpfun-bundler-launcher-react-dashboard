@@ -114,12 +114,25 @@ export default function TokenLaunch({ onLaunch }) {
   const [twitterAccountInfo, setTwitterAccountInfo] = useState(null);
   const [loadingTwitterAccount, setLoadingTwitterAccount] = useState(false);
   const [tweetList, setTweetList] = useState([]); // Array of { text: string, image: File | null, imagePreview: string | null }
+  const [telegramVerification, setTelegramVerification] = useState({
+    codeSent: false,
+    phoneCodeHash: null,
+    requires2FA: false,
+    verifying: false,
+    verified: false,
+    error: null,
+  });
+  const [telegramCode, setTelegramCode] = useState('');
+  const [telegram2FAPassword, setTelegram2FAPassword] = useState('');
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [showBuyerWallet, setShowBuyerWallet] = useState(false);
   const [useWarmedWallets, setUseWarmedWallets] = useState(false);
   const [warmedWallets, setWarmedWallets] = useState([]);
   const [selectedBundleWallets, setSelectedBundleWallets] = useState([]);
   const [selectedHolderWallets, setSelectedHolderWallets] = useState([]);
+  const [selectedHolderAutoBuyWallets, setSelectedHolderAutoBuyWallets] = useState([]);
+  const [holderAutoBuyGroups, setHolderAutoBuyGroups] = useState([{ count: 1, delay: 1.0 }]);
+  const [selectedCreatorWallet, setSelectedCreatorWallet] = useState(null);
   const [loadingWarmedWallets, setLoadingWarmedWallets] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
   // Filter and sort state for wallet modal
@@ -529,11 +542,16 @@ export default function TokenLaunch({ onLaunch }) {
         colorScheme = String(settings.WEBSITE_CUSTOM_COLOR).toLowerCase().trim();
         darkMode = false;
       } else if (websiteTheme && websiteTheme !== 'DEFAULT' && websiteTheme !== 'CUSTOM') {
-        // Normalize theme to lowercase for CSS file names (blue.css, green.css, purple.css, etc.)
-        colorScheme = websiteTheme.toLowerCase().trim();
+        // Handle Theme1, Theme2, Theme3 as structured themes (keep uppercase)
+        if (websiteTheme === 'THEME1' || websiteTheme === 'THEME2' || websiteTheme === 'THEME3') {
+          colorScheme = websiteTheme.toUpperCase();
+        } else {
+          // Other themes (BLUE, GREEN, etc.) are color-based - normalize to lowercase for CSS file names
+          colorScheme = websiteTheme.toLowerCase().trim();
+        }
         darkMode = false;
       }
-      // If DEFAULT, leave colorScheme as undefined so it doesn't update the database field
+      // If DEFAULT, leave colorScheme as undefined so it doesn't update the database field (uses original theme)
       
       // Upload token image to Vercel Blob if needed, then use URL
       let tokenImageUrl = null;
@@ -645,6 +663,164 @@ export default function TokenLaunch({ onLaunch }) {
       alert(`❌ Website update test error:\n\n${error.message}`);
     } finally {
       setTestingMarketing({ ...testingMarketing, website: false });
+    }
+  };
+
+  // Telegram Verification
+  const handleSendTelegramCode = async () => {
+    if (!settings.TELEGRAM_API_ID || !settings.TELEGRAM_API_HASH || !settings.TELEGRAM_PHONE) {
+      alert('Please fill in Telegram API credentials first (API ID, API Hash, Phone)');
+      return;
+    }
+
+    setTelegramVerification({ ...telegramVerification, verifying: true, error: null });
+    
+    try {
+      const res = await apiService.sendTelegramCode(
+        settings.TELEGRAM_API_ID,
+        settings.TELEGRAM_API_HASH,
+        settings.TELEGRAM_PHONE
+      );
+      
+      if (res.data.success) {
+        if (res.data.authorized) {
+          setTelegramVerification({
+            codeSent: false,
+            phoneCodeHash: null,
+            requires2FA: false,
+            verifying: false,
+            verified: true,
+            error: null,
+          });
+          alert('✅ Account is already verified!');
+        } else {
+          setTelegramVerification({
+            codeSent: true,
+            phoneCodeHash: res.data.phone_code_hash || null,
+            requires2FA: false,
+            verifying: false,
+            verified: false,
+            error: null,
+          });
+        }
+      } else {
+        setTelegramVerification({
+          ...telegramVerification,
+          verifying: false,
+          error: res.data.error || 'Failed to send code',
+        });
+      }
+    } catch (error) {
+      setTelegramVerification({
+        ...telegramVerification,
+        verifying: false,
+        error: error.response?.data?.error || error.message || 'Failed to send verification code',
+      });
+    }
+  };
+
+  const handleVerifyTelegramCode = async () => {
+    if (!telegramCode.trim()) {
+      alert('Please enter the verification code');
+      return;
+    }
+
+    if (!settings.TELEGRAM_API_ID || !settings.TELEGRAM_API_HASH || !settings.TELEGRAM_PHONE) {
+      alert('Please fill in Telegram API credentials first');
+      return;
+    }
+
+    setTelegramVerification({ ...telegramVerification, verifying: true, error: null });
+    
+    try {
+      const res = await apiService.verifyTelegramCode(
+        settings.TELEGRAM_API_ID,
+        settings.TELEGRAM_API_HASH,
+        settings.TELEGRAM_PHONE,
+        telegramCode.trim(),
+        telegramVerification.phoneCodeHash,
+        telegram2FAPassword || undefined
+      );
+      
+      if (res.data.success) {
+        setTelegramVerification({
+          codeSent: false,
+          phoneCodeHash: null,
+          requires2FA: false,
+          verifying: false,
+          verified: true,
+          error: null,
+        });
+        setTelegramCode('');
+        setTelegram2FAPassword('');
+        alert('✅ Account verified successfully!');
+      } else {
+        if (res.data.requires_2fa) {
+          setTelegramVerification({
+            ...telegramVerification,
+            requires2FA: true,
+            verifying: false,
+            error: null,
+          });
+        } else {
+          setTelegramVerification({
+            ...telegramVerification,
+            verifying: false,
+            error: res.data.error || 'Verification failed',
+          });
+        }
+      }
+    } catch (error) {
+      setTelegramVerification({
+        ...telegramVerification,
+        verifying: false,
+        error: error.response?.data?.error || error.message || 'Failed to verify code',
+      });
+    }
+  };
+
+  const handleCheckTelegramStatus = async () => {
+    if (!settings.TELEGRAM_API_ID || !settings.TELEGRAM_API_HASH || !settings.TELEGRAM_PHONE) {
+      alert('Please fill in Telegram API credentials first');
+      return;
+    }
+
+    setTelegramVerification({ ...telegramVerification, verifying: true, error: null });
+    
+    try {
+      const res = await apiService.checkTelegramStatus(
+        settings.TELEGRAM_API_ID,
+        settings.TELEGRAM_API_HASH,
+        settings.TELEGRAM_PHONE
+      );
+      
+      if (res.data.success) {
+        setTelegramVerification({
+          codeSent: false,
+          phoneCodeHash: null,
+          requires2FA: false,
+          verifying: false,
+          verified: res.data.authorized || false,
+          error: null,
+        });
+        if (res.data.authorized) {
+          alert('✅ Account is verified!');
+        } else {
+          alert('⚠️ Account needs verification. Click "Verify Account" to start.');
+        }
+      } else {
+        setTelegramVerification({
+          ...telegramVerification,
+          verifying: false,
+          error: res.data.error || 'Failed to check status',
+        });
+      }
+    } catch (error) {
+      setTelegramVerification({
+        ...telegramVerification,
+        verifying: false,
+        error: error.response?.data?.error || error.message || 'Failed to check status',
+      });
     }
   };
 
@@ -1140,9 +1316,23 @@ export default function TokenLaunch({ onLaunch }) {
           console.error('Error details:', err.response?.data || err.message);
           setSavingStatus(`❌ Failed to save ${key}`);
           setTimeout(() => setSavingStatus(''), 5000); // Show error for 5 seconds
-          // Show alert for critical fields (token info) so user knows save failed
-          if (['TOKEN_NAME', 'TOKEN_SYMBOL', 'DESCRIPTION'].includes(key)) {
-            alert(`⚠️ Failed to save ${key}. Please click "💾 Save Settings" button.\n\nError: ${err.response?.data?.error || err.message}`);
+          
+          // Suppress alerts during auto-save - the .env file is being updated even if verification fails
+          // Only show critical errors that prevent saving entirely
+          const isNetworkError = err.message === 'Network Error' || err.code === 'ERR_NETWORK' || !err.response;
+          const isVerificationError = err.response?.data?.error?.includes('Failed to update keys');
+          
+          if (isVerificationError) {
+            // Verification errors are usually false positives (quote handling differences)
+            // The .env file was actually written, so just log it
+            console.warn(`⚠️ Verification warning for ${key} (file was still updated):`, err.response?.data?.error);
+          } else if (isNetworkError) {
+            // For network errors, just log - don't interrupt user's typing
+            console.warn(`⚠️ Network error while auto-saving ${key}. Settings will be saved when you click "Save Settings".`);
+          } else if (!isNetworkError && !isVerificationError && ['TOKEN_NAME', 'TOKEN_SYMBOL'].includes(key)) {
+            // Only alert for actual save failures (not verification or network issues)
+            console.error(`❌ Actual save failure for ${key}:`, err.response?.data?.error || err.message);
+            // Don't show alert - just log it. User can manually save if needed.
           }
         });
     }, 500);
@@ -1236,8 +1426,13 @@ export default function TokenLaunch({ onLaunch }) {
       // Include warmed wallet selections if using warmed wallets
       const launchData = useWarmedWallets ? {
         useWarmedWallets: true,
+        creatorWalletAddress: selectedCreatorWallet || null,
         bundleWalletAddresses: selectedBundleWallets,
-        holderWalletAddresses: selectedHolderWallets
+        holderWalletAddresses: selectedHolderWallets,
+        holderWalletAutoBuyAddresses: (settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) ? selectedHolderAutoBuyWallets : [],
+        holderWalletAutoBuyDelays: (settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) && holderAutoBuyGroups.length > 0
+          ? holderAutoBuyGroups.map(g => `parallel:${g.count},delay:${g.delay}`).join(',')
+          : null
       } : {};
       const res = await apiService.launchToken(launchData);
       
@@ -1274,10 +1469,19 @@ export default function TokenLaunch({ onLaunch }) {
             setLaunchStage(stage);
             setLaunchProgress(stageProgress[stage] || 0);
             
-            // Auto-navigate to holders once wallets are created and funded
-            if (stage === 'FUNDING_WALLETS' && onLaunch) {
-              console.log('✅ Wallets created! Auto-navigating to Holders page...');
-              onLaunch(); // This switches to holders tab
+            // Load wallets as soon as they're created (during FUNDING_WALLETS stage)
+            // This makes wallets available immediately, not waiting for launch to complete
+            if (stage === 'FUNDING_WALLETS' && 
+                (currentRun.bundleWalletKeys || currentRun.holderWalletKeys || currentRun.walletKeys) &&
+                !walletInfo) {
+              console.log('✅ Wallets created! Pre-loading wallet info for immediate trading...');
+              // Load wallets in background - don't wait, let launch continue
+              loadWalletInfo().catch(err => console.warn('Failed to pre-load wallets:', err));
+              
+              // Auto-navigate to holders tab so user can see wallets
+              if (onLaunch) {
+                onLaunch(); // This switches to holders tab
+              }
             }
             
             if (currentRun.launchStatus === 'SUCCESS') {
@@ -1285,10 +1489,19 @@ export default function TokenLaunch({ onLaunch }) {
               console.log('✅ Launch completed successfully!');
               setLaunchStage('SUCCESS');
               setLaunchProgress(100);
-              await loadWalletInfo();
+              
+              // Ensure wallets are loaded (in case pre-load didn't complete)
+              if (!walletInfo) {
+                await loadWalletInfo();
+              }
+              
               if (onLaunch) onLaunch();
               setLoading(false);
-              alert('✅ Token launched successfully!');
+              
+              // No alert popup - wallets are already loaded and ready!
+              // Just show a brief status message
+              setSavingStatus('✅ Token launched! Wallets ready for trading.');
+              setTimeout(() => setSavingStatus(''), 3000);
               return;
             } else if (currentRun.launchStatus === 'FAILED') {
               // Launch failed
@@ -1301,6 +1514,19 @@ export default function TokenLaunch({ onLaunch }) {
             } else if (currentRun.launchStatus === 'PENDING' || stage !== 'SUCCESS') {
               // Launch in progress - continue polling
               console.log(`⏳ Launch stage: ${stage} (${stageProgress[stage] || 0}%)`);
+              
+              // Continuously refresh wallet info during FUNDING_WALLETS and later stages
+              // This ensures wallets are always up-to-date and ready for trading
+              if ((stage === 'FUNDING_WALLETS' || stage === 'CREATING_LUT' || stage === 'BUILDING_BUNDLE' || stage === 'SUBMITTING_BUNDLE' || stage === 'CONFIRMING') &&
+                  (currentRun.bundleWalletKeys || currentRun.holderWalletKeys || currentRun.walletKeys)) {
+                // Refresh wallet info in background (don't await - non-blocking)
+                loadWalletInfo().catch(err => {
+                  // Silently fail - wallets might not be fully ready yet
+                  if (err.response?.status !== 404) {
+                    console.warn('Wallet info refresh failed (expected during launch):', err.message);
+                  }
+                });
+              }
             } else if (currentRun.mintAddress && 
                        ((currentRun.bundleWalletKeys && currentRun.bundleWalletKeys.length > 0) ||
                         (currentRun.holderWalletKeys && currentRun.holderWalletKeys.length > 0) ||
@@ -1310,10 +1536,18 @@ export default function TokenLaunch({ onLaunch }) {
               console.log('✅ Launch completed (legacy format)!');
               setLaunchStage('SUCCESS');
               setLaunchProgress(100);
-              await loadWalletInfo();
+              
+              // Ensure wallets are loaded
+              if (!walletInfo) {
+                await loadWalletInfo();
+              }
+              
               if (onLaunch) onLaunch();
               setLoading(false);
-              alert('✅ Token launched successfully!');
+              
+              // No alert popup - just status message
+              setSavingStatus('✅ Token launched! Wallets ready for trading.');
+              setTimeout(() => setSavingStatus(''), 3000);
               return;
             }
           } else {
@@ -1330,9 +1564,23 @@ export default function TokenLaunch({ onLaunch }) {
             const elapsedMinutes = Math.floor(attempts * checkInterval / 60);
             console.warn(`⚠️ Launch timeout after ${elapsedMinutes} minutes`);
             setLoading(false);
-            alert(`⏳ Launch is taking longer than expected (${elapsedMinutes} minutes).\n\nIt may still be in progress. Check the API server terminal for updates.\n\nYou can refresh the page to check status manually.`);
+            setLaunchStage('IDLE');
+            setLaunchProgress(0);
+            alert(`⏳ Launch is taking longer than expected (${elapsedMinutes} minutes).\n\nIt may still be in progress. Check the API server terminal for updates.\n\nYou can retry the launch or refresh the page.`);
           }
         } catch (error) {
+          // Check if error is because process exited (404 or no current-run.json)
+          if (error.response?.status === 404 || error.message?.includes('404')) {
+            // Process exited - no current-run.json means launch process stopped
+            console.warn('⚠️ Launch process appears to have exited (no current-run.json)');
+            setLoading(false);
+            setLaunchStage('IDLE');
+            setLaunchProgress(0);
+            setSavingStatus('⚠️ Launch process exited. You can retry the launch.');
+            setTimeout(() => setSavingStatus(''), 5000);
+            return;
+          }
+          
           // current-run.json might not exist yet (launch just started)
           setLaunchStage('INITIALIZING');
           setLaunchProgress(5);
@@ -1342,7 +1590,9 @@ export default function TokenLaunch({ onLaunch }) {
             setTimeout(checkLaunchComplete, checkInterval);
           } else {
             setLoading(false);
-            alert('⏳ Launch is taking longer than expected. Check the API server terminal for progress.\n\nYou can refresh the page to check status manually.');
+            setLaunchStage('IDLE');
+            setLaunchProgress(0);
+            alert('⏳ Launch is taking longer than expected. Check the API server terminal for progress.\n\nYou can retry the launch or refresh the page.');
           }
         }
       };
@@ -1723,6 +1973,7 @@ export default function TokenLaunch({ onLaunch }) {
                     </p>
                     <p className="text-xs text-gray-400 mt-1">
                       Total Available: {warmedWallets.length} | 
+                      Creator: {selectedCreatorWallet ? '1' : '0'} | 
                       Bundle: {selectedBundleWallets.length} | 
                       Holder: {selectedHolderWallets.length}
                     </p>
@@ -1738,6 +1989,31 @@ export default function TokenLaunch({ onLaunch }) {
                     📋 Select Wallets
                   </button>
                 </div>
+                
+                {/* Selected Creator Wallet */}
+                {selectedCreatorWallet && (
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold text-purple-400 mb-2">
+                      Creator/DEV Wallet:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(() => {
+                        const wallet = warmedWallets.find(w => w.address === selectedCreatorWallet);
+                        return (
+                          <div className="px-2 py-1 bg-purple-900/30 border border-purple-600/50 rounded text-xs">
+                            <p className="text-white font-mono">{selectedCreatorWallet.slice(0, 8)}...{selectedCreatorWallet.slice(-6)}</p>
+                            {wallet && (
+                              <div className="text-gray-400 text-[10px] mt-0.5">
+                                Trades: {wallet.totalTrades || wallet.transactionCount || 0} | 
+                                SOL: {(wallet.solBalance || 0).toFixed(4)}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
                 
                 {/* Selected Bundle Wallets */}
                 {selectedBundleWallets.length > 0 && (
@@ -1795,7 +2071,7 @@ export default function TokenLaunch({ onLaunch }) {
                   </div>
                 )}
                 
-                {selectedBundleWallets.length === 0 && selectedHolderWallets.length === 0 && (
+                {!selectedCreatorWallet && selectedBundleWallets.length === 0 && selectedHolderWallets.length === 0 && (
                   <p className="text-xs text-gray-500 italic">
                     No wallets selected. Click "Select Wallets" to choose warmed wallets for your launch.
                   </p>
@@ -1814,6 +2090,7 @@ export default function TokenLaunch({ onLaunch }) {
                     <h3 className="text-xl font-bold text-white">Select Warmed Wallets</h3>
                     <p className="text-sm text-gray-400 mt-1">
                       {filteredAndSortedWallets.length} of {warmedWallets.length} wallets shown | 
+                      Creator: {selectedCreatorWallet ? '1' : '0'} | 
                       Bundle: {selectedBundleWallets.length} | 
                       Holder: {selectedHolderWallets.length}
                     </p>
@@ -1929,11 +2206,14 @@ export default function TokenLaunch({ onLaunch }) {
                       {filteredAndSortedWallets.map((wallet) => {
                         const isBundle = selectedBundleWallets.includes(wallet.address);
                         const isHolder = selectedHolderWallets.includes(wallet.address);
+                        const isCreator = selectedCreatorWallet === wallet.address;
                         return (
                           <div
                             key={wallet.address}
                             className={`p-3 rounded-lg border ${
-                              isBundle || isHolder
+                              isCreator
+                                ? 'bg-purple-900/30 border-purple-600/50'
+                                : isBundle || isHolder
                                 ? 'bg-green-900/30 border-green-600/50'
                                 : 'bg-gray-800/50 border-gray-700'
                             }`}
@@ -2000,12 +2280,35 @@ export default function TokenLaunch({ onLaunch }) {
                               <button
                                 type="button"
                                 onClick={() => {
+                                  if (isCreator) {
+                                    setSelectedCreatorWallet(null);
+                                  } else {
+                                    setSelectedCreatorWallet(wallet.address);
+                                    // Remove from bundle and holder if it was there
+                                    setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
+                                    setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
+                                  }
+                                }}
+                                className={`flex-1 px-2 py-1.5 text-xs rounded font-medium transition-colors ${
+                                  isCreator
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-gray-700 text-gray-300 hover:bg-purple-600 hover:text-white'
+                                }`}
+                              >
+                                {isCreator ? '✓ Creator' : 'Creator'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
                                   if (isBundle) {
                                     setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
                                   } else {
                                     setSelectedBundleWallets(prev => [...prev, wallet.address]);
-                                    // Remove from holder if it was there
+                                    // Remove from holder and creator if it was there
                                     setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
+                                    if (selectedCreatorWallet === wallet.address) {
+                                      setSelectedCreatorWallet(null);
+                                    }
                                   }
                                 }}
                                 className={`flex-1 px-2 py-1.5 text-xs rounded font-medium transition-colors ${
@@ -2023,8 +2326,11 @@ export default function TokenLaunch({ onLaunch }) {
                                     setSelectedHolderWallets(prev => prev.filter(a => a !== wallet.address));
                                   } else {
                                     setSelectedHolderWallets(prev => [...prev, wallet.address]);
-                                    // Remove from bundle if it was there
+                                    // Remove from bundle and creator if it was there
                                     setSelectedBundleWallets(prev => prev.filter(a => a !== wallet.address));
+                                    if (selectedCreatorWallet === wallet.address) {
+                                      setSelectedCreatorWallet(null);
+                                    }
                                   }
                                 }}
                                 className={`flex-1 px-2 py-1.5 text-xs rounded font-medium transition-colors ${
@@ -2195,6 +2501,228 @@ export default function TokenLaunch({ onLaunch }) {
                   className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
                 />
               </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="autoHolderWalletBuy"
+                  checked={settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true}
+                  onChange={(e) => handleChange('AUTO_HOLDER_WALLET_BUY', e.target.checked ? 'true' : 'false')}
+                  className="w-4 h-4 text-yellow-600 bg-gray-800 border-gray-600 rounded focus:ring-yellow-500"
+                />
+                <label htmlFor="autoHolderWalletBuy" className="text-xs text-gray-300 cursor-pointer">
+                  Auto-buy after launch
+                  <InfoTooltip content="Automatically execute holder wallet buys right after launch is confirmed. Select which wallets to auto-buy below." />
+                </label>
+              </div>
+              {(settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) && useWarmedWallets && selectedHolderWallets.length > 0 && (
+                <div className="mt-3 p-3 bg-gray-800/50 rounded border border-gray-700">
+                  <label className="block text-xs font-semibold text-yellow-400 mb-2">
+                    Step 1: Select & Order Wallets for Auto-Buy ({selectedHolderAutoBuyWallets.length} of {selectedHolderWallets.length} selected)
+                  </label>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Click wallets to select. Selected wallets will buy in the order shown below. Use ↑↓ buttons to reorder.
+                  </p>
+                  
+                  {/* Unselected wallets */}
+                  <div className="mb-3">
+                    <p className="text-xs text-gray-500 mb-1">Available wallets (click to add):</p>
+                    <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+                      {selectedHolderWallets
+                        .filter(addr => !selectedHolderAutoBuyWallets.includes(addr))
+                        .map(addr => {
+                          const wallet = warmedWallets.find(w => w.address === addr);
+                          return (
+                            <button
+                              key={addr}
+                              type="button"
+                              onClick={() => {
+                                setSelectedHolderAutoBuyWallets(prev => [...prev, addr]);
+                              }}
+                              className="px-2 py-1 rounded text-xs font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600"
+                            >
+                              {addr.slice(0, 6)}...{addr.slice(-4)}
+                              {wallet && ` (${wallet.totalTrades || 0} trades)`}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                  
+                  {/* Selected wallets in order */}
+                  {selectedHolderAutoBuyWallets.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1">Buy order (top to bottom):</p>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {selectedHolderAutoBuyWallets.map((addr, idx) => {
+                          const wallet = warmedWallets.find(w => w.address === addr);
+                          return (
+                            <div
+                              key={addr}
+                              className="flex items-center gap-2 p-2 bg-yellow-900/30 border border-yellow-600/50 rounded"
+                            >
+                              <span className="text-xs font-bold text-yellow-400 w-6">#{idx + 1}</span>
+                              <span className="flex-1 text-xs font-mono text-white">
+                                {addr.slice(0, 8)}...{addr.slice(-6)}
+                                {wallet && ` (${wallet.totalTrades || 0} trades)`}
+                              </span>
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (idx > 0) {
+                                      const newOrder = [...selectedHolderAutoBuyWallets];
+                                      [newOrder[idx - 1], newOrder[idx]] = [newOrder[idx], newOrder[idx - 1]];
+                                      setSelectedHolderAutoBuyWallets(newOrder);
+                                    }
+                                  }}
+                                  disabled={idx === 0}
+                                  className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
+                                  title="Move up"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (idx < selectedHolderAutoBuyWallets.length - 1) {
+                                      const newOrder = [...selectedHolderAutoBuyWallets];
+                                      [newOrder[idx], newOrder[idx + 1]] = [newOrder[idx + 1], newOrder[idx]];
+                                      setSelectedHolderAutoBuyWallets(newOrder);
+                                    }
+                                  }}
+                                  disabled={idx === selectedHolderAutoBuyWallets.length - 1}
+                                  className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
+                                  title="Move down"
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedHolderAutoBuyWallets(prev => prev.filter(a => a !== addr));
+                                  }}
+                                  className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
+                                  title="Remove"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {selectedHolderAutoBuyWallets.length > 0 && (
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-semibold text-yellow-400">
+                          Step 2: Configure When They Buy
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setHolderAutoBuyGroups([...holderAutoBuyGroups, { count: 1, delay: 1.0 }])}
+                          className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                        >
+                          + Add Timing Group
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-400 mb-2">
+                        Each group buys at the same time, then waits before the next group. Groups execute in order.
+                      </p>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {holderAutoBuyGroups.map((group, idx) => (
+                          <div key={idx} className="p-2 bg-gray-900/50 rounded border border-gray-700">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-semibold text-yellow-400">Group {idx + 1}:</span>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <label className="text-xs text-gray-400 whitespace-nowrap">Buy</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max={selectedHolderAutoBuyWallets.length}
+                                value={group.count}
+                                onChange={(e) => {
+                                  const newGroups = [...holderAutoBuyGroups];
+                                  newGroups[idx].count = Math.min(parseInt(e.target.value) || 1, selectedHolderAutoBuyWallets.length);
+                                  setHolderAutoBuyGroups(newGroups);
+                                }}
+                                className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                              />
+                              <label className="text-xs text-gray-400 whitespace-nowrap">wallet(s) at the same time</label>
+                              {idx === 0 && (
+                                <>
+                                  <label className="text-xs text-gray-400 whitespace-nowrap ml-2">after</label>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="10"
+                                    value={group.delay}
+                                    onChange={(e) => {
+                                      const newGroups = [...holderAutoBuyGroups];
+                                      newGroups[idx].delay = parseFloat(e.target.value) || 0;
+                                      setHolderAutoBuyGroups(newGroups);
+                                    }}
+                                    className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                                  />
+                                  <label className="text-xs text-gray-400 whitespace-nowrap">seconds from launch</label>
+                                </>
+                              )}
+                              {idx > 0 && (
+                                <>
+                                  <label className="text-xs text-gray-400 whitespace-nowrap ml-2">then wait</label>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="10"
+                                    value={group.delay}
+                                    onChange={(e) => {
+                                      const newGroups = [...holderAutoBuyGroups];
+                                      newGroups[idx].delay = parseFloat(e.target.value) || 0;
+                                      setHolderAutoBuyGroups(newGroups);
+                                    }}
+                                    className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                                  />
+                                  <label className="text-xs text-gray-400 whitespace-nowrap">seconds before next group</label>
+                                </>
+                              )}
+                            </div>
+                            {holderAutoBuyGroups.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newGroups = holderAutoBuyGroups.filter((_, i) => i !== idx);
+                                  setHolderAutoBuyGroups(newGroups);
+                                }}
+                                className="mt-2 px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
+                              >
+                                Remove Group
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 p-2 bg-blue-900/20 border border-blue-700/50 rounded">
+                        <p className="text-xs text-blue-300 font-semibold mb-1">📝 Example: 2 wallets at 0.1s, then 1 wallet at 1.0s</p>
+                        <p className="text-xs text-blue-200 mb-2">
+                          To have 2 wallets buy 0.1 seconds after launch, then 1 wallet 1 second after launch:
+                        </p>
+                        <div className="space-y-1 text-xs text-blue-200">
+                          <p>• <strong>Group 1:</strong> Buy <strong>2</strong> wallet(s) after <strong>0.1</strong> seconds from launch</p>
+                          <p>• <strong>Group 2:</strong> Buy <strong>1</strong> wallet(s), then wait <strong>0.9</strong> seconds</p>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-2 italic">
+                          Result: Group 1 buys at 0.1s, Group 2 buys at ~1.0s total (0.1s + 0.9s delay)
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -2308,6 +2836,74 @@ export default function TokenLaunch({ onLaunch }) {
                 </div>
               </div>
             )}
+            
+            {/* Market Cap Tracking Section */}
+            <div className="mt-6 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold text-white">Market Cap Tracking (Auto-Sell at Market Cap)</h3>
+              </div>
+              <div className="space-y-3">
+                <label htmlFor="market-cap-tracking-enabled" className="text-sm font-semibold text-white cursor-pointer flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="market-cap-tracking-enabled"
+                    checked={settings.MARKET_CAP_TRACKING_ENABLED === 'true'}
+                    onChange={(e) => handleChange('MARKET_CAP_TRACKING_ENABLED', e.target.checked ? 'true' : 'false')}
+                    className="w-4 h-4 text-yellow-600 bg-gray-700 border-gray-600 rounded focus:ring-yellow-500"
+                  />
+                  Enable Market Cap Tracking
+                </label>
+                {settings.MARKET_CAP_TRACKING_ENABLED === 'true' && (
+                  <div className="ml-6 space-y-3">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">
+                        Market Cap Sell Threshold (USD)
+                        <InfoTooltip content="Market cap in USD that triggers auto-sell. Example: 100000 = $100K market cap" />
+                      </label>
+                      <input
+                        type="number"
+                        step="1000"
+                        min="1000"
+                        value={settings.MARKET_CAP_SELL_THRESHOLD || '100000'}
+                        onChange={(e) => handleChange('MARKET_CAP_SELL_THRESHOLD', e.target.value)}
+                        className="w-full px-3 py-2 bg-black/50 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        placeholder="100000"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Current: ${(parseFloat(settings.MARKET_CAP_SELL_THRESHOLD || '100000') / 1000).toFixed(0)}K market cap
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">
+                        Check Interval (seconds)
+                        <InfoTooltip content="How often to check market cap. Lower = faster detection but more API calls" />
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="3"
+                        max="60"
+                        value={settings.MARKET_CAP_CHECK_INTERVAL || '5'}
+                        onChange={(e) => handleChange('MARKET_CAP_CHECK_INTERVAL', e.target.value)}
+                        className="w-full px-3 py-2 bg-black/50 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        placeholder="5"
+                      />
+                    </div>
+                    <div className="p-3 bg-blue-900/20 border border-blue-700/50 rounded text-xs text-blue-200">
+                      <p className="font-semibold mb-1">📊 How it works:</p>
+                      <ul className="list-disc list-inside space-y-1 ml-2">
+                        <li>Uses Jupiter API (via Helius RPC) - no API key needed!</li>
+                        <li>Falls back to Birdeye API (if BIRDEYE_API_KEY set) or pump.fun API</li>
+                        <li>Polls every {settings.MARKET_CAP_CHECK_INTERVAL || '5'} seconds for current market cap</li>
+                        <li>When market cap reaches ${(parseFloat(settings.MARKET_CAP_SELL_THRESHOLD || '100000') / 1000).toFixed(0)}K, triggers rapid sell</li>
+                        <li>Works alongside WebSocket tracking (can use both)</li>
+                        <li>Test with: <code className="text-yellow-400">npm run test-market-cap &lt;MINT_ADDRESS&gt;</code></li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2359,11 +2955,11 @@ export default function TokenLaunch({ onLaunch }) {
       </div>
 
       {/* Launch Token Button - PROMINENT */}
-      <div className="mb-6">
+      <div className="mb-6 flex gap-2">
         <button
           onClick={handleLaunch}
           disabled={loading}
-          className="w-full py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold text-lg rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed glow-blue flex items-center justify-center gap-3"
+          className="flex-1 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold text-lg rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed glow-blue flex items-center justify-center gap-3"
         >
           {loading ? (
             <>
@@ -2377,6 +2973,22 @@ export default function TokenLaunch({ onLaunch }) {
             </>
           )}
         </button>
+        {loading && (
+          <button
+            onClick={() => {
+              setLoading(false);
+              setLaunchStage('IDLE');
+              setLaunchProgress(0);
+              setSavingStatus('Launch cancelled. You can retry.');
+              setTimeout(() => setSavingStatus(''), 3000);
+            }}
+            className="px-6 py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2"
+            title="Cancel Launch"
+          >
+            <XCircleIcon className="w-6 h-6" />
+            Cancel
+          </button>
+        )}
       </div>
         
         {/* Launch Progress Bar */}
@@ -2585,7 +3197,10 @@ export default function TokenLaunch({ onLaunch }) {
                             onChange={(e) => handleChange('WEBSITE_THEME', e.target.value)}
                             className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           >
-                            <option value="DEFAULT">Default (Blue)</option>
+                            <option value="DEFAULT">Default</option>
+                            <option value="THEME1">Theme1</option>
+                            <option value="THEME2">Theme2</option>
+                            <option value="THEME3">Theme3</option>
                             <option value="BLUE">Blue</option>
                             <option value="GREEN">Green</option>
                             <option value="PURPLE">Purple</option>
@@ -2674,6 +3289,96 @@ export default function TokenLaunch({ onLaunch }) {
                           className="w-full px-3 py-2 bg-gray-900/50 border border-gray-800 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           placeholder="Phone Number (e.g., +1234567890)"
                         />
+                        
+                        {/* Verification Section */}
+                        <div className="space-y-2 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-gray-300">Account Verification</span>
+                            {telegramVerification.verified && (
+                              <span className="text-xs text-green-400">✅ Verified</span>
+                            )}
+                          </div>
+                          
+                          {!telegramVerification.verified && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={handleCheckTelegramStatus}
+                                disabled={telegramVerification.verifying}
+                                className="w-full px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+                              >
+                                {telegramVerification.verifying ? '⏳ Checking...' : '🔍 Check Status'}
+                              </button>
+                              
+                              {!telegramVerification.codeSent ? (
+                                <button
+                                  type="button"
+                                  onClick={handleSendTelegramCode}
+                                  disabled={telegramVerification.verifying}
+                                  className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+                                >
+                                  {telegramVerification.verifying ? '⏳ Sending...' : '📱 Verify Account'}
+                                </button>
+                              ) : (
+                                <div className="space-y-2">
+                                  <p className="text-xs text-gray-400">
+                                    ✅ Code sent! Check your Telegram app for the verification code.
+                                  </p>
+                                  <input
+                                    type="text"
+                                    value={telegramCode}
+                                    onChange={(e) => setTelegramCode(e.target.value)}
+                                    className="w-full px-2 py-1.5 bg-gray-900/50 border border-gray-700 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Enter verification code"
+                                    maxLength={10}
+                                  />
+                                  {telegramVerification.requires2FA && (
+                                    <input
+                                      type="password"
+                                      value={telegram2FAPassword}
+                                      onChange={(e) => setTelegram2FAPassword(e.target.value)}
+                                      className="w-full px-2 py-1.5 bg-gray-900/50 border border-gray-700 rounded text-white text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      placeholder="2FA Password (if required)"
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={handleVerifyTelegramCode}
+                                    disabled={telegramVerification.verifying || !telegramCode.trim()}
+                                    className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+                                  >
+                                    {telegramVerification.verifying ? '⏳ Verifying...' : '✅ Submit Code'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setTelegramVerification({
+                                        codeSent: false,
+                                        phoneCodeHash: null,
+                                        requires2FA: false,
+                                        verifying: false,
+                                        verified: false,
+                                        error: null,
+                                      });
+                                      setTelegramCode('');
+                                      setTelegram2FAPassword('');
+                                    }}
+                                    className="w-full px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium rounded transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              )}
+                              
+                              {telegramVerification.error && (
+                                <div className="text-xs p-2 rounded bg-red-900/50 text-red-300">
+                                  ❌ {telegramVerification.error}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        
                         <div className="flex items-center gap-2">
                           <input
                             type="checkbox"

@@ -47,34 +47,91 @@ interface TelegramCreateOptions {
 
 /**
  * Get Telegram directory path
+ * Matches Nodematrix-v2 approach but for marketing/telegram location
  */
 function getTelegramDir(): string {
-  // Check if telegram directory exists in project root
-  const projectTelegramDir = path.join(process.cwd(), 'marketing', 'telegram');
-  if (fs.existsSync(projectTelegramDir)) {
-    return projectTelegramDir;
+  // If TELEGRAM_PYTHON_DIR is set, use it (for custom deployments)
+  if (process.env.TELEGRAM_PYTHON_DIR) {
+    return process.env.TELEGRAM_PYTHON_DIR;
   }
   
-  // Fallback to current directory
-  return process.cwd();
+  // Get current working directory (where the API server is running from)
+  const cwd = process.cwd();
+  
+  // Check if we're in api-server directory - if so, go up one level to project root
+  const isApiServer = cwd.endsWith('api-server') || path.basename(cwd) === 'api-server';
+  const projectRoot = isApiServer ? path.resolve(cwd, '..') : cwd;
+  
+  // Try marketing/telegram from project root
+  const telegramDir = path.join(projectRoot, 'marketing', 'telegram');
+  
+  if (fs.existsSync(telegramDir)) {
+    console.log(`[Telegram] Using telegram directory: ${telegramDir}`);
+    return telegramDir;
+  }
+  
+  // Fallback: try current directory
+  console.warn(`[Telegram] Telegram directory not found at ${telegramDir}, using current directory: ${cwd}`);
+  return cwd;
 }
 
 /**
- * Detect Python command (python3, python, py)
+ * Detect Python command (matches Nodematrix-v2 approach)
+ * Tries: python3, python3.11, python3.10, python3.9, python3.8, py, python
+ * Also verifies that required packages are available
  */
 function detectPythonCommand(): string {
-  const commands = ['python3', 'python', 'py'];
+  const { execSync } = require('child_process');
+  const commands = ['python3', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'py', 'python'];
+  
   for (const cmd of commands) {
     try {
-      // Try to run python --version (synchronous check)
-      const { execSync } = require('child_process');
-      execSync(`${cmd} --version`, { stdio: 'ignore' });
-      return cmd;
+      // Check if Python exists and can import required modules
+      execSync(`${cmd} --version`, { stdio: 'ignore', timeout: 2000 });
+      
+      // Verify required packages are installed
+      try {
+        execSync(`${cmd} -c "import dotenv; import telethon"`, { stdio: 'ignore', timeout: 2000 });
+        console.log(`[Telegram] Found Python with required packages: ${cmd}`);
+        return cmd;
+      } catch {
+        console.warn(`[Telegram] Python ${cmd} found but missing required packages (dotenv/telethon)`);
+        continue;
+      }
     } catch {
       continue;
     }
   }
-  throw new Error('Python not found. Please install Python 3.x');
+  
+  // Check common installation paths (for Railway/Linux)
+  const commonPaths = [
+    '/usr/bin/python3',
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+  ];
+  
+  const fs = require('fs');
+  for (const pythonPath of commonPaths) {
+    if (fs.existsSync(pythonPath)) {
+      try {
+        execSync(`${pythonPath} --version`, { stdio: 'ignore', timeout: 2000 });
+        // Verify packages
+        try {
+          execSync(`${pythonPath} -c "import dotenv; import telethon"`, { stdio: 'ignore', timeout: 2000 });
+          console.log(`[Telegram] Found Python with packages at: ${pythonPath}`);
+          return pythonPath;
+        } catch {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  
+  // Default fallback (will likely fail, but provides consistent error message)
+  console.warn(`[Telegram] No Python with required packages found, using fallback: python`);
+  return 'python';
 }
 
 /**
@@ -104,11 +161,20 @@ export async function createTelegramGroup(options: TelegramCreateOptions): Promi
       const telegramDir = getTelegramDir();
       const pythonScript = path.join(telegramDir, 'run_campaign.py');
       
+      console.log(`[Telegram] Telegram directory: ${telegramDir}`);
+      console.log(`[Telegram] Python script path: ${pythonScript}`);
+      console.log(`[Telegram] Script exists: ${fs.existsSync(pythonScript)}`);
+      
       // Check if Python script exists
       if (!fs.existsSync(pythonScript)) {
+        // List what files actually exist in the directory
+        const existingFiles = fs.existsSync(telegramDir) 
+          ? fs.readdirSync(telegramDir).join(', ') 
+          : 'directory does not exist';
+        
         return resolve({
           success: false,
-          error: `Python script not found: ${pythonScript}\n\nPlease copy the Telegram Python files from Nodematrix-v2/telegram/ to marketing/telegram/:\n- run_campaign.py\n- telegram_user_client.py\n- telegram_campaign.py\n- config.py\n- requirements.txt`,
+          error: `Python script not found: ${pythonScript}\n\nTelegram directory: ${telegramDir}\nExisting files: ${existingFiles}\n\nPlease ensure run_campaign.py exists in marketing/telegram/`,
         });
       }
 
@@ -116,6 +182,24 @@ export async function createTelegramGroup(options: TelegramCreateOptions): Promi
       let pythonCmd: string;
       try {
         pythonCmd = detectPythonCommand();
+        console.log(`[Telegram] Using Python command: ${pythonCmd}`);
+        
+        // Verify Python can import required modules before proceeding
+        try {
+          const { execSync } = require('child_process');
+          execSync(`${pythonCmd} -c "import dotenv; import telethon; print('OK')"`, { 
+            stdio: 'ignore', 
+            timeout: 5000,
+            cwd: telegramDir 
+          });
+          console.log(`[Telegram] ✅ Verified Python has required packages`);
+        } catch (verifyError: any) {
+          console.error(`[Telegram] ⚠️ Python ${pythonCmd} cannot import required packages`);
+          return resolve({
+            success: false,
+            error: `Python found but missing required packages (python-dotenv, telethon).\n\nPlease install: pip install python-dotenv telethon requests\n\nError: ${verifyError.message}`,
+          });
+        }
       } catch (error: any) {
         return resolve({
           success: false,
@@ -140,11 +224,18 @@ export async function createTelegramGroup(options: TelegramCreateOptions): Promi
       console.log('[Telegram] Token:', config.token_name || 'N/A');
 
       // Spawn Python process
+      // Ensure PYTHONPATH includes the telegram directory so imports work
+      const pythonPath = process.env.PYTHONPATH 
+        ? `${telegramDir}${path.delimiter}${process.env.PYTHONPATH}`
+        : telegramDir;
+      
       const pythonProcess = spawn(pythonCmd, [pythonScript], {
-        cwd: telegramDir,
+        cwd: telegramDir, // Working directory must be telegramDir for relative imports
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
+          PYTHONPATH: pythonPath, // Add telegram directory to Python path
+          PYTHONUNBUFFERED: '1', // Ensure output is not buffered
           // Pass credentials as environment variables (Python script will read from config)
           TELEGRAM_API_ID: config.telegram_api_id,
           TELEGRAM_API_HASH: config.telegram_api_hash,

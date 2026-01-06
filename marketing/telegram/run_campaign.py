@@ -102,36 +102,50 @@ def initialize_clients(config_data):
         except:
             script_dir = os.getcwd()
         session_file_simple = os.path.join(script_dir, f"{phone_clean}.session")
+        session_file_telegram = os.path.join(script_dir, f"telegram_session_{phone_clean}.session")
         session_file_full = os.path.join(script_dir, f"user_session_{phone_clean}.session")
         
-        # Prefer simple format (what verify_account creates), fallback to user_session format
+        # Check for session files in order of preference
+        # 1. Simple format: 16675142850.session
+        # 2. Telegram format: telegram_session_16675142850.session (what verify_account.py creates)
+        # 3. User session format: user_session_16675142850.session
+        session_name = None
         if os.path.exists(session_file_simple):
             session_name = phone_clean
             logger.info(f"   ✓ Using session file: {os.path.basename(session_file_simple)}")
+        elif os.path.exists(session_file_telegram):
+            session_name = f"telegram_session_{phone_clean}"
+            logger.info(f"   ✓ Using session file: {os.path.basename(session_file_telegram)}")
         elif os.path.exists(session_file_full):
             session_name = f"user_session_{phone_clean}"
             logger.info(f"   ✓ Using session file: {os.path.basename(session_file_full)}")
         else:
-            logger.warning(f"   ⚠️  No session file found for {phone} (checked {os.path.basename(session_file_simple)} and {os.path.basename(session_file_full)})")
+            logger.warning(f"   ⚠️  No session file found for {phone} (checked {os.path.basename(session_file_simple)}, {os.path.basename(session_file_telegram)}, and {os.path.basename(session_file_full)})")
             logger.warning(f"   Please verify this account first using the Verify button")
+            # Skip client creation if no session file exists
+            session_name = None
         
-        # Get user tag from config
-        user_tag = Config.TELEGRAM_USER_NAMES.get(phone, 'creator')
-        
-        # Create client
-        client = TelegramUserClient(
-            api_id=api_id,
-            api_hash=api_hash,
-            phone=phone,
-            session_name=session_name,
-            user_tag=user_tag
-        )
-        clients.append(client)
-        
-        # Store role and mod status
-        user_roles[phone] = user_config.get('role', 'dev')
-        user_is_mod[phone] = user_config.get('is_mod', False)
-        logger.info(f"   ✓ Initialized creator account: [{user_tag}] {phone} (role: {user_roles[phone]}, mod: {user_is_mod[phone]})")
+        # Only create client if session_name was found
+        if session_name:
+            # Get user tag from config
+            user_tag = Config.TELEGRAM_USER_NAMES.get(phone, 'creator')
+            
+            # Create client (session_name is guaranteed to be set here)
+            client = TelegramUserClient(
+                api_id=api_id,
+                api_hash=api_hash,
+                phone=phone,
+                session_name=session_name,
+                user_tag=user_tag
+            )
+            clients.append(client)
+            
+            # Store role and mod status
+            user_roles[phone] = user_config.get('role', 'dev')
+            user_is_mod[phone] = user_config.get('is_mod', False)
+            logger.info(f"   ✓ Initialized creator account: [{user_tag}] {phone} (role: {user_roles[phone]}, mod: {user_is_mod[phone]})")
+        else:
+            logger.error(f"   ❌ Cannot initialize {phone} without session file")
     except Exception as e:
         logger.error(f"Failed to initialize {phone}: {e}")
         import traceback
@@ -489,8 +503,12 @@ def run_campaign(config_data, scripted_conversations):
                 except Exception as e:
                     logger.warning(f"⚠️ Could not validate/resize image: {e}. Using original image.")
                 
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 extension = group_photo_filename.split('.')[-1] if '.' in group_photo_filename else 'png'
                 photo_filename = f"{timestamp}_{group_photo_filename}"
@@ -562,8 +580,12 @@ def run_campaign(config_data, scripted_conversations):
                     logger.warning(f"⚠️ Could not validate/resize downloaded image: {e}. Using original image.")
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Generate filename from URL or use default
                 timestamp = dt.now().strftime('%Y%m%d_%H%M%S')
@@ -579,8 +601,13 @@ def run_campaign(config_data, scripted_conversations):
                     f.write(image_data)
                 
                 logger.info(f"✅ Downloaded and saved token image to: {final_photo_path} ({len(image_data)} bytes)")
+                logger.info(f"   File exists: {os.path.exists(final_photo_path)}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to download token image from URL: {e}. Will use photo_path if provided.")
+                logger.error(f"❌ Failed to download token image from URL: {token_image_url}")
+                logger.error(f"   Error type: {type(e).__name__}")
+                logger.error(f"   Error message: {str(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 final_photo_path = group_photo_path  # Fallback to path if provided
         
         # Reuse group
@@ -960,8 +987,12 @@ def run_campaign(config_data, scripted_conversations):
                 # datetime is already imported at module level
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Extract base64 data (remove data:image/...;base64, prefix if present)
                 base64_data = group_photo_base64
@@ -1092,8 +1123,12 @@ def run_campaign(config_data, scripted_conversations):
                     logger.warning(f"⚠️ Could not validate/resize downloaded image: {e}. Using original image.")
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Generate filename from URL or use default
                 timestamp = dt.now().strftime('%Y%m%d_%H%M%S')
@@ -1109,8 +1144,13 @@ def run_campaign(config_data, scripted_conversations):
                     f.write(image_data)
                 
                 logger.info(f"✅ Downloaded and saved token image to: {final_photo_path} ({len(image_data)} bytes)")
+                logger.info(f"   File exists: {os.path.exists(final_photo_path)}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to download token image from URL: {e}. Will use photo_path if provided.")
+                logger.error(f"❌ Failed to download token image from URL: {token_image_url}")
+                logger.error(f"   Error type: {type(e).__name__}")
+                logger.error(f"   Error message: {str(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 final_photo_path = group_photo_path  # Fallback to path if provided
         
         # IMPORTANT: If create_channel is true, we want to create BOTH a group AND a channel
@@ -2077,6 +2117,44 @@ def run_campaign(config_data, scripted_conversations):
                         logger.error(f"❌ Exception while creating channel: {e}")
                         import traceback
                         logger.error(traceback.format_exc())
+                
+                # Add safeguard bot to group BEFORE portal creation (if use_safeguard_bot is enabled)
+                if use_safeguard_bot and safeguard_bot_username and created_group_chat_id:
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"ADDING SAFEGUARD BOT TO GROUP (BEFORE PORTAL CREATION)")
+                    logger.info(f"{'='*60}")
+                    try:
+                        async def add_safeguard_bot_to_group():
+                            # Get group entity
+                            group_entity = await dev_client.client.get_entity(created_group_chat_id)
+                            
+                            # Get safeguard bot entity
+                            bot_entity = await dev_client.client.get_entity(safeguard_bot_username)
+                            
+                            logger.info(f"Adding {safeguard_bot_username} to group {created_group_chat_id}...")
+                            
+                            # Add bot to group using InviteToChannelRequest
+                            from telethon.tl.functions.channels import InviteToChannelRequest
+                            await dev_client.client(InviteToChannelRequest(
+                                channel=group_entity,
+                                users=[bot_entity]
+                            ))
+                            
+                            logger.info(f"✅ Successfully added {safeguard_bot_username} to group")
+                            await asyncio.sleep(3)  # Wait for bot to join
+                            return {'success': True}
+                        
+                        add_bot_result = asyncio.run_coroutine_threadsafe(add_safeguard_bot_to_group(), loop).result(timeout=30)
+                        if add_bot_result.get('success'):
+                            logger.info(f"✅ Safeguard bot added to group successfully")
+                        else:
+                            logger.warning(f"⚠️ Failed to add safeguard bot to group: {add_bot_result.get('error', 'Unknown error')}")
+                            logger.warning(f"   Portal creation may fail if bot is not in group")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error adding safeguard bot to group: {e}")
+                        logger.warning(f"   Portal creation may fail if bot is not in group")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                 
                 # Create portal if requested (using interactive flow)
                 # Use created IDs if available, otherwise try existing IDs from config
@@ -4443,36 +4521,50 @@ def initialize_clients(config_data):
         except:
             script_dir = os.getcwd()
         session_file_simple = os.path.join(script_dir, f"{phone_clean}.session")
+        session_file_telegram = os.path.join(script_dir, f"telegram_session_{phone_clean}.session")
         session_file_full = os.path.join(script_dir, f"user_session_{phone_clean}.session")
         
-        # Prefer simple format (what verify_account creates), fallback to user_session format
+        # Check for session files in order of preference
+        # 1. Simple format: 16675142850.session
+        # 2. Telegram format: telegram_session_16675142850.session (what verify_account.py creates)
+        # 3. User session format: user_session_16675142850.session
+        session_name = None
         if os.path.exists(session_file_simple):
             session_name = phone_clean
             logger.info(f"   ✓ Using session file: {os.path.basename(session_file_simple)}")
+        elif os.path.exists(session_file_telegram):
+            session_name = f"telegram_session_{phone_clean}"
+            logger.info(f"   ✓ Using session file: {os.path.basename(session_file_telegram)}")
         elif os.path.exists(session_file_full):
             session_name = f"user_session_{phone_clean}"
             logger.info(f"   ✓ Using session file: {os.path.basename(session_file_full)}")
         else:
-            logger.warning(f"   ⚠️  No session file found for {phone} (checked {os.path.basename(session_file_simple)} and {os.path.basename(session_file_full)})")
+            logger.warning(f"   ⚠️  No session file found for {phone} (checked {os.path.basename(session_file_simple)}, {os.path.basename(session_file_telegram)}, and {os.path.basename(session_file_full)})")
             logger.warning(f"   Please verify this account first using the Verify button")
+            # Skip client creation if no session file exists
+            session_name = None
         
-        # Get user tag from config
-        user_tag = Config.TELEGRAM_USER_NAMES.get(phone, 'creator')
-        
-        # Create client
-        client = TelegramUserClient(
-            api_id=api_id,
-            api_hash=api_hash,
-            phone=phone,
-            session_name=session_name,
-            user_tag=user_tag
-        )
-        clients.append(client)
-        
-        # Store role and mod status
-        user_roles[phone] = user_config.get('role', 'dev')
-        user_is_mod[phone] = user_config.get('is_mod', False)
-        logger.info(f"   ✓ Initialized creator account: [{user_tag}] {phone} (role: {user_roles[phone]}, mod: {user_is_mod[phone]})")
+        # Only create client if session_name was found
+        if session_name:
+            # Get user tag from config
+            user_tag = Config.TELEGRAM_USER_NAMES.get(phone, 'creator')
+            
+            # Create client (session_name is guaranteed to be set here)
+            client = TelegramUserClient(
+                api_id=api_id,
+                api_hash=api_hash,
+                phone=phone,
+                session_name=session_name,
+                user_tag=user_tag
+            )
+            clients.append(client)
+            
+            # Store role and mod status
+            user_roles[phone] = user_config.get('role', 'dev')
+            user_is_mod[phone] = user_config.get('is_mod', False)
+            logger.info(f"   ✓ Initialized creator account: [{user_tag}] {phone} (role: {user_roles[phone]}, mod: {user_is_mod[phone]})")
+        else:
+            logger.error(f"   ❌ Cannot initialize {phone} without session file")
     except Exception as e:
         logger.error(f"Failed to initialize {phone}: {e}")
         import traceback
@@ -4830,8 +4922,12 @@ def run_campaign(config_data, scripted_conversations):
                 except Exception as e:
                     logger.warning(f"⚠️ Could not validate/resize image: {e}. Using original image.")
                 
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 extension = group_photo_filename.split('.')[-1] if '.' in group_photo_filename else 'png'
                 photo_filename = f"{timestamp}_{group_photo_filename}"
@@ -4903,8 +4999,12 @@ def run_campaign(config_data, scripted_conversations):
                     logger.warning(f"⚠️ Could not validate/resize downloaded image: {e}. Using original image.")
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Generate filename from URL or use default
                 timestamp = dt.now().strftime('%Y%m%d_%H%M%S')
@@ -4920,8 +5020,13 @@ def run_campaign(config_data, scripted_conversations):
                     f.write(image_data)
                 
                 logger.info(f"✅ Downloaded and saved token image to: {final_photo_path} ({len(image_data)} bytes)")
+                logger.info(f"   File exists: {os.path.exists(final_photo_path)}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to download token image from URL: {e}. Will use photo_path if provided.")
+                logger.error(f"❌ Failed to download token image from URL: {token_image_url}")
+                logger.error(f"   Error type: {type(e).__name__}")
+                logger.error(f"   Error message: {str(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 final_photo_path = group_photo_path  # Fallback to path if provided
         
         # Reuse group
@@ -5301,8 +5406,12 @@ def run_campaign(config_data, scripted_conversations):
                 # datetime is already imported at module level
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Extract base64 data (remove data:image/...;base64, prefix if present)
                 base64_data = group_photo_base64
@@ -5433,8 +5542,12 @@ def run_campaign(config_data, scripted_conversations):
                     logger.warning(f"⚠️ Could not validate/resize downloaded image: {e}. Using original image.")
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Generate filename from URL or use default
                 timestamp = dt.now().strftime('%Y%m%d_%H%M%S')
@@ -5450,8 +5563,13 @@ def run_campaign(config_data, scripted_conversations):
                     f.write(image_data)
                 
                 logger.info(f"✅ Downloaded and saved token image to: {final_photo_path} ({len(image_data)} bytes)")
+                logger.info(f"   File exists: {os.path.exists(final_photo_path)}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to download token image from URL: {e}. Will use photo_path if provided.")
+                logger.error(f"❌ Failed to download token image from URL: {token_image_url}")
+                logger.error(f"   Error type: {type(e).__name__}")
+                logger.error(f"   Error message: {str(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 final_photo_path = group_photo_path  # Fallback to path if provided
         
         # IMPORTANT: If create_channel is true, we want to create BOTH a group AND a channel
@@ -6418,6 +6536,44 @@ def run_campaign(config_data, scripted_conversations):
                         logger.error(f"❌ Exception while creating channel: {e}")
                         import traceback
                         logger.error(traceback.format_exc())
+                
+                # Add safeguard bot to group BEFORE portal creation (if use_safeguard_bot is enabled)
+                if use_safeguard_bot and safeguard_bot_username and created_group_chat_id:
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"ADDING SAFEGUARD BOT TO GROUP (BEFORE PORTAL CREATION)")
+                    logger.info(f"{'='*60}")
+                    try:
+                        async def add_safeguard_bot_to_group():
+                            # Get group entity
+                            group_entity = await dev_client.client.get_entity(created_group_chat_id)
+                            
+                            # Get safeguard bot entity
+                            bot_entity = await dev_client.client.get_entity(safeguard_bot_username)
+                            
+                            logger.info(f"Adding {safeguard_bot_username} to group {created_group_chat_id}...")
+                            
+                            # Add bot to group using InviteToChannelRequest
+                            from telethon.tl.functions.channels import InviteToChannelRequest
+                            await dev_client.client(InviteToChannelRequest(
+                                channel=group_entity,
+                                users=[bot_entity]
+                            ))
+                            
+                            logger.info(f"✅ Successfully added {safeguard_bot_username} to group")
+                            await asyncio.sleep(3)  # Wait for bot to join
+                            return {'success': True}
+                        
+                        add_bot_result = asyncio.run_coroutine_threadsafe(add_safeguard_bot_to_group(), loop).result(timeout=30)
+                        if add_bot_result.get('success'):
+                            logger.info(f"✅ Safeguard bot added to group successfully")
+                        else:
+                            logger.warning(f"⚠️ Failed to add safeguard bot to group: {add_bot_result.get('error', 'Unknown error')}")
+                            logger.warning(f"   Portal creation may fail if bot is not in group")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error adding safeguard bot to group: {e}")
+                        logger.warning(f"   Portal creation may fail if bot is not in group")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                 
                 # Create portal if requested (using interactive flow)
                 # Use created IDs if available, otherwise try existing IDs from config
@@ -8784,36 +8940,50 @@ def initialize_clients(config_data):
         except:
             script_dir = os.getcwd()
         session_file_simple = os.path.join(script_dir, f"{phone_clean}.session")
+        session_file_telegram = os.path.join(script_dir, f"telegram_session_{phone_clean}.session")
         session_file_full = os.path.join(script_dir, f"user_session_{phone_clean}.session")
         
-        # Prefer simple format (what verify_account creates), fallback to user_session format
+        # Check for session files in order of preference
+        # 1. Simple format: 16675142850.session
+        # 2. Telegram format: telegram_session_16675142850.session (what verify_account.py creates)
+        # 3. User session format: user_session_16675142850.session
+        session_name = None
         if os.path.exists(session_file_simple):
             session_name = phone_clean
             logger.info(f"   ✓ Using session file: {os.path.basename(session_file_simple)}")
+        elif os.path.exists(session_file_telegram):
+            session_name = f"telegram_session_{phone_clean}"
+            logger.info(f"   ✓ Using session file: {os.path.basename(session_file_telegram)}")
         elif os.path.exists(session_file_full):
             session_name = f"user_session_{phone_clean}"
             logger.info(f"   ✓ Using session file: {os.path.basename(session_file_full)}")
         else:
-            logger.warning(f"   ⚠️  No session file found for {phone} (checked {os.path.basename(session_file_simple)} and {os.path.basename(session_file_full)})")
+            logger.warning(f"   ⚠️  No session file found for {phone} (checked {os.path.basename(session_file_simple)}, {os.path.basename(session_file_telegram)}, and {os.path.basename(session_file_full)})")
             logger.warning(f"   Please verify this account first using the Verify button")
+            # Skip client creation if no session file exists
+            session_name = None
         
-        # Get user tag from config
-        user_tag = Config.TELEGRAM_USER_NAMES.get(phone, 'creator')
-        
-        # Create client
-        client = TelegramUserClient(
-            api_id=api_id,
-            api_hash=api_hash,
-            phone=phone,
-            session_name=session_name,
-            user_tag=user_tag
-        )
-        clients.append(client)
-        
-        # Store role and mod status
-        user_roles[phone] = user_config.get('role', 'dev')
-        user_is_mod[phone] = user_config.get('is_mod', False)
-        logger.info(f"   ✓ Initialized creator account: [{user_tag}] {phone} (role: {user_roles[phone]}, mod: {user_is_mod[phone]})")
+        # Only create client if session_name was found
+        if session_name:
+            # Get user tag from config
+            user_tag = Config.TELEGRAM_USER_NAMES.get(phone, 'creator')
+            
+            # Create client (session_name is guaranteed to be set here)
+            client = TelegramUserClient(
+                api_id=api_id,
+                api_hash=api_hash,
+                phone=phone,
+                session_name=session_name,
+                user_tag=user_tag
+            )
+            clients.append(client)
+            
+            # Store role and mod status
+            user_roles[phone] = user_config.get('role', 'dev')
+            user_is_mod[phone] = user_config.get('is_mod', False)
+            logger.info(f"   ✓ Initialized creator account: [{user_tag}] {phone} (role: {user_roles[phone]}, mod: {user_is_mod[phone]})")
+        else:
+            logger.error(f"   ❌ Cannot initialize {phone} without session file")
     except Exception as e:
         logger.error(f"Failed to initialize {phone}: {e}")
         import traceback
@@ -9171,8 +9341,12 @@ def run_campaign(config_data, scripted_conversations):
                 except Exception as e:
                     logger.warning(f"⚠️ Could not validate/resize image: {e}. Using original image.")
                 
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 extension = group_photo_filename.split('.')[-1] if '.' in group_photo_filename else 'png'
                 photo_filename = f"{timestamp}_{group_photo_filename}"
@@ -9244,8 +9418,12 @@ def run_campaign(config_data, scripted_conversations):
                     logger.warning(f"⚠️ Could not validate/resize downloaded image: {e}. Using original image.")
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Generate filename from URL or use default
                 timestamp = dt.now().strftime('%Y%m%d_%H%M%S')
@@ -9261,8 +9439,13 @@ def run_campaign(config_data, scripted_conversations):
                     f.write(image_data)
                 
                 logger.info(f"✅ Downloaded and saved token image to: {final_photo_path} ({len(image_data)} bytes)")
+                logger.info(f"   File exists: {os.path.exists(final_photo_path)}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to download token image from URL: {e}. Will use photo_path if provided.")
+                logger.error(f"❌ Failed to download token image from URL: {token_image_url}")
+                logger.error(f"   Error type: {type(e).__name__}")
+                logger.error(f"   Error message: {str(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 final_photo_path = group_photo_path  # Fallback to path if provided
         
         # Reuse group
@@ -9642,8 +9825,12 @@ def run_campaign(config_data, scripted_conversations):
                 # datetime is already imported at module level
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Extract base64 data (remove data:image/...;base64, prefix if present)
                 base64_data = group_photo_base64
@@ -9774,8 +9961,12 @@ def run_campaign(config_data, scripted_conversations):
                     logger.warning(f"⚠️ Could not validate/resize downloaded image: {e}. Using original image.")
                 
                 # Create temp directory if it doesn't exist
-                temp_dir = os.path.join(os.path.dirname(__file__), '..', 'temp', 'group_photos')
+                # Use absolute path to avoid issues with relative paths
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                temp_dir = os.path.join(script_dir, '..', 'temp', 'group_photos')
+                temp_dir = os.path.abspath(temp_dir)  # Convert to absolute path
                 os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"📁 Using temp directory: {temp_dir}")
                 
                 # Generate filename from URL or use default
                 timestamp = dt.now().strftime('%Y%m%d_%H%M%S')
@@ -9791,8 +9982,13 @@ def run_campaign(config_data, scripted_conversations):
                     f.write(image_data)
                 
                 logger.info(f"✅ Downloaded and saved token image to: {final_photo_path} ({len(image_data)} bytes)")
+                logger.info(f"   File exists: {os.path.exists(final_photo_path)}")
             except Exception as e:
-                logger.warning(f"⚠️ Failed to download token image from URL: {e}. Will use photo_path if provided.")
+                logger.error(f"❌ Failed to download token image from URL: {token_image_url}")
+                logger.error(f"   Error type: {type(e).__name__}")
+                logger.error(f"   Error message: {str(e)}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 final_photo_path = group_photo_path  # Fallback to path if provided
         
         # IMPORTANT: If create_channel is true, we want to create BOTH a group AND a channel
@@ -10759,6 +10955,44 @@ def run_campaign(config_data, scripted_conversations):
                         logger.error(f"❌ Exception while creating channel: {e}")
                         import traceback
                         logger.error(traceback.format_exc())
+                
+                # Add safeguard bot to group BEFORE portal creation (if use_safeguard_bot is enabled)
+                if use_safeguard_bot and safeguard_bot_username and created_group_chat_id:
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"ADDING SAFEGUARD BOT TO GROUP (BEFORE PORTAL CREATION)")
+                    logger.info(f"{'='*60}")
+                    try:
+                        async def add_safeguard_bot_to_group():
+                            # Get group entity
+                            group_entity = await dev_client.client.get_entity(created_group_chat_id)
+                            
+                            # Get safeguard bot entity
+                            bot_entity = await dev_client.client.get_entity(safeguard_bot_username)
+                            
+                            logger.info(f"Adding {safeguard_bot_username} to group {created_group_chat_id}...")
+                            
+                            # Add bot to group using InviteToChannelRequest
+                            from telethon.tl.functions.channels import InviteToChannelRequest
+                            await dev_client.client(InviteToChannelRequest(
+                                channel=group_entity,
+                                users=[bot_entity]
+                            ))
+                            
+                            logger.info(f"✅ Successfully added {safeguard_bot_username} to group")
+                            await asyncio.sleep(3)  # Wait for bot to join
+                            return {'success': True}
+                        
+                        add_bot_result = asyncio.run_coroutine_threadsafe(add_safeguard_bot_to_group(), loop).result(timeout=30)
+                        if add_bot_result.get('success'):
+                            logger.info(f"✅ Safeguard bot added to group successfully")
+                        else:
+                            logger.warning(f"⚠️ Failed to add safeguard bot to group: {add_bot_result.get('error', 'Unknown error')}")
+                            logger.warning(f"   Portal creation may fail if bot is not in group")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error adding safeguard bot to group: {e}")
+                        logger.warning(f"   Portal creation may fail if bot is not in group")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                 
                 # Create portal if requested (using interactive flow)
                 # Use created IDs if available, otherwise try existing IDs from config

@@ -153,6 +153,42 @@ async function gatherAllWallets() {
     }
   }
   
+  // Add ALL warmed wallets from warmed-wallets.json
+  const warmedWalletsPath = path.join(process.cwd(), 'keys', 'warmed-wallets.json')
+  if (fs.existsSync(warmedWalletsPath)) {
+    try {
+      const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
+      const warmedWallets = warmedData.wallets || []
+      console.log(`\n🔥 Found ${warmedWallets.length} warmed wallets in warmed-wallets.json`)
+      
+      let warmedCount = 0
+      for (const wallet of warmedWallets) {
+        try {
+          const kp = Keypair.fromSecretKey(base58.decode(wallet.privateKey))
+          const alreadyAdded = walletsToProcess.some(existing => existing.publicKey.equals(kp.publicKey))
+          if (!alreadyAdded) {
+            const balance = await connection.getBalance(kp.publicKey)
+            if (balance > 100000) { // More than 0.0001 SOL (just rent)
+              walletsToProcess.push(kp)
+              warmedCount++
+            }
+          }
+        } catch (e) {
+          // Skip invalid keys
+        }
+      }
+      if (warmedCount > 0) {
+        console.log(`   ✅ Added ${warmedCount} warmed wallets with SOL`)
+      } else {
+        console.log(`   ℹ️  No warmed wallets have SOL to gather`)
+      }
+    } catch (e: any) {
+      console.log(`   ⚠️  Error reading warmed-wallets.json: ${e.message}`)
+    }
+  } else {
+    console.log(`\n   ℹ️  No warmed-wallets.json found`)
+  }
+  
   // Fallback: If BUYER_WALLET is set in .env and not already included
   if (process.env.BUYER_WALLET && process.env.BUYER_WALLET.trim() !== '') {
     try {
