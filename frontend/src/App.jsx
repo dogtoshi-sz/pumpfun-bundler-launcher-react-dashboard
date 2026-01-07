@@ -27,6 +27,7 @@ import HolderWallets from './components/HolderWallets';
 import Settings from './components/Settings';
 import WalletTester from './components/WalletTester';
 import WalletWarming from './components/WalletWarming';
+import WalletConnection from './components/WalletConnection';
 
 function App() {
   const [activeTab, setActiveTab] = useState('launch');
@@ -121,10 +122,8 @@ function App() {
                   <button className="p-2 hover:bg-gray-900/50 rounded-lg transition-colors">
                     <Squares2X2Icon className="w-5 h-5 text-gray-400" />
                   </button>
-                  <button className="p-2 hover:bg-gray-900/50 rounded-lg transition-colors">
-                    <UserIcon className="w-5 h-5 text-gray-400" />
-                  </button>
                 </div>
+                <WalletConnection />
               </div>
             </div>
           </div>
