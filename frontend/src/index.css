@@ -104,3 +104,70 @@ code {
 ::-webkit-scrollbar-thumb:hover {
   background: #2a2a2a;
 }
+
+/* Solana Wallet Adapter Custom Styles */
+.wallet-adapter-button {
+  background-color: #2563eb !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  padding: 0.5rem 1rem !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  transition: all 0.2s ease !important;
+}
+
+.wallet-adapter-button:hover {
+  background-color: #1d4ed8 !important;
+}
+
+.wallet-adapter-button:not([disabled]):hover {
+  background-color: #1d4ed8 !important;
+}
+
+.wallet-adapter-modal-wrapper {
+  background-color: rgba(0, 0, 0, 0.8) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.wallet-adapter-modal {
+  background-color: #111827 !important;
+  border: 1px solid #374151 !important;
+  border-radius: 0.75rem !important;
+}
+
+.wallet-adapter-modal-title {
+  color: white !important;
+}
+
+.wallet-adapter-modal-list {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.wallet-adapter-modal-list-item {
+  background-color: #1f2937 !important;
+  border: 1px solid #374151 !important;
+  border-radius: 0.5rem !important;
+  color: white !important;
+  transition: all 0.2s ease !important;
+}
+
+.wallet-adapter-modal-list-item:hover {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+}
+
+.wallet-adapter-modal-list-item button {
+  color: white !important;
+}
+
+.wallet-adapter-modal-button-close {
+  background-color: transparent !important;
+  color: #9ca3af !important;
+}
+
+.wallet-adapter-modal-button-close:hover {
+  color: white !important;
+  background-color: #374151 !important;
+}
