@@ -936,15 +936,21 @@ const getVariableGasFee = (): number => {
   return Math.floor(baseFee * variation)
 }
 
+// Global cache for intermediary wallets (shared across all transfers in a launch)
+// This ensures we reuse the same intermediaries for all wallets, not create fresh ones for each
+let globalIntermediaryWalletsCache: { [hopNumber: number]: Keypair[] } | null = null
+
 // New function: Fund wallet through multiple intermediaries
 // Route: Funding → Inter1 → Inter2 → Final Wallet
 // Saves ALL intermediary wallets and uses variable gas fees
+// IMPORTANT: Reuses the same intermediaries for all wallets in a launch (better privacy + efficiency)
 export const fundExistingWalletWithMultipleIntermediaries = async (
   connection: Connection,
   mainKp: Keypair,
   targetWallet: Keypair,
   amount: number,
-  numIntermediaries: number = 2
+  numIntermediaries: number = 2,
+  reuseIntermediaries: boolean = true // If true, reuse intermediaries across all transfers
 ): Promise<boolean> => {
   try {
     const solAmount = Math.floor(amount * 1e9)
@@ -954,15 +960,24 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
     const CREATE_FRESH_INTERMEDIARIES = (process.env.CREATE_FRESH_INTERMEDIARIES || 'true').toLowerCase() === 'true'
     let walletsByHop: { [hopNumber: number]: Keypair[] } = {}
     
-    if (CREATE_FRESH_INTERMEDIARIES) {
+    // If reusing intermediaries, check global cache first
+    if (reuseIntermediaries && globalIntermediaryWalletsCache) {
+      walletsByHop = globalIntermediaryWalletsCache
+      console.log(`🔀 Reusing existing intermediary wallets from cache (shared across all transfers)`)
+    } else if (CREATE_FRESH_INTERMEDIARIES) {
       // Create fresh intermediaries for this launch (better privacy)
-      console.log(`🔀 Creating ${numIntermediaries} fresh intermediary wallet(s) for this transfer...`)
+      // Only create once per launch, then reuse for all wallets
+      console.log(`🔀 Creating ${numIntermediaries} fresh intermediary wallet(s) for this launch (will be reused for all transfers)...`)
       for (let hop = 1; hop <= numIntermediaries; hop++) {
         walletsByHop[hop] = [Keypair.generate()]
       }
       saveIntermediaryWallets(walletsByHop)
+      // Cache for reuse
+      if (reuseIntermediaries) {
+        globalIntermediaryWalletsCache = walletsByHop
+      }
     } else {
-      // Reuse existing intermediaries
+      // Reuse existing intermediaries from file
       walletsByHop = loadIntermediaryWallets()
       
       // Create missing intermediaries if needed
@@ -973,6 +988,10 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
         }
       }
       saveIntermediaryWallets(walletsByHop)
+      // Cache for reuse
+      if (reuseIntermediaries) {
+        globalIntermediaryWalletsCache = walletsByHop
+      }
     }
     
     // Build the chain: Funding → Inter1 → Inter2 → ... → Final

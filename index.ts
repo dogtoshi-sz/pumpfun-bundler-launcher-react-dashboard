@@ -632,33 +632,50 @@ const main = async () => {
       console.log(`   ✅ Using default SWAP_AMOUNT (${SWAP_AMOUNT}) for all wallets`)
     }
     
-    for (let i = 0; i < warmedBundleWallets.length; i++) {
-      const wallet = warmedBundleWallets[i]
-      const amount = amountsToUse[i] || SWAP_AMOUNT
-      const requiredAmount = amount + 0.01 // Add buffer for fees
+    // Process warmed wallets in parallel batches (same as fresh wallets)
+    const parallelBatchSize = 5 // Process 5 wallets in parallel at a time
+    const randomDelay = () => Math.random() * 500 + 200 // 200-700ms random delay for privacy
+    
+    // Pre-load mixing wallets once if using mixing (shared across all wallets)
+    let mixingWallets: Keypair[] = []
+    if (USE_MIXING_WALLETS && !USE_MULTI_INTERMEDIARY_SYSTEM) {
+      mixingWallets = loadMixingWallets()
+    }
+    
+    // Process wallets in parallel batches
+    for (let batchStart = 0; batchStart < warmedBundleWallets.length; batchStart += parallelBatchSize) {
+      const batchEnd = Math.min(batchStart + parallelBatchSize, warmedBundleWallets.length)
+      const batch = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i)
       
-      const currentBalance = await connection.getBalance(wallet.publicKey)
-      const currentBalanceSol = currentBalance / 1e9
+      console.log(`🔀 Processing warmed bundle wallets batch ${Math.floor(batchStart / parallelBatchSize) + 1}/${Math.ceil(warmedBundleWallets.length / parallelBatchSize)} (wallets ${batchStart + 1}-${batchEnd})...`)
       
-      if (currentBalanceSol < requiredAmount) {
-        const fundingNeeded = requiredAmount - currentBalanceSol
-        console.log(`   💰 Funding wallet ${i + 1}/${warmedBundleWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
+      await Promise.all(batch.map(async (i) => {
+        const wallet = warmedBundleWallets[i]
+        const amount = amountsToUse[i] || SWAP_AMOUNT
+        const requiredAmount = amount + 0.01 // Add buffer for fees
         
-        if (USE_MULTI_INTERMEDIARY_SYSTEM) {
-          const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS)
-          if (!success) {
-            console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1} through intermediaries`)
-            return
-          }
-        } else if (USE_MIXING_WALLETS) {
-          const mixingWallets = loadMixingWallets()
-          if (mixingWallets.length > 0) {
-            const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
-            if (!success) {
-              console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1}`)
-              return
-            }
-          } else {
+        const currentBalance = await connection.getBalance(wallet.publicKey)
+        const currentBalanceSol = currentBalance / 1e9
+        
+        if (currentBalanceSol < requiredAmount) {
+          const fundingNeeded = requiredAmount - currentBalanceSol
+          console.log(`   💰 Funding wallet ${i + 1}/${warmedBundleWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
+          
+          try {
+            if (USE_MULTI_INTERMEDIARY_SYSTEM) {
+              // Reuse intermediaries across all wallets (reuseIntermediaries=true)
+              const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS, true)
+              if (!success) {
+                console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1} through intermediaries`)
+                return
+              }
+            } else if (USE_MIXING_WALLETS && mixingWallets.length > 0) {
+              const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
+              if (!success) {
+                console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1}`)
+                return
+              }
+            } else {
             // Direct funding fallback
             const latestBlockhash = await connection.getLatestBlockhash()
             const fundingLamports = Math.ceil(fundingNeeded * 1e9)
@@ -776,37 +793,55 @@ const main = async () => {
       console.log(`   ✅ Using default HOLDER_WALLET_AMOUNT (${holderWalletAmount}) for all wallets`)
     }
     
-    for (let i = 0; i < warmedHolderWallets.length; i++) {
-      const wallet = warmedHolderWallets[i]
-      const amount = holderAmountsToUse[i] || holderWalletAmount
-      const requiredAmount = amount + 0.01 // Add buffer for fees
+    // Process warmed holder wallets in parallel batches (same as fresh wallets)
+    const holderParallelBatchSize = 5 // Process 5 wallets in parallel at a time
+    
+    // Pre-load mixing wallets once if using mixing (shared across all wallets)
+    let holderMixingWallets: Keypair[] = []
+    if (USE_MIXING_WALLETS && !USE_MULTI_INTERMEDIARY_SYSTEM) {
+      holderMixingWallets = loadMixingWallets()
+    }
+    
+    // Process wallets in parallel batches
+    for (let batchStart = 0; batchStart < warmedHolderWallets.length; batchStart += holderParallelBatchSize) {
+      const batchEnd = Math.min(batchStart + holderParallelBatchSize, warmedHolderWallets.length)
+      const batch = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i)
       
-      const currentBalance = await connection.getBalance(wallet.publicKey)
-      const currentBalanceSol = currentBalance / 1e9
+      console.log(`🔀 Processing warmed holder wallets batch ${Math.floor(batchStart / holderParallelBatchSize) + 1}/${Math.ceil(warmedHolderWallets.length / holderParallelBatchSize)} (wallets ${batchStart + 1}-${batchEnd})...`)
       
-      if (currentBalanceSol < requiredAmount) {
-        const fundingNeeded = requiredAmount - currentBalanceSol
-        console.log(`   💰 Funding holder wallet ${i + 1}/${warmedHolderWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
+      await Promise.all(batch.map(async (i) => {
+        const wallet = warmedHolderWallets[i]
+        const amount = holderAmountsToUse[i] || holderWalletAmount
+        const requiredAmount = amount + 0.01 // Add buffer for fees
         
-        if (USE_MULTI_INTERMEDIARY_SYSTEM) {
-          const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS)
-          if (!success) {
-            console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} through intermediaries - skipping this wallet`)
-            console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
-            continue // Skip this wallet and continue with others
-          }
-        } else if (USE_MIXING_WALLETS) {
-          const mixingWallets = loadMixingWallets()
-          if (mixingWallets.length > 0) {
-            const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
-            if (!success) {
-              console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} - skipping this wallet`)
-              console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
-              continue // Skip this wallet and continue with others
-            }
-            successfullyFundedWallets.push(wallet)
-            successfullyFundedAmounts.push(amount)
-          } else {
+        const currentBalance = await connection.getBalance(wallet.publicKey)
+        const currentBalanceSol = currentBalance / 1e9
+        
+        if (currentBalanceSol < requiredAmount) {
+          const fundingNeeded = requiredAmount - currentBalanceSol
+          console.log(`   💰 Funding holder wallet ${i + 1}/${warmedHolderWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
+          
+          try {
+            if (USE_MULTI_INTERMEDIARY_SYSTEM) {
+              // Reuse intermediaries across all wallets (reuseIntermediaries=true)
+              const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS, true)
+              if (!success) {
+                console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} through intermediaries - skipping this wallet`)
+                console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
+                return // Skip this wallet and continue with others
+              }
+              successfullyFundedWallets.push(wallet)
+              successfullyFundedAmounts.push(amount)
+            } else if (USE_MIXING_WALLETS && holderMixingWallets.length > 0) {
+              const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, holderMixingWallets)
+              if (!success) {
+                console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} - skipping this wallet`)
+                console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
+                return // Skip this wallet and continue with others
+              }
+              successfullyFundedWallets.push(wallet)
+              successfullyFundedAmounts.push(amount)
+            } else {
             // Direct funding fallback
             try {
               const latestBlockhash = await connection.getLatestBlockhash()
