@@ -2118,44 +2118,6 @@ def run_campaign(config_data, scripted_conversations):
                         import traceback
                         logger.error(traceback.format_exc())
                 
-                # Add safeguard bot to group BEFORE portal creation (if use_safeguard_bot is enabled)
-                if use_safeguard_bot and safeguard_bot_username and created_group_chat_id:
-                    logger.info(f"\n{'='*60}")
-                    logger.info(f"ADDING SAFEGUARD BOT TO GROUP (BEFORE PORTAL CREATION)")
-                    logger.info(f"{'='*60}")
-                    try:
-                        async def add_safeguard_bot_to_group():
-                            # Get group entity
-                            group_entity = await dev_client.client.get_entity(created_group_chat_id)
-                            
-                            # Get safeguard bot entity
-                            bot_entity = await dev_client.client.get_entity(safeguard_bot_username)
-                            
-                            logger.info(f"Adding {safeguard_bot_username} to group {created_group_chat_id}...")
-                            
-                            # Add bot to group using InviteToChannelRequest
-                            from telethon.tl.functions.channels import InviteToChannelRequest
-                            await dev_client.client(InviteToChannelRequest(
-                                channel=group_entity,
-                                users=[bot_entity]
-                            ))
-                            
-                            logger.info(f"✅ Successfully added {safeguard_bot_username} to group")
-                            await asyncio.sleep(3)  # Wait for bot to join
-                            return {'success': True}
-                        
-                        add_bot_result = asyncio.run_coroutine_threadsafe(add_safeguard_bot_to_group(), loop).result(timeout=30)
-                        if add_bot_result.get('success'):
-                            logger.info(f"✅ Safeguard bot added to group successfully")
-                        else:
-                            logger.warning(f"⚠️ Failed to add safeguard bot to group: {add_bot_result.get('error', 'Unknown error')}")
-                            logger.warning(f"   Portal creation may fail if bot is not in group")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Error adding safeguard bot to group: {e}")
-                        logger.warning(f"   Portal creation may fail if bot is not in group")
-                        import traceback
-                        logger.warning(traceback.format_exc())
-                
                 # Create portal if requested (using interactive flow)
                 # Use created IDs if available, otherwise try existing IDs from config
                 portal_group_id = created_group_chat_id or existing_group_chat_id
@@ -6537,44 +6499,6 @@ def run_campaign(config_data, scripted_conversations):
                         import traceback
                         logger.error(traceback.format_exc())
                 
-                # Add safeguard bot to group BEFORE portal creation (if use_safeguard_bot is enabled)
-                if use_safeguard_bot and safeguard_bot_username and created_group_chat_id:
-                    logger.info(f"\n{'='*60}")
-                    logger.info(f"ADDING SAFEGUARD BOT TO GROUP (BEFORE PORTAL CREATION)")
-                    logger.info(f"{'='*60}")
-                    try:
-                        async def add_safeguard_bot_to_group():
-                            # Get group entity
-                            group_entity = await dev_client.client.get_entity(created_group_chat_id)
-                            
-                            # Get safeguard bot entity
-                            bot_entity = await dev_client.client.get_entity(safeguard_bot_username)
-                            
-                            logger.info(f"Adding {safeguard_bot_username} to group {created_group_chat_id}...")
-                            
-                            # Add bot to group using InviteToChannelRequest
-                            from telethon.tl.functions.channels import InviteToChannelRequest
-                            await dev_client.client(InviteToChannelRequest(
-                                channel=group_entity,
-                                users=[bot_entity]
-                            ))
-                            
-                            logger.info(f"✅ Successfully added {safeguard_bot_username} to group")
-                            await asyncio.sleep(3)  # Wait for bot to join
-                            return {'success': True}
-                        
-                        add_bot_result = asyncio.run_coroutine_threadsafe(add_safeguard_bot_to_group(), loop).result(timeout=30)
-                        if add_bot_result.get('success'):
-                            logger.info(f"✅ Safeguard bot added to group successfully")
-                        else:
-                            logger.warning(f"⚠️ Failed to add safeguard bot to group: {add_bot_result.get('error', 'Unknown error')}")
-                            logger.warning(f"   Portal creation may fail if bot is not in group")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Error adding safeguard bot to group: {e}")
-                        logger.warning(f"   Portal creation may fail if bot is not in group")
-                        import traceback
-                        logger.warning(traceback.format_exc())
-                
                 # Create portal if requested (using interactive flow)
                 # Use created IDs if available, otherwise try existing IDs from config
                 portal_group_id = created_group_chat_id or existing_group_chat_id
@@ -10955,44 +10879,6 @@ def run_campaign(config_data, scripted_conversations):
                         logger.error(f"❌ Exception while creating channel: {e}")
                         import traceback
                         logger.error(traceback.format_exc())
-                
-                # Add safeguard bot to group BEFORE portal creation (if use_safeguard_bot is enabled)
-                if use_safeguard_bot and safeguard_bot_username and created_group_chat_id:
-                    logger.info(f"\n{'='*60}")
-                    logger.info(f"ADDING SAFEGUARD BOT TO GROUP (BEFORE PORTAL CREATION)")
-                    logger.info(f"{'='*60}")
-                    try:
-                        async def add_safeguard_bot_to_group():
-                            # Get group entity
-                            group_entity = await dev_client.client.get_entity(created_group_chat_id)
-                            
-                            # Get safeguard bot entity
-                            bot_entity = await dev_client.client.get_entity(safeguard_bot_username)
-                            
-                            logger.info(f"Adding {safeguard_bot_username} to group {created_group_chat_id}...")
-                            
-                            # Add bot to group using InviteToChannelRequest
-                            from telethon.tl.functions.channels import InviteToChannelRequest
-                            await dev_client.client(InviteToChannelRequest(
-                                channel=group_entity,
-                                users=[bot_entity]
-                            ))
-                            
-                            logger.info(f"✅ Successfully added {safeguard_bot_username} to group")
-                            await asyncio.sleep(3)  # Wait for bot to join
-                            return {'success': True}
-                        
-                        add_bot_result = asyncio.run_coroutine_threadsafe(add_safeguard_bot_to_group(), loop).result(timeout=30)
-                        if add_bot_result.get('success'):
-                            logger.info(f"✅ Safeguard bot added to group successfully")
-                        else:
-                            logger.warning(f"⚠️ Failed to add safeguard bot to group: {add_bot_result.get('error', 'Unknown error')}")
-                            logger.warning(f"   Portal creation may fail if bot is not in group")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Error adding safeguard bot to group: {e}")
-                        logger.warning(f"   Portal creation may fail if bot is not in group")
-                        import traceback
-                        logger.warning(traceback.format_exc())
                 
                 # Create portal if requested (using interactive flow)
                 # Use created IDs if available, otherwise try existing IDs from config

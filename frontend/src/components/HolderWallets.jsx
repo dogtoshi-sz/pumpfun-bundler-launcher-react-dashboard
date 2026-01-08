@@ -9,7 +9,16 @@ export default function HolderWallets() {
   const [menuRunning, setMenuRunning] = useState({});
   const [terminalMessages, setTerminalMessages] = useState([]); // Terminal log messages
   const terminalRef = useRef(null);
-  const [priorityFee, setPriorityFee] = useState('low'); // 'low', 'medium', or 'high'
+  // Load priority fee from localStorage or default to 'low'
+  const [priorityFee, setPriorityFee] = useState(() => {
+    const saved = localStorage.getItem('holderWalletPriorityFee');
+    return saved || 'low';
+  });
+
+  // Save priority fee to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('holderWalletPriorityFee', priorityFee);
+  }, [priorityFee]);
 
   useEffect(() => {
     loadWallets();
@@ -156,7 +165,7 @@ export default function HolderWallets() {
       await apiService.buyTokens(wallet.privateKey, mintAddress, amount, undefined, priorityFee);
       const feeText = priorityFee === 'high' ? 'HIGH' : priorityFee === 'medium' ? 'MEDIUM' : 'LOW';
       addTerminalMessage(`✅ Buy successful! ${amount} SOL from ${wallet.address.substring(0, 8)} (${feeText} priority)`, 'success');
-      setTimeout(loadWallets, 2000);
+      setTimeout(loadWallets, 500); // Reduced delay for faster UI update
     } catch (error) {
       addTerminalMessage(`❌ Buy failed: ${error.response?.data?.error || error.message}`, 'error');
     } finally {
@@ -183,7 +192,7 @@ export default function HolderWallets() {
       await apiService.sellTokens(wallet.privateKey, mintAddress, percentage, priorityFee);
       const feeText = priorityFee === 'high' ? 'HIGH' : priorityFee === 'medium' ? 'MEDIUM' : 'LOW';
       addTerminalMessage(`✅ Sell successful! ${percentage}% from ${wallet.address.substring(0, 8)} (${feeText} priority)`, 'success');
-      setTimeout(loadWallets, 2000);
+      setTimeout(loadWallets, 500); // Reduced delay for faster UI update
     } catch (error) {
       addTerminalMessage(`❌ Sell failed: ${error.response?.data?.error || error.message}`, 'error');
     } finally {
@@ -219,7 +228,7 @@ export default function HolderWallets() {
       const feeText = priorityFee === 'high' ? 'HIGH' : priorityFee === 'medium' ? 'MEDIUM' : 'LOW';
       addTerminalMessage(`✅ Buy successful! ${amount} SOL from ${wallet.address.substring(0, 8)} (${feeText} priority)`, 'success');
       setManualInputs({ ...manualInputs, [inputKey]: '' });
-      setTimeout(loadWallets, 2000);
+      setTimeout(loadWallets, 500); // Reduced delay for faster UI update
     } catch (error) {
       addTerminalMessage(`❌ Buy failed: ${error.response?.data?.error || error.message}`, 'error');
     } finally {
@@ -256,7 +265,7 @@ export default function HolderWallets() {
       const feeText = priorityFee === 'high' ? 'HIGH' : priorityFee === 'medium' ? 'MEDIUM' : 'LOW';
       addTerminalMessage(`✅ Sell successful! ${sellPercent}% from ${wallet.address.substring(0, 8)} (${feeText} priority)`, 'success');
       setManualInputs({ ...manualInputs, [inputKey]: '' });
-      setTimeout(loadWallets, 2000);
+      setTimeout(loadWallets, 500); // Reduced delay for faster UI update
     } catch (error) {
       addTerminalMessage(`❌ Sell failed: ${error.response?.data?.error || error.message}`, 'error');
     } finally {
@@ -293,7 +302,7 @@ export default function HolderWallets() {
         }
       });
       
-      setTimeout(loadWallets, 2000); // Refresh wallets after command
+      setTimeout(loadWallets, 500); // Refresh wallets after command (reduced delay)
     } catch (error) {
       addTerminalMessage(`❌ ${commandNames[commandId] || commandId} failed: ${error.response?.data?.error || error.message}`, 'error');
     } finally {
@@ -333,7 +342,7 @@ export default function HolderWallets() {
   return (
     <div className="bg-gray-900/50 rounded-lg p-6">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-white">💼 All Wallets</h2>
+        <h2 className="text-2xl font-bold text-white">💼 Trading Dashboard</h2>
         <button
           onClick={loadWallets}
           className="px-4 py-2 bg-gray-900/50 hover:bg-gray-800 text-white rounded-lg transition-colors"
@@ -341,6 +350,8 @@ export default function HolderWallets() {
           🔄 Refresh
         </button>
       </div>
+
+      {/* Wallets Section */}
 
       <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-3 bg-gray-900/50 rounded-lg">

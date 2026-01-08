@@ -1042,9 +1042,9 @@ class TelegramUserClient:
             logger.info("STEP 7: CLICKING 'CREATE PORTAL' BUTTON")
             logger.info("="*60)
             try:
-                # Wait a bit more for bot to send the "Create Portal" message
-                logger.info("Waiting 3 seconds for bot to send 'Create Portal' message...")
-                await asyncio.sleep(3)
+                # Wait longer for bot to send the "Create Portal" message
+                logger.info("Waiting 5 seconds for bot to send 'Create Portal' message...")
+                await asyncio.sleep(5)
                 
                 create_portal_message = None
                 logger.info("Searching for 'Create Portal' button message...")
@@ -1080,8 +1080,8 @@ class TelegramUserClient:
                     
                     if create_portal_message:
                         break
-                    logger.info(f"  No portal message found yet, waiting 2 seconds...")
-                    await asyncio.sleep(2)
+                    logger.info(f"  No portal message found yet, waiting 3 seconds...")
+                    await asyncio.sleep(3)
                 
                 if not create_portal_message:
                     logger.error("❌ Could not find 'Create Portal' button message")
@@ -1171,8 +1171,8 @@ class TelegramUserClient:
                         return {'success': False, 'error': f'Failed to click Create Portal button: {error_str}'}
                 
                 logger.info("✅ 'Create Portal' button clicked successfully")
-                logger.info("Waiting 6 seconds for portal creation confirmation...")
-                await asyncio.sleep(6)  # Wait for portal creation confirmation
+                logger.info("Waiting 8 seconds for portal creation confirmation...")
+                await asyncio.sleep(8)  # Wait longer for portal creation confirmation
                 
             except Exception as e:
                 logger.error(f"Error clicking 'Create Portal' button: {e}")

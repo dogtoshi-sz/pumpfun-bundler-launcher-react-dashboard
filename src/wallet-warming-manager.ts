@@ -5,7 +5,7 @@ import { Connection, Keypair, PublicKey, SystemProgram, TransactionMessage, Vers
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
-import { buyTokenSimple, sellTokenSimple } from "../trading-terminal"
+import { buyTokenSimple, sellTokenSimple, getWalletTokenBalance } from "../trading-terminal"
 import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "../constants"
 import { sleep } from "../utils"
 import { getCachedTrendingTokens } from "./fetch-trending-tokens"
@@ -22,11 +22,13 @@ export interface WarmedWallet {
   firstTransactionDate: string | null // ISO date string
   lastTransactionDate: string | null // ISO date string
   totalTrades: number // Total successful trades (buy+sell pairs)
+  tradesLast7Days?: number // Trades in the last 7 days (from exact point in time)
   createdAt: string // When wallet was added
   status: 'idle' | 'warming' | 'ready' // Current status
-  tags: string[] // Tags like "OLD", "recent", etc.
+  tags: string[] // Tags like "OLD", "recent", "recently-warmed", etc.
   solBalance?: number // Cached SOL balance (updated on demand)
   lastBalanceUpdate?: string // When balance was last updated
+  lastWarmedAt?: string // ISO date string - when wallet was last warmed
 }
 
 // Resolve path relative to project root (not api-server directory)
@@ -87,6 +89,7 @@ export function createWarmingWallet(tags: string[] = []): WarmedWallet {
     firstTransactionDate: null,
     lastTransactionDate: null,
     totalTrades: 0,
+    tradesLast7Days: 0,
     createdAt: new Date().toISOString(),
     status: 'idle',
     tags: tags || []
@@ -124,6 +127,7 @@ export function addWarmingWallet(privateKey: string, tags: string[] = []): Warme
     firstTransactionDate: null,
     lastTransactionDate: null,
     totalTrades: 0,
+    tradesLast7Days: 0,
     createdAt: new Date().toISOString(),
     status: 'idle',
     tags: tags || []
@@ -149,6 +153,63 @@ export function updateWalletTags(address: string, tags: string[]): boolean {
   return false
 }
 
+// Transfer SOL from one wallet to another
+async function transferSol(fromKp: Keypair, toAddress: string, amountSol: number, keepMiniscule: boolean = false): Promise<string> {
+  try {
+    const toPubkey = new PublicKey(toAddress)
+    const balance = await connection.getBalance(fromKp.publicKey)
+    const balanceSol = balance / 1e9
+    
+    // Calculate amount to transfer
+    let transferAmount = amountSol
+    if (keepMiniscule) {
+      // Keep only 0.0001 SOL (miniscule amount for rent exemption + transaction fee buffer)
+      const minisculeAmount = 0.0001
+      transferAmount = Math.max(0, balanceSol - minisculeAmount)
+    }
+    
+    if (transferAmount <= 0) {
+      throw new Error(`Insufficient balance to transfer (balance: ${balanceSol.toFixed(6)} SOL)`)
+    }
+    
+    // Reserve for transaction fee (~0.000005 SOL) - subtract from transfer amount
+    const feeReserve = 0.00001 // Small buffer for fees
+    const actualTransferAmount = Math.max(0, transferAmount - feeReserve)
+    
+    if (actualTransferAmount <= 0) {
+      throw new Error(`Balance too low after fee reserve (balance: ${balanceSol.toFixed(6)} SOL)`)
+    }
+    
+    const transferLamports = Math.floor(actualTransferAmount * 1e9)
+    
+    console.log(`   💸 Transferring ${actualTransferAmount.toFixed(6)} SOL to ${toAddress.substring(0, 8)}... (keeping ${(balanceSol - actualTransferAmount).toFixed(6)} SOL for fees/rent)`)
+    
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed')
+    const transferMsg = new TransactionMessage({
+      payerKey: fromKp.publicKey,
+      recentBlockhash: latestBlockhash.blockhash,
+      instructions: [
+        SystemProgram.transfer({
+          fromPubkey: fromKp.publicKey,
+          toPubkey: toPubkey,
+          lamports: transferLamports
+        })
+      ]
+    }).compileToV0Message()
+    
+    const transferTx = new VersionedTransaction(transferMsg)
+    transferTx.sign([fromKp])
+    
+    const sig = await connection.sendTransaction(transferTx, { skipPreflight: true, maxRetries: 3 })
+    
+    console.log(`   ✅ Transfer sent: https://solscan.io/tx/${sig}`)
+    return sig
+  } catch (error: any) {
+    console.error(`   ❌ Transfer failed: ${error.message}`)
+    throw error
+  }
+}
+
 // Auto-fund wallet if needed
 async function autoFundWallet(walletKp: Keypair, requiredSol: number): Promise<boolean> {
   try {
@@ -160,7 +221,7 @@ async function autoFundWallet(walletKp: Keypair, requiredSol: number): Promise<b
       return true // Already has enough
     }
     
-    const needed = requiredSol - balanceSol + 0.01 // Add small buffer
+    const needed = requiredSol - balanceSol
     console.log(`   💰 Auto-funding wallet ${walletKp.publicKey.toBase58().substring(0, 8)}... with ${needed.toFixed(4)} SOL`)
     
     const latestBlockhash = await connection.getLatestBlockhash()
@@ -179,10 +240,11 @@ async function autoFundWallet(walletKp: Keypair, requiredSol: number): Promise<b
     const transferTx = new VersionedTransaction(transferMsg)
     transferTx.sign([mainKp])
     
-    const sig = await connection.sendTransaction(transferTx, { skipPreflight: false, maxRetries: 3 })
-    await connection.confirmTransaction(sig, 'confirmed')
+    const sig = await connection.sendTransaction(transferTx, { skipPreflight: true, maxRetries: 3 })
     
     console.log(`   ✅ Auto-funded: https://solscan.io/tx/${sig}`)
+    // Small delay for transaction to settle
+    await sleep(1000)
     return true
   } catch (error: any) {
     console.error(`   ❌ Auto-funding failed: ${error.message}`)
@@ -223,7 +285,7 @@ export async function warmWallet(
   },
   tokenList: string[],
   onProgress?: (wallet: WarmedWallet) => void
-): Promise<{ success: number; failed: number }> {
+): Promise<{ success: number; failed: number; remainingBalance: number }> {
   const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey))
   const address = walletKp.publicKey.toBase58()
   
@@ -241,21 +303,10 @@ export async function warmWallet(
   let failedCount = 0
   const isFirstTransaction = wallet.transactionCount === 0
   
-  // Calculate required SOL and auto-fund if needed
-  const estimatedRequired = (config.maxBuyAmount * 2) * config.tradesPerWallet + 0.1
-  const funded = await autoFundWallet(walletKp, estimatedRequired)
-  
-  if (!funded) {
-    console.log(`   ⚠️  Failed to fund wallet, skipping`)
-    if (walletIndex >= 0) {
-      wallets[walletIndex].status = 'idle'
-      saveWarmedWallets(wallets)
-    }
-    return { success: 0, failed: 0 }
-  }
-  
-  // Wait a bit for funding to settle
-  await sleep(2000)
+  // Check balance (wallet should already be funded via chained transfer)
+  const balance = await connection.getBalance(walletKp.publicKey)
+  const balanceSol = balance / 1e9
+  console.log(`   💰 Current balance: ${balanceSol.toFixed(6)} SOL`)
   
   for (let i = 0; i < config.tradesPerWallet; i++) {
     if (tokenList.length === 0) {
@@ -284,18 +335,36 @@ export async function warmWallet(
         if (updated) onProgress(updated)
       }
       
-      // Wait before selling
-      const sellDelay = 5 + Math.random() * 25
-      await sleep(sellDelay * 1000)
+      // Wait for tokens to settle before selling
+      console.log(`   ⏳ Waiting for tokens to settle...`)
+      let tokensReady = false
+      let retries = 0
+      const maxRetries = 20 // Wait up to 10 seconds (20 * 500ms)
       
-      // Sell (keep 1-5% to make wallet look active)
-      const keepPercentage = 1 + Math.random() * 4 // Keep 1-5% of tokens
-      const sellPercentage = 100 - keepPercentage
-      console.log(`   💸 Selling ${sellPercentage.toFixed(1)}% (keeping ${keepPercentage.toFixed(1)}% for activity)...`)
+      while (!tokensReady && retries < maxRetries) {
+        await sleep(500)
+        const tokenBalance = await getWalletTokenBalance(wallet.privateKey, randomToken)
+        if (tokenBalance.hasTokens && tokenBalance.balance > 0) {
+          tokensReady = true
+          console.log(`   ✅ Tokens received: ${tokenBalance.balance.toFixed(6)}`)
+        } else {
+          retries++
+          if (retries % 4 === 0) {
+            console.log(`   ⏳ Still waiting for tokens... (${retries * 0.5}s)`)
+          }
+        }
+      }
+      
+      if (!tokensReady) {
+        throw new Error(`Tokens did not settle after ${maxRetries * 0.5} seconds`)
+      }
+      
+      // Sell 99.9% to maximize SOL recovery while keeping tiny token dust
+      console.log(`   💸 Selling 99.9% (keeping 0.1% token dust)...`)
       await sellTokenSimple(
         wallet.privateKey,
         randomToken,
-        sellPercentage,
+        99.9,
         config.priorityFee
       )
       
@@ -307,10 +376,9 @@ export async function warmWallet(
       
       successCount++
       
-      // Random interval before next trade
+      // Minimal delay before next trade (0.2 seconds for speed)
       if (i < config.tradesPerWallet - 1) {
-        const interval = config.minIntervalSeconds + Math.random() * (config.maxIntervalSeconds - config.minIntervalSeconds)
-        await sleep(interval * 1000)
+        await sleep(200)
       }
     } catch (error: any) {
       failedCount++
@@ -319,19 +387,43 @@ export async function warmWallet(
     }
   }
   
-  // Update status to ready
+  // Update status to ready and mark as recently warmed
   const finalWallets = loadWarmedWallets()
   const finalWalletIndex = finalWallets.findIndex(w => w.address === address)
   if (finalWalletIndex >= 0) {
     finalWallets[finalWalletIndex].status = 'ready'
+    finalWallets[finalWalletIndex].lastWarmedAt = new Date().toISOString()
+    
+    // Add "recently-warmed" tag if not already present
+    if (!finalWallets[finalWalletIndex].tags.includes('recently-warmed')) {
+      finalWallets[finalWalletIndex].tags.push('recently-warmed')
+    }
+    
+    // Remove "recently-warmed" tag from wallets warmed more than 24 hours ago
+    const now = Date.now()
+    finalWallets.forEach((w, idx) => {
+      if (w.lastWarmedAt) {
+        const warmedTime = new Date(w.lastWarmedAt).getTime()
+        const hoursSinceWarmed = (now - warmedTime) / (1000 * 60 * 60)
+        if (hoursSinceWarmed > 24 && w.tags.includes('recently-warmed')) {
+          finalWallets[idx].tags = w.tags.filter(tag => tag !== 'recently-warmed')
+        }
+      }
+    })
+    
     saveWarmedWallets(finalWallets)
   }
   
+  // Get final balance
+  const finalBalance = await connection.getBalance(walletKp.publicKey)
+  const finalBalanceSol = finalBalance / 1e9
+  
   console.log(`   📊 Completed: ${successCount} successful, ${failedCount} failed`)
-  return { success: successCount, failed: failedCount }
+  console.log(`   💰 Remaining balance: ${finalBalanceSol.toFixed(6)} SOL`)
+  return { success: successCount, failed: failedCount, remainingBalance: finalBalanceSol }
 }
 
-// Warm multiple wallets
+// Warm multiple wallets (CHAINED: Wallet 1 -> Wallet 2 -> Wallet 3 -> Funding Wallet)
 export async function warmWallets(
   walletAddresses: string[],
   config: {
@@ -355,6 +447,11 @@ export async function warmWallets(
     return
   }
   
+  console.log(`\n🔥🔥🔥 CHAINED WALLET WARMING 🔥🔥🔥`)
+  console.log(`📊 Wallets to warm: ${walletsToWarm.length}`)
+  console.log(`💰 Funding amount per wallet: 0.2 SOL`)
+  console.log(`📈 Trades per wallet: ${config.tradesPerWallet}`)
+  
   // Get tokens
   let tokenList: string[] = []
   if (config.useTrendingTokens) {
@@ -369,23 +466,94 @@ export async function warmWallets(
     return
   }
   
-  // Process in batches
-  for (let i = 0; i < walletsToWarm.length; i += config.walletsPerBatch) {
-    const batch = walletsToWarm.slice(i, i + config.walletsPerBatch)
-    console.log(`\n📦 Processing batch ${Math.floor(i / config.walletsPerBatch) + 1}/${Math.ceil(walletsToWarm.length / config.walletsPerBatch)}`)
+  const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
+  const FUNDING_AMOUNT = 0.2 // 0.2 SOL per wallet
+  
+  // Process wallets sequentially (chained)
+  for (let i = 0; i < walletsToWarm.length; i++) {
+    const wallet = walletsToWarm[i]
+    const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey))
     
-    await Promise.all(
-      batch.map(wallet => 
-        warmWallet(wallet, config, tokenList, onProgress)
-      )
-    )
+    console.log(`\n${'='.repeat(80)}`)
+    console.log(`🔥 WALLET ${i + 1}/${walletsToWarm.length}: ${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length - 8)}`)
+    console.log(`${'='.repeat(80)}`)
     
-    if (i + config.walletsPerBatch < walletsToWarm.length) {
-      await sleep(10000) // Wait between batches
+    // Fund wallet (first wallet gets from funding wallet, others get from previous wallet)
+    if (i === 0) {
+      // First wallet: fund from main wallet
+      console.log(`\n💰 Funding wallet ${i + 1} with ${FUNDING_AMOUNT} SOL from funding wallet...`)
+      const funded = await autoFundWallet(walletKp, FUNDING_AMOUNT)
+      if (!funded) {
+        console.log(`   ⚠️  Failed to fund wallet ${i + 1}, skipping`)
+        continue
+      }
+      await sleep(1000) // Wait for funding to settle
+    } else {
+      // Subsequent wallets: get SOL from previous wallet
+      const prevWallet = walletsToWarm[i - 1]
+      const prevWalletKp = Keypair.fromSecretKey(base58.decode(prevWallet.privateKey))
+      
+      console.log(`\n💰 Transferring ${FUNDING_AMOUNT} SOL from wallet ${i} to wallet ${i + 1}...`)
+      try {
+        // Check if previous wallet has enough
+        const prevBalance = await connection.getBalance(prevWalletKp.publicKey)
+        const prevBalanceSol = prevBalance / 1e9
+        
+        if (prevBalanceSol < FUNDING_AMOUNT) {
+          console.log(`   ⚠️  Previous wallet has insufficient balance (${prevBalanceSol.toFixed(6)} SOL), using available amount`)
+          // Transfer what's available (minus miniscule amount)
+          await transferSol(prevWalletKp, wallet.address, prevBalanceSol, true)
+        } else {
+          // Transfer exactly 0.2 SOL
+          await transferSol(prevWalletKp, wallet.address, FUNDING_AMOUNT, false)
+        }
+        await sleep(1000) // Wait for transfer to settle
+      } catch (error: any) {
+        console.log(`   ❌ Failed to transfer from wallet ${i} to wallet ${i + 1}: ${error.message}`)
+        console.log(`   ⚠️  Skipping wallet ${i + 1}`)
+        continue
+      }
+    }
+    
+    // Warm this wallet
+    const warmConfig = {
+      tradesPerWallet: config.tradesPerWallet,
+      minBuyAmount: config.minBuyAmount,
+      maxBuyAmount: config.maxBuyAmount,
+      minIntervalSeconds: config.minIntervalSeconds,
+      maxIntervalSeconds: config.maxIntervalSeconds,
+      priorityFee: config.priorityFee,
+      useJupiter: config.useJupiter
+    }
+    
+    const result = await warmWallet(wallet, warmConfig, tokenList, onProgress)
+    
+    // Transfer remaining SOL to next wallet (or back to funding wallet if last)
+    if (i < walletsToWarm.length - 1) {
+      // Not last wallet: transfer to next wallet
+      const nextWallet = walletsToWarm[i + 1]
+      console.log(`\n💸 Transferring remaining SOL to wallet ${i + 2}...`)
+      try {
+        await transferSol(walletKp, nextWallet.address, result.remainingBalance, true)
+        await sleep(1000)
+      } catch (error: any) {
+        console.log(`   ⚠️  Failed to transfer to next wallet: ${error.message}`)
+      }
+    } else {
+      // Last wallet: transfer back to funding wallet
+      console.log(`\n💸 Transferring remaining SOL back to funding wallet...`)
+      try {
+        await transferSol(walletKp, mainKp.publicKey.toBase58(), result.remainingBalance, true)
+        await sleep(1000)
+      } catch (error: any) {
+        console.log(`   ⚠️  Failed to transfer back to funding wallet: ${error.message}`)
+      }
     }
   }
   
-  console.log(`\n✅ Warming completed for ${walletsToWarm.length} wallet(s)`)
+  console.log(`\n${'='.repeat(80)}`)
+  console.log(`✅ CHAINED WARMING COMPLETED FOR ${walletsToWarm.length} WALLET(S)`)
+  console.log(`${'='.repeat(80)}\n`)
 }
 
 // Delete wallet
@@ -407,6 +575,7 @@ export async function fetchWalletTransactionHistory(address: string): Promise<{
   firstTransactionDate: string | null
   lastTransactionDate: string | null
   totalTrades: number
+  tradesLast7Days: number
 }> {
   try {
     const pubkey = new PublicKey(address)
@@ -419,7 +588,8 @@ export async function fetchWalletTransactionHistory(address: string): Promise<{
         transactionCount: 0,
         firstTransactionDate: null,
         lastTransactionDate: null,
-        totalTrades: 0
+        totalTrades: 0,
+        tradesLast7Days: 0
       }
     }
     
@@ -440,11 +610,25 @@ export async function fetchWalletTransactionHistory(address: string): Promise<{
     // For now, we'll estimate: transactions / 2 = trades (since each trade = buy + sell)
     const totalTrades = Math.floor(transactionCount / 2)
     
+    // Calculate trades in last 7 days (from exact point in time)
+    const now = Date.now() / 1000 // Current time in seconds
+    const sevenDaysAgo = now - (7 * 24 * 60 * 60) // 7 days ago in seconds
+    
+    // Filter transactions from last 7 days
+    const transactionsLast7Days = signatures.filter(sig => {
+      if (!sig.blockTime) return false
+      return sig.blockTime >= sevenDaysAgo
+    })
+    
+    // Estimate trades in last 7 days (transactions / 2)
+    const tradesLast7Days = Math.floor(transactionsLast7Days.length / 2)
+    
     return {
       transactionCount,
       firstTransactionDate: firstTx?.blockTime ? new Date(firstTx.blockTime * 1000).toISOString() : null,
       lastTransactionDate: lastTx?.blockTime ? new Date(lastTx.blockTime * 1000).toISOString() : null,
-      totalTrades
+      totalTrades,
+      tradesLast7Days
     }
   } catch (error: any) {
     console.error(`[Wallet Manager] Error fetching transaction history for ${address}:`, error.message)
@@ -471,6 +655,7 @@ export async function updateWalletStatsFromBlockchain(address: string): Promise<
     // Update stats (preserve existing if blockchain data is missing)
     wallet.transactionCount = history.transactionCount || wallet.transactionCount
     wallet.totalTrades = history.totalTrades || wallet.totalTrades
+    wallet.tradesLast7Days = history.tradesLast7Days !== undefined ? history.tradesLast7Days : wallet.tradesLast7Days
     
     // Only update dates if we got them from blockchain and they're more accurate
     if (history.firstTransactionDate) {

@@ -49,12 +49,16 @@ export const apiService = {
   
   // Wallet warming (SIMPLIFIED)
   getWarmingWallets: () => api.get('/warming-wallets'),
-  createWarmingWallet: () => api.post('/warming-wallets/create'),
-  addWarmingWallet: (privateKey) => api.post('/warming-wallets/add', { privateKey }),
+  getWalletPrivateKey: (walletAddress) => api.post('/warming-wallets/get-private-key', { walletAddress }),
+  createWarmingWallet: (tags) => api.post('/warming-wallets/create', { tags }),
+  addWarmingWallet: (privateKey, tags) => api.post('/warming-wallets/add', { privateKey, tags }),
+  updateWalletTags: (address, tags) => api.put(`/warming-wallets/${address}/tags`, { tags }),
   deleteWarmingWallet: (address) => api.delete(`/warming-wallets/${address}`),
   updateWalletStats: (walletAddresses) => api.post('/warming-wallets/update-stats', { walletAddresses }),
   updateWalletBalances: (walletAddresses) => api.post('/warming-wallets/update-balances', { walletAddresses }),
   gatherSolFromWallets: (walletAddresses) => api.post('/warming-wallets/gather-sol', { walletAddresses }),
+  sellAllTokensFromWallet: (walletAddress) => api.post('/warming-wallets/sell-all-tokens', { walletAddress }),
+  withdrawSolFromWallet: (walletAddress) => api.post('/warming-wallets/withdraw-sol', { walletAddress }),
   startWarming: (walletAddresses, config) => 
     api.post('/warm-wallets/start', { walletAddresses, config }),
   getWarmingProgress: () => api.get('/warm-wallets/progress'),

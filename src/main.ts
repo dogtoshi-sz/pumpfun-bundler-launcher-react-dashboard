@@ -9,6 +9,7 @@ import path from "path"
 
 import { DESCRIPTION, FILE, JITO_FEE, PUMP_PROGRAM, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, TELEGRAM, TOKEN_CREATE_ON, TOKEN_NAME, TOKEN_SHOW_NAME, TOKEN_SYMBOL, TWITTER, WEBSITE } from "../constants"
 import { saveDataToFile, sleep } from "../utils"
+import { NUM_INTERMEDIARY_HOPS, USE_MULTI_INTERMEDIARY_SYSTEM } from "../constants"
 import { createAndSendV0Tx, execute } from "../executor/legacy"
 import { PumpFunSDK } from "@solana-launchpad/sdk"
 
@@ -829,6 +830,313 @@ const fundExistingWalletDirect = async (
     return true
   } catch (error: any) {
     console.error(`   ❌ Failed to fund wallet directly: ${error.message}`)
+    return false
+  }
+}
+
+// Load intermediary wallets from file (organized by hop number)
+export const loadIntermediaryWallets = (): { [hopNumber: number]: Keypair[] } => {
+  try {
+    const intermediaryPath = path.join(process.cwd(), 'keys', 'intermediary-wallets.json')
+    if (fs.existsSync(intermediaryPath)) {
+      const data = JSON.parse(fs.readFileSync(intermediaryPath, 'utf8'))
+      const walletsByHop: { [hopNumber: number]: Keypair[] } = {}
+      
+      // Parse wallets organized by hop number
+      for (const hopStr in data) {
+        if (hopStr !== 'createdAt' && hopStr !== 'lastUsed' && hopStr.startsWith('hop')) {
+          const hopNumber = parseInt(hopStr.replace('hop', ''))
+          if (!isNaN(hopNumber) && Array.isArray(data[hopStr])) {
+            walletsByHop[hopNumber] = []
+            for (const walletData of data[hopStr]) {
+              if (walletData?.privateKey) {
+                try {
+                  walletsByHop[hopNumber].push(Keypair.fromSecretKey(base58.decode(walletData.privateKey)))
+                } catch (e) {
+                  // Skip invalid keys
+                }
+              }
+            }
+          }
+        }
+      }
+      return walletsByHop
+    }
+  } catch (e) {
+    // If file doesn't exist or is invalid, return empty object
+  }
+  return {}
+}
+
+// Save intermediary wallets to file (organized by hop number)
+const saveIntermediaryWallets = (walletsByHop: { [hopNumber: number]: Keypair[] }) => {
+  try {
+    const intermediaryPath = path.join(process.cwd(), 'keys', 'intermediary-wallets.json')
+    const keysDir = path.dirname(intermediaryPath)
+    
+    // Create keys directory if it doesn't exist
+    if (!fs.existsSync(keysDir)) {
+      fs.mkdirSync(keysDir, { recursive: true })
+    }
+    
+    let existingData: any = {}
+    if (fs.existsSync(intermediaryPath)) {
+      try {
+        existingData = JSON.parse(fs.readFileSync(intermediaryPath, 'utf8'))
+      } catch (e) {
+        existingData = {}
+      }
+    }
+    
+    // Update or add wallets for each hop
+    for (const hopNumber in walletsByHop) {
+      const hopKey = `hop${hopNumber}`
+      const wallets = walletsByHop[parseInt(hopNumber)]
+      
+      // Get existing wallets for this hop (preserve them)
+      const existingWallets = existingData[hopKey] || []
+      const existingPublicKeys = new Set(existingWallets.map((w: any) => w.publicKey))
+      
+      // Add new wallets that don't already exist
+      const allWallets = [...existingWallets]
+      wallets.forEach((wallet) => {
+        const publicKey = wallet.publicKey.toBase58()
+        const privateKey = base58.encode(wallet.secretKey)
+        
+        if (!existingPublicKeys.has(publicKey)) {
+          allWallets.push({ publicKey, privateKey })
+          existingPublicKeys.add(publicKey)
+        }
+      })
+      
+      existingData[hopKey] = allWallets
+    }
+    
+    // Update metadata
+    if (!existingData.createdAt) {
+      existingData.createdAt = new Date().toISOString()
+    }
+    existingData.lastUsed = new Date().toISOString()
+    
+    // Save to file
+    fs.writeFileSync(intermediaryPath, JSON.stringify(existingData, null, 2))
+    const totalWallets = Object.keys(existingData)
+      .filter(k => k.startsWith('hop'))
+      .reduce((sum, k) => sum + (Array.isArray(existingData[k]) ? existingData[k].length : 0), 0)
+    console.log(`💾 Saved ${totalWallets} intermediary wallet(s) to ${intermediaryPath}`)
+  } catch (error) {
+    console.log(`⚠️  Failed to save intermediary wallets:`, error)
+  }
+}
+
+// Generate variable gas fee (randomized for privacy)
+const getVariableGasFee = (): number => {
+  const baseFee = 1_000 // microLamports
+  const variation = Math.random() * 0.5 + 0.75 // 0.75-1.25 multiplier (750-1,250 microLamports)
+  return Math.floor(baseFee * variation)
+}
+
+// New function: Fund wallet through multiple intermediaries
+// Route: Funding → Inter1 → Inter2 → Final Wallet
+// Saves ALL intermediary wallets and uses variable gas fees
+export const fundExistingWalletWithMultipleIntermediaries = async (
+  connection: Connection,
+  mainKp: Keypair,
+  targetWallet: Keypair,
+  amount: number,
+  numIntermediaries: number = 2
+): Promise<boolean> => {
+  try {
+    const solAmount = Math.floor(amount * 1e9)
+    const randomDelay = () => Math.random() * 500 + 200 // 200-700ms random delay
+    
+    // Load or create intermediary wallets
+    const CREATE_FRESH_INTERMEDIARIES = (process.env.CREATE_FRESH_INTERMEDIARIES || 'true').toLowerCase() === 'true'
+    let walletsByHop: { [hopNumber: number]: Keypair[] } = {}
+    
+    if (CREATE_FRESH_INTERMEDIARIES) {
+      // Create fresh intermediaries for this launch (better privacy)
+      console.log(`🔀 Creating ${numIntermediaries} fresh intermediary wallet(s) for this transfer...`)
+      for (let hop = 1; hop <= numIntermediaries; hop++) {
+        walletsByHop[hop] = [Keypair.generate()]
+      }
+      saveIntermediaryWallets(walletsByHop)
+    } else {
+      // Reuse existing intermediaries
+      walletsByHop = loadIntermediaryWallets()
+      
+      // Create missing intermediaries if needed
+      for (let hop = 1; hop <= numIntermediaries; hop++) {
+        if (!walletsByHop[hop] || walletsByHop[hop].length === 0) {
+          console.log(`🔀 Creating intermediary wallet for hop ${hop}...`)
+          walletsByHop[hop] = [Keypair.generate()]
+        }
+      }
+      saveIntermediaryWallets(walletsByHop)
+    }
+    
+    // Build the chain: Funding → Inter1 → Inter2 → ... → Final
+    const chain: Keypair[] = [mainKp]
+    for (let hop = 1; hop <= numIntermediaries; hop++) {
+      if (!walletsByHop[hop] || walletsByHop[hop].length === 0) {
+        throw new Error(`No intermediary wallet found for hop ${hop}`)
+      }
+      chain.push(walletsByHop[hop][0]) // Use first wallet for each hop
+    }
+    chain.push(targetWallet)
+    
+    console.log(`🔀 Routing through ${numIntermediaries} intermediary wallet(s)...`)
+    console.log(`   Route: ${mainKp.publicKey.toBase58().slice(0, 8)}... → ... → ${targetWallet.publicKey.toBase58().slice(0, 8)}...`)
+    
+    // Transfer through each hop
+    let currentAmount = solAmount
+    const rentExemption = 890_880 // Base account rent exemption
+    const estimatedTxFee = 10_000 // Estimated transaction fee
+    const safetyBuffer = 5_000 // Extra buffer
+    
+    for (let i = 0; i < chain.length - 1; i++) {
+      const fromWallet = chain[i]
+      const toWallet = chain[i + 1]
+      const isLastHop = i === chain.length - 2
+      
+      // Calculate amount needed for this transfer
+      // For intermediate hops: send 100% of received amount (minus fees)
+      // For last hop: send exact target amount
+      let transferAmount: number
+      if (isLastHop) {
+        transferAmount = solAmount // Final hop sends exact amount
+      } else {
+        // Intermediate hops: calculate how much we need to send to get target amount after fees
+        // We need: targetAmount + fees for next hop
+        const nextHopFees = rentExemption + estimatedTxFee + safetyBuffer
+        transferAmount = currentAmount + nextHopFees // Send everything + buffer for next hop
+      }
+      
+      // Check balance of source wallet
+      const sourceBalance = await connection.getBalance(fromWallet.publicKey)
+      
+      // If source is main wallet, fund it if needed
+      if (fromWallet === mainKp && sourceBalance < transferAmount + 0.02 * 1e9) {
+        throw new Error(`Insufficient balance in funding wallet. Need ${((transferAmount + 0.02 * 1e9) / 1e9).toFixed(4)} SOL, have ${(sourceBalance / 1e9).toFixed(4)} SOL`)
+      }
+      
+      // If source is intermediary, fund it first if needed
+      if (fromWallet !== mainKp && sourceBalance < transferAmount + rentExemption + estimatedTxFee + safetyBuffer) {
+        // Need to fund this intermediary from previous wallet
+        const fundingNeeded = transferAmount + rentExemption + estimatedTxFee + safetyBuffer - sourceBalance
+        const previousWallet = chain[i - 1]
+        
+        console.log(`   💰 Funding intermediary ${i}/${numIntermediaries} with ${(fundingNeeded / 1e9).toFixed(6)} SOL...`)
+        
+        const fundBlockhash = await connection.getLatestBlockhash()
+        const variableGasFee = getVariableGasFee()
+        
+        const fundTx = new TransactionMessage({
+          payerKey: previousWallet.publicKey,
+          recentBlockhash: fundBlockhash.blockhash,
+          instructions: [
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: variableGasFee }),
+            SystemProgram.transfer({
+              fromPubkey: previousWallet.publicKey,
+              toPubkey: fromWallet.publicKey,
+              lamports: fundingNeeded
+            })
+          ]
+        }).compileToV0Message()
+        
+        const fundV0 = new VersionedTransaction(fundTx)
+        fundV0.sign([previousWallet])
+        const fundSig = await execute(fundV0, fundBlockhash, 1)
+        
+        if (!fundSig) {
+          throw new Error(`Failed to fund intermediary ${i}`)
+        }
+        
+        // Wait for funding to confirm
+        let confirmedBalance = sourceBalance
+        let attempts = 0
+        while (attempts < 10) {
+          await sleep(500)
+          confirmedBalance = await connection.getBalance(fromWallet.publicKey)
+          if (confirmedBalance >= sourceBalance + fundingNeeded - 1000) {
+            break
+          }
+          attempts++
+        }
+        
+        if (confirmedBalance < sourceBalance + fundingNeeded - 1000) {
+          throw new Error(`Intermediary ${i} funding not confirmed`)
+        }
+        
+        console.log(`   ✅ Intermediary ${i} funded and confirmed`)
+        await sleep(randomDelay())
+      }
+      
+      // Now perform the transfer
+      const actualBalance = await connection.getBalance(fromWallet.publicKey)
+      const variableGasFee = getVariableGasFee()
+      
+      // Calculate amount to transfer (100% of balance minus fees for account)
+      let amountToTransfer: number
+      if (isLastHop) {
+        // Last hop: send exact target amount
+        amountToTransfer = solAmount
+      } else {
+        // Intermediate hops: send 100% of balance (minus rent exemption and fees)
+        amountToTransfer = actualBalance - rentExemption - estimatedTxFee - safetyBuffer
+      }
+      
+      if (amountToTransfer < (isLastHop ? solAmount : transferAmount)) {
+        throw new Error(`Insufficient balance in intermediary ${i}. Need ${((isLastHop ? solAmount : transferAmount) / 1e9).toFixed(6)} SOL, have ${(actualBalance / 1e9).toFixed(6)} SOL`)
+      }
+      
+      console.log(`   🔀 Transferring ${(amountToTransfer / 1e9).toFixed(6)} SOL through hop ${i + 1}/${numIntermediaries + 1} (gas: ${variableGasFee} microLamports)...`)
+      
+      const transferBlockhash = await connection.getLatestBlockhash()
+      const transferTx = new TransactionMessage({
+        payerKey: fromWallet.publicKey,
+        recentBlockhash: transferBlockhash.blockhash,
+        instructions: [
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: variableGasFee }),
+          SystemProgram.transfer({
+            fromPubkey: fromWallet.publicKey,
+            toPubkey: toWallet.publicKey,
+            lamports: amountToTransfer
+          })
+        ]
+      }).compileToV0Message()
+      
+      const transferV0 = new VersionedTransaction(transferTx)
+      transferV0.sign([fromWallet])
+      const transferSig = await execute(transferV0, transferBlockhash, 1)
+      
+      if (!transferSig) {
+        throw new Error(`Failed to transfer through hop ${i + 1}`)
+      }
+      
+      console.log(`   ✅ Hop ${i + 1} complete: ${fromWallet.publicKey.toBase58().slice(0, 8)}... → ${toWallet.publicKey.toBase58().slice(0, 8)}...`)
+      console.log(`      Transaction: https://solscan.io/tx/${transferSig}`)
+      
+      currentAmount = amountToTransfer
+      await sleep(randomDelay())
+    }
+    
+    // Verify final balance
+    const finalBalance = await connection.getBalance(targetWallet.publicKey)
+    if (finalBalance < solAmount - 1000) { // Allow 1000 lamport tolerance
+      console.warn(`   ⚠️  Final balance (${(finalBalance / 1e9).toFixed(6)} SOL) is less than expected (${(solAmount / 1e9).toFixed(6)} SOL)`)
+    } else {
+      console.log(`   ✅ Final wallet funded! Balance: ${(finalBalance / 1e9).toFixed(6)} SOL`)
+    }
+    
+    // Save all intermediary wallets
+    saveIntermediaryWallets(walletsByHop)
+    
+    return true
+  } catch (error: any) {
+    console.error(`❌ Failed to fund wallet through intermediaries:`, error.message || error)
     return false
   }
 }

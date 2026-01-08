@@ -116,32 +116,38 @@ export const buyTokenSimple = async (
       console.log(`Using Jupiter swap for buy (works with any token) - Priority: ${priorityFee}`)
       const buyAmountLamports = Math.floor(solAmount * 1e9)
       const { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } = require('./constants/constants')
-      const priorityFeeLamports = priorityFee === 'high' ? PRIORITY_FEE_LAMPORTS_HIGH : 
-                                  priorityFee === 'medium' ? PRIORITY_FEE_LAMPORTS_MEDIUM : 
-                                  PRIORITY_FEE_LAMPORTS_LOW
-      const tx = await getBuyTxWithJupiter(walletKp, mintPubkey, buyAmountLamports, priorityFeeLamports)
+      let priorityFeeLamports: number
+      if (priorityFee === 'high') {
+        priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
+      } else if (priorityFee === 'medium') {
+        priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
+      } else {
+        // LOW fee: Use minimal fee with random variation to avoid looking botted
+        // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
+        // This makes each trade have slightly different fees (looks more natural)
+        // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
+        const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 0
+        const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
+        priorityFeeLamports = baseFee + variation
+        console.log(`[Buy] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
+      }
+      const tx = await getBuyTxWithJupiter(walletKp, mintPubkey, buyAmountLamports, priorityFeeLamports, priorityFee)
       
       if (!tx) {
         throw new Error('Failed to get buy transaction from Jupiter')
       }
       
+      // Send instantly (GMGN-style - skip preflight and don't wait for confirmation)
       const signature = await connection.sendTransaction(tx, {
-        skipPreflight: false,
-        maxRetries: 5
+        skipPreflight: true, // Skip preflight for instant execution (like GMGN)
+        maxRetries: 3
       })
       
-      console.log(`Jupiter buy sent: ${signature}`)
+      console.log(`Jupiter buy sent instantly: ${signature}`)
       
-      const latestBlockhash = await connection.getLatestBlockhash('confirmed')
-      const confirmation = await connection.confirmTransaction({
-        signature,
-        blockhash: latestBlockhash.blockhash,
-        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-      }, 'confirmed')
-
-      if (confirmation.value.err) {
-        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
-      }
+      // Don't wait for confirmation - return immediately (GMGN-style)
+      // Transaction will confirm in background, but we return signature immediately
+      // This makes execution instant like GMGN
       
       return {
         signature,
@@ -190,8 +196,10 @@ export const buyTokenSimple = async (
       payerKey: walletKp.publicKey,
       recentBlockhash: latestBlockhash.blockhash,
       instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000_000 }), // 0.001 SOL priority fee for fast inclusion
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }), // Reduced compute units
+        // Add random variation to compute unit price to avoid looking botted
+        // Base: 0-2 microLamports per unit (adds natural variation between trades)
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: Math.floor(Math.random() * 3) }), // 0-2 microLamports random variation
         ...buyIxs
       ]
     }).compileToV0Message()
@@ -199,48 +207,18 @@ export const buyTokenSimple = async (
     const tx = new VersionedTransaction(msg)
     tx.sign([walletKp])
     
-    // Simulate transaction first to get better error messages
-    try {
-      const simulation = await connection.simulateTransaction(tx, {
-        sigVerify: false,
-        replaceRecentBlockhash: true
-      })
-      
-      if (simulation.value.err) {
-        const errorDetails = JSON.stringify(simulation.value.err)
-        const logs = simulation.value.logs || []
-        const lastLogs = logs.slice(-10).join('; ')
-        throw new Error(`Simulation failed: ${errorDetails}. Last logs: ${lastLogs}`)
-      }
-      
-      console.log(`Simulation successful. Compute units: ${simulation.value.unitsConsumed || 'N/A'}`)
-    } catch (simError: any) {
-      // If simulation fails, provide detailed error
-      if (simError.message.includes('Simulation failed')) {
-        throw simError // Re-throw simulation errors with details
-      }
-      // Other simulation errors, log but continue
-      console.warn(`Simulation warning: ${simError.message}`)
-    }
-    
-    // Send transaction
+    // Skip simulation for speed (GMGN-style instant execution)
+    // Send transaction immediately with skipPreflight for instant execution
     const signature = await connection.sendTransaction(tx, {
-      skipPreflight: false,
-      maxRetries: 5
+      skipPreflight: true, // Skip preflight for instant execution (like GMGN)
+      maxRetries: 3
     })
     
-    console.log(`Trade sent: ${signature}`)
+    console.log(`Trade sent instantly: ${signature}`)
     
-    // Modern confirmation logic
-    const confirmation = await connection.confirmTransaction({
-      signature,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-    }, 'confirmed')
-
-    if (confirmation.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
-    }
+    // Don't wait for confirmation - return immediately (GMGN-style)
+    // Transaction will confirm in background, but we return signature immediately
+    // This makes execution instant like GMGN
     
     return {
       signature,
@@ -278,20 +256,16 @@ export const sellTokenSimple = async (
     const walletKp = Keypair.fromSecretKey(base58.decode(walletPrivateKey))
     const mintPubkey = new PublicKey(mintAddress)
     
-    // First, get the token balance - try multiple times in case tokens are still settling
+    // Get token balance - retry a few times if tokens were just bought (they might not be settled yet)
     let tokenBalance = await getWalletTokenBalance(walletPrivateKey, mintAddress)
+    let retries = 0
+    const maxRetries = 5
     
-    // If no tokens found, wait a bit and retry (tokens might still be settling after buy)
-    if (!tokenBalance.hasTokens || tokenBalance.balance === 0) {
-      console.log("No tokens found, waiting 2 seconds and retrying...")
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      tokenBalance = await getWalletTokenBalance(walletPrivateKey, mintAddress)
-    }
-    
-    if (!tokenBalance.hasTokens || tokenBalance.balance === 0) {
-      // Try one more time with a longer wait
-      console.log("Still no tokens found, waiting 3 more seconds...")
-      await new Promise(resolve => setTimeout(resolve, 3000))
+    // If no tokens found, retry a few times (tokens might still be settling after buy)
+    while ((!tokenBalance.hasTokens || tokenBalance.balance === 0) && retries < maxRetries) {
+      retries++
+      console.log(`[Sell] Tokens not found, retrying... (attempt ${retries}/${maxRetries})`)
+      await new Promise(resolve => setTimeout(resolve, 1000)) // Wait 1 second
       tokenBalance = await getWalletTokenBalance(walletPrivateKey, mintAddress)
     }
     
@@ -300,9 +274,16 @@ export const sellTokenSimple = async (
     }
     
     // Calculate amount to sell based on percentage
-    const amountToSell = Math.floor(tokenBalance.balance * (percentage / 100))
-    if (amountToSell === 0) {
-      throw new Error('Amount to sell is too small')
+    // Use the actual balance, not rounded
+    const amountToSell = tokenBalance.balance * (percentage / 100)
+    
+    // Check if amount is too small (less than 0.000001 tokens)
+    if (amountToSell < 0.000001) {
+      // For very small amounts, try selling 100% instead
+      if (tokenBalance.balance > 0 && tokenBalance.balance < 0.000001) {
+        throw new Error(`Amount to sell is too small (balance: ${tokenBalance.balance}). Try selling 100% instead.`)
+      }
+      throw new Error(`Amount to sell is too small (calculated: ${amountToSell}, balance: ${tokenBalance.balance})`)
     }
     
     // Convert to raw token amount (Jupiter expects raw amount as string)
@@ -326,42 +307,55 @@ export const sellTokenSimple = async (
     }
     
     // Convert UI amount to raw amount
-    const rawAmount = Math.floor(amountToSell * Math.pow(10, decimals))
+    // Use Math.ceil to avoid rounding down to 0 for very small amounts
+    const rawAmount = Math.ceil(amountToSell * Math.pow(10, decimals))
     
-    // Get priority fee lamports based on selection
+    // Ensure raw amount is at least 1 (minimum token unit)
+    if (rawAmount === 0 && amountToSell > 0) {
+      throw new Error(`Raw amount is 0 after conversion (UI amount: ${amountToSell}, decimals: ${decimals}). Token amount is too small to sell.`)
+    }
+    
+    // Get priority fee lamports based on selection (with slight variation for low fee to avoid exact same fee)
     const { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } = require('./constants/constants')
-    const priorityFeeLamports = priorityFee === 'high' ? PRIORITY_FEE_LAMPORTS_HIGH : 
-                                priorityFee === 'medium' ? PRIORITY_FEE_LAMPORTS_MEDIUM : 
-                                PRIORITY_FEE_LAMPORTS_LOW
+    let priorityFeeLamports: number
+    if (priorityFee === 'high') {
+      priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
+    } else if (priorityFee === 'medium') {
+      priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
+      } else {
+        // LOW fee: Use minimal fee with random variation to avoid looking botted
+        // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
+        // This makes each trade have slightly different fees (looks more natural)
+        // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
+        const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 0
+        const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
+        priorityFeeLamports = baseFee + variation
+        console.log(`[Sell] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
+      }
     
     // Get sell transaction from Jupiter with selected priority fee
-    const sellTx = await getSellTxWithJupiter(walletKp, mintPubkey, rawAmount.toString(), priorityFeeLamports)
+    console.log(`[Sell] Requesting Jupiter sell transaction: mint=${mintAddress.substring(0, 8)}..., rawAmount=${rawAmount}, decimals=${decimals}, uiAmount=${amountToSell.toFixed(6)}`)
+    const sellTx = await getSellTxWithJupiter(walletKp, mintPubkey, rawAmount.toString(), priorityFeeLamports, priorityFee)
     
     if (!sellTx) {
-      throw new Error('Failed to get sell transaction from Jupiter')
+      console.error(`[Sell] Jupiter returned null transaction for ${mintAddress.substring(0, 8)}...`)
+      console.error(`[Sell] This could mean: 1) Token has no liquidity on Jupiter, 2) Amount is too small, 3) Jupiter API error`)
+      throw new Error(`Failed to get sell transaction from Jupiter for ${mintAddress.substring(0, 8)}... (amount: ${amountToSell.toFixed(6)}, raw: ${rawAmount})`)
     }
     
-    // Send transaction
+    console.log(`[Sell] ✅ Got sell transaction from Jupiter for ${mintAddress.substring(0, 8)}...`)
+    
+    // Send transaction instantly (GMGN-style - skip preflight and don't wait for confirmation)
     const signature = await connection.sendTransaction(sellTx, {
-      skipPreflight: false,
-      maxRetries: 5
+      skipPreflight: true, // Skip preflight for instant execution (like GMGN)
+      maxRetries: 3
     })
     
-    console.log(`Sell sent: ${signature}`);
+    console.log(`Sell sent instantly: ${signature}`);
     
-    // Get fresh blockhash for confirmation if needed
-    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
-    
-    // Modern confirmation logic
-    const confirmation = await connection.confirmTransaction({
-      signature,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-    }, 'confirmed');
-
-    if (confirmation.value.err) {
-      throw new Error(`Sell failed: ${JSON.stringify(confirmation.value.err)}`);
-    }
+    // Don't wait for confirmation - return immediately (GMGN-style)
+    // Transaction will confirm in background, but we return signature immediately
+    // This makes execution instant like GMGN
     
     return {
       signature,
