@@ -1111,16 +1111,18 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
       
       // CRITICAL: Update currentAmount to what the NEXT wallet actually received
       // For intermediate hops, the next wallet receives amountToTransfer minus transaction fees
-      // For last hop, we sent exact solAmount, so that's what was received
+      // We must check actual balance to track the real amount received
+      await sleep(500) // Wait for transaction to confirm
+      const nextWalletBalance = await connection.getBalance(toWallet.publicKey)
+      
       if (isLastHop) {
-        currentAmount = solAmount // Last hop sent exact amount
+        // Last hop: should have received solAmount (or very close due to fees)
+        currentAmount = nextWalletBalance
+        console.log(`   📊 Final wallet received: ${(currentAmount / 1e9).toFixed(6)} SOL`)
       } else {
-        // Intermediate hop: next wallet receives amountToTransfer minus transaction fees (~0.000005 SOL)
-        // We need to check actual balance of next wallet to be precise
-        await sleep(500) // Wait for transaction to confirm
-        const nextWalletBalance = await connection.getBalance(toWallet.publicKey)
-        currentAmount = nextWalletBalance // Use actual received amount
-        console.log(`   📊 Next wallet received: ${(currentAmount / 1e9).toFixed(6)} SOL`)
+        // Intermediate hop: next wallet receives amountToTransfer minus transaction fees
+        currentAmount = nextWalletBalance // Use actual received amount for next hop calculation
+        console.log(`   📊 Inter${i + 1} received: ${(currentAmount / 1e9).toFixed(6)} SOL (will forward to next hop)`)
       }
       
       await sleep(randomDelay())
