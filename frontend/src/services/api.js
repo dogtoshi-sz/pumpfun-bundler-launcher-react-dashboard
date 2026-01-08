@@ -77,6 +77,16 @@ export const apiService = {
     api.post('/marketing/telegram/verify-code', { api_id, api_hash, phone, code, phone_code_hash, password }),
   checkTelegramStatus: (api_id, api_hash, phone) =>
     api.post('/marketing/telegram/check-status', { api_id, api_hash, phone }),
+  
+  // Token Configurations
+  getTokenConfigs: () => api.get('/token-configs'),
+  getTokenConfig: (id) => api.get(`/token-configs/${id}`),
+  saveTokenConfig: (name, config) => api.post('/token-configs', { name, config }),
+  updateTokenConfig: (id, name, config) => api.put(`/token-configs/${id}`, { name, config }),
+  deleteTokenConfig: (id) => api.delete(`/token-configs/${id}`),
+  
+  // Token Info
+  getTokenInfo: (mintAddress) => api.get(`/token-info/${mintAddress}`),
 };
 
 export default apiService;

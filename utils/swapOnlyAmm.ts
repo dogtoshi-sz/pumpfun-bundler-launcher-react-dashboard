@@ -82,7 +82,7 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
   throw lastError || new Error('Fetch failed after retries');
 };
 
-export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number, originalFeeLevel?: 'low' | 'medium' | 'high') => {
+export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultra') => {
   // Use provided priority fee or add random variation to avoid looking botted
   // If no fee provided, use base fee + random variation (0-50,000 lamports)
   // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
@@ -195,7 +195,7 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
 };
 
 
-export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string, priorityFeeLamports?: number, originalFeeLevel?: 'low' | 'medium' | 'high') => {
+export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultra') => {
   try {
     // Use provided priority fee or add random variation to avoid looking botted
     // If no fee provided, use base fee + random variation (0-50,000 lamports)

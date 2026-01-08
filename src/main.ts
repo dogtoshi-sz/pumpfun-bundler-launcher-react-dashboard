@@ -210,7 +210,7 @@ const saveMixingWallets = (mixingWallets: Keypair[]) => {
   }
 }
 
-export const distributeSol = async (connection: Connection, mainKp: Keypair, distritbutionNum: number, swapAmounts?: number[], useMixing: boolean = true) => {
+export const distributeSol = async (connection: Connection, mainKp: Keypair, distritbutionNum: number, swapAmounts?: number[], useMixing: boolean = true, intermediaryHops?: number) => {
   try {
     // Reset kps array at the start to avoid accumulating wallets from previous runs
     kps = []
@@ -267,6 +267,64 @@ export const distributeSol = async (connection: Connection, mainKp: Keypair, dis
       return []
     }
 
+    // Check if using multi-intermediary system (takes priority over mixing)
+    const USE_MULTI_INTERMEDIARY = (process.env.USE_MULTI_INTERMEDIARY_SYSTEM || 'false').toLowerCase() === 'true'
+    // Use provided intermediaryHops, or fall back to NUM_INTERMEDIARY_HOPS from env
+    const NUM_HOPS = intermediaryHops !== undefined ? intermediaryHops : Number(process.env.NUM_INTERMEDIARY_HOPS || '2')
+    
+    if (USE_MULTI_INTERMEDIARY) {
+      console.log(`🔀 Using multi-intermediary system (${NUM_HOPS} hops) for fresh wallets...`)
+      // Generate fresh wallets first, then fund them through intermediaries
+      const freshWallets: Keypair[] = []
+      for (let i = 0; i < distritbutionNum; i++) {
+        freshWallets.push(Keypair.generate())
+      }
+      
+      // Fund each wallet through intermediaries in parallel batches
+      // Increased batch size for faster funding - process up to 10 wallets in parallel
+      const parallelBatchSize = Math.min(10, distritbutionNum) // Process up to 10 wallets simultaneously
+      const randomDelay = () => Math.random() * 300 + 100 // Reduced delay: 100-400ms (was 200-700ms)
+      
+      for (let batchStart = 0; batchStart < freshWallets.length; batchStart += parallelBatchSize) {
+        const batchEnd = Math.min(batchStart + parallelBatchSize, freshWallets.length)
+        const batch = Array.from({ length: batchEnd - batchStart }, (_, i) => batchStart + i)
+        
+        console.log(`🔀 Funding fresh wallets batch ${Math.floor(batchStart / parallelBatchSize) + 1}/${Math.ceil(freshWallets.length / parallelBatchSize)} (wallets ${batchStart + 1}-${batchEnd}) through intermediaries...`)
+        
+        await Promise.all(batch.map(async (i) => {
+          const swapAmount = swapAmounts && swapAmounts[i] !== undefined ? swapAmounts[i] : SWAP_AMOUNT
+          const requiredAmount = swapAmount + 0.01 // Add buffer for fees
+          const wallet = freshWallets[i]
+          
+          try {
+            const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, requiredAmount, NUM_HOPS)
+            if (!success) {
+              console.error(`   ❌ Failed to fund fresh wallet ${i + 1} through intermediaries`)
+            } else {
+              console.log(`   ✅ Fresh wallet ${i + 1} funded through ${NUM_HOPS} intermediaries`)
+            }
+          } catch (error: any) {
+            console.error(`   ❌ Error funding fresh wallet ${i + 1}: ${error.message || error}`)
+          }
+        }))
+        
+        // Small delay between batches
+        if (batchEnd < freshWallets.length) {
+          await sleep(randomDelay() * 2)
+        }
+      }
+      
+      // Save wallets to data.json
+      try {
+        saveDataToFile(freshWallets.map(kp => base58.encode(kp.secretKey)))
+      } catch (error) {
+        console.error('Failed to save fresh wallets:', error)
+      }
+      
+      kps = freshWallets
+      return freshWallets
+    }
+    
     // If using mixing wallets, fund through intermediate wallets
     // Route: mainKp -> mixing wallet -> target wallet
     // This breaks the direct connection trail that bubble maps detect
@@ -947,6 +1005,9 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
   amount: number,
   numIntermediaries: number = 2
 ): Promise<boolean> => {
+  // Declare walletsByHop outside try block so it's accessible in catch block
+  let walletsByHop: { [hopNumber: number]: Keypair[] } | undefined = undefined
+  
   try {
     const solAmount = Math.floor(amount * 1e9)
     const randomDelay = () => Math.random() * 500 + 200 // 200-700ms random delay
@@ -955,7 +1016,7 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
     // This ensures each wallet (DEV, bundle, holder) gets its own unique chain
     // Better privacy: each wallet appears to come from a different source
     console.log(`🔀 Creating ${numIntermediaries} unique intermediary wallet(s) for this transfer...`)
-    const walletsByHop: { [hopNumber: number]: Keypair[] } = {}
+    walletsByHop = {}
     for (let hop = 1; hop <= numIntermediaries; hop++) {
       walletsByHop[hop] = [Keypair.generate()]
     }
@@ -990,16 +1051,22 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
       const isLastHop = i === chain.length - 2
       
       // Calculate amount needed for this transfer
-      // For intermediate hops: send 100% of received amount (minus fees)
-      // For last hop: send exact target amount
+      // CRITICAL: Only send what's needed, NOT 100% of balance!
       let transferAmount: number
       if (isLastHop) {
-        transferAmount = solAmount // Final hop sends exact amount
+        // Final hop: send exact target amount
+        transferAmount = solAmount
+      } else if (fromWallet === mainKp) {
+        // FIRST hop from main wallet: send ONLY target amount + fees for all remaining hops
+        // Calculate total fees needed: fees for each remaining hop + final transfer
+        const feesPerHop = rentExemption + estimatedTxFee + safetyBuffer
+        const remainingHops = numIntermediaries - i // How many hops left after this one
+        transferAmount = solAmount + (feesPerHop * (remainingHops + 1)) // +1 for final transfer
       } else {
-        // Intermediate hops: calculate how much we need to send to get target amount after fees
-        // We need: targetAmount + fees for next hop
-        const nextHopFees = rentExemption + estimatedTxFee + safetyBuffer
-        transferAmount = currentAmount + nextHopFees // Send everything + buffer for next hop
+        // Intermediate hops: send what they need to forward (target + fees for remaining hops)
+        const feesPerHop = rentExemption + estimatedTxFee + safetyBuffer
+        const remainingHops = numIntermediaries - i
+        transferAmount = solAmount + (feesPerHop * remainingHops)
       }
       
       // Check balance of source wallet
@@ -1060,28 +1127,52 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
         }
         
         console.log(`   ✅ Intermediary ${i} funded and confirmed`)
-        await sleep(randomDelay())
+        // Reduced delay - no need to wait long after funding
+        await sleep(100) // Minimal delay: 100ms
       }
       
       // Now perform the transfer
       const actualBalance = await connection.getBalance(fromWallet.publicKey)
       const variableGasFee = getVariableGasFee()
       
-      // Calculate amount to transfer (100% of balance minus fees for account)
+      // CRITICAL: Intermediary wallets send ALL SOL except minimal rent exemption
+      // This ensures we don't lose any SOL - only keep ~0.00089 SOL for rent
       let amountToTransfer: number
       if (isLastHop) {
         // Last hop: send exact target amount
         amountToTransfer = solAmount
+      } else if (fromWallet === mainKp) {
+        // First hop from main wallet: send calculated amount (target + fees for remaining hops)
+        amountToTransfer = transferAmount
       } else {
-        // Intermediate hops: send 100% of balance (minus rent exemption and fees)
-        amountToTransfer = actualBalance - rentExemption - estimatedTxFee - safetyBuffer
+        // Intermediate hops: send ALL balance except rent + transaction fees
+        // CRITICAL: Must keep rent exemption + transaction fee + safety buffer
+        // Transaction fee is deducted from sender, so we need to reserve it
+        const reservedAmount = rentExemption + estimatedTxFee + safetyBuffer
+        amountToTransfer = actualBalance - reservedAmount
+        
+        // Safety check: ensure we're sending at least what's needed
+        if (amountToTransfer < transferAmount) {
+          throw new Error(`Insufficient balance in intermediary ${i}. Need ${(transferAmount / 1e9).toFixed(6)} SOL, have ${(actualBalance / 1e9).toFixed(6)} SOL`)
+        }
       }
       
-      if (amountToTransfer < (isLastHop ? solAmount : transferAmount)) {
-        throw new Error(`Insufficient balance in intermediary ${i}. Need ${((isLastHop ? solAmount : transferAmount) / 1e9).toFixed(6)} SOL, have ${(actualBalance / 1e9).toFixed(6)} SOL`)
+      // Verify we have enough balance
+      const requiredAmount = isLastHop ? solAmount : transferAmount
+      if (amountToTransfer < requiredAmount) {
+        throw new Error(`Insufficient balance in ${fromWallet === mainKp ? 'main wallet' : `intermediary ${i}`}. Need ${(requiredAmount / 1e9).toFixed(6)} SOL, have ${(actualBalance / 1e9).toFixed(6)} SOL`)
       }
       
-      console.log(`   🔀 Transferring ${(amountToTransfer / 1e9).toFixed(6)} SOL through hop ${i + 1}/${numIntermediaries + 1} (gas: ${variableGasFee} microLamports)...`)
+      // Log transfer details
+      if (fromWallet !== mainKp && !isLastHop) {
+        // Intermediate hops: show detailed breakdown
+        const reservedAmount = rentExemption + estimatedTxFee + safetyBuffer
+        console.log(`   🔀 Transferring ${(amountToTransfer / 1e9).toFixed(6)} SOL through hop ${i + 1}/${numIntermediaries + 1}`)
+        console.log(`      💰 Balance: ${(actualBalance / 1e9).toFixed(6)} SOL → Sending: ${(amountToTransfer / 1e9).toFixed(6)} SOL (keeping ${(reservedAmount / 1e9).toFixed(6)} SOL for rent+fees)` + ` (gas: ${variableGasFee} microLamports)`)
+      } else {
+        // First hop or last hop: simple message
+        console.log(`   🔀 Transferring ${(amountToTransfer / 1e9).toFixed(6)} SOL through hop ${i + 1}/${numIntermediaries + 1} (gas: ${variableGasFee} microLamports)...`)
+      }
       
       const transferBlockhash = await connection.getLatestBlockhash()
       const transferTx = new TransactionMessage({
@@ -1112,7 +1203,8 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
       // CRITICAL: Update currentAmount to what the NEXT wallet actually received
       // For intermediate hops, the next wallet receives amountToTransfer minus transaction fees
       // We must check actual balance to track the real amount received
-      await sleep(500) // Wait for transaction to confirm
+      // Reduced wait time - check balance faster (was 500ms, now 300ms)
+      await sleep(300) // Wait for transaction to confirm
       const nextWalletBalance = await connection.getBalance(toWallet.publicKey)
       
       if (isLastHop) {
@@ -1125,7 +1217,8 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
         console.log(`   📊 Inter${i + 1} received: ${(currentAmount / 1e9).toFixed(6)} SOL (will forward to next hop)`)
       }
       
-      await sleep(randomDelay())
+      // Reduced delay between hops - minimal delay for speed (was randomDelay, now 100ms)
+      await sleep(100) // Minimal delay: 100ms between hops
     }
     
     // CRITICAL: Verify final balance - ensure funds actually arrived
