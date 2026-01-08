@@ -35,7 +35,7 @@ function App() {
 
   const tabs = [
     { id: 'launch', name: 'Launch', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, component: TokenLaunch },
-    { id: 'holders', name: 'Holders', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
+    { id: 'holders', name: 'Terminal', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
     { id: 'warming', name: 'Warming', icon: CpuChipIcon, iconSolid: CpuChipIconSolid, component: WalletWarming },
     { id: 'test', name: 'Test', icon: BeakerIcon, iconSolid: BeakerIconSolid, component: WalletTester },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid, component: Settings },
@@ -65,9 +65,12 @@ function App() {
           <div className="w-full px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-8">
-                <div>
-                  <h1 className="text-xl font-bold text-white">Pump.fun Bundler</h1>
-                  <p className="text-xs text-gray-500">Version 2.9.1</p>
+                <div className="flex items-center">
+                  <img 
+                    src="/image/goatlogo.png" 
+                    alt="GOAT TOOLS Logo" 
+                    className="h-10 w-auto object-contain"
+                  />
                 </div>
                 <nav className="flex gap-1">
                   {tabs.filter(tab => tab.id !== 'settings').map((tab) => {
@@ -176,8 +179,8 @@ function App() {
           )}
 
           {/* Main Content Area - Scrollable */}
-          <main className={`flex-1 overflow-y-auto ${isSettingsPage ? 'p-6' : 'p-8'}`}>
-            <div className={isSettingsPage ? '' : 'max-w-7xl mx-auto'}>
+          <main className={`flex-1 overflow-y-auto ${isSettingsPage ? 'p-6' : (activeTab === 'holders' ? 'p-4' : 'p-8')}`}>
+            <div className={isSettingsPage ? '' : (activeTab === 'holders' ? 'w-full h-full' : 'max-w-7xl mx-auto')}>
               {ActiveComponent && (
                 <ActiveComponent 
                   onLaunch={() => {

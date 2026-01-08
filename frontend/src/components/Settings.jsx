@@ -7,7 +7,8 @@ import {
   CpuChipIcon,
   RocketLaunchIcon,
   ArrowPathIcon,
-  ArrowPathRoundedSquareIcon
+  ArrowPathRoundedSquareIcon,
+  BellIcon
 } from '@heroicons/react/24/outline';
 import apiService from '../services/api';
 
@@ -136,6 +137,7 @@ export default function Settings() {
         { key: 'BUNDLE_SWAP_AMOUNTS', label: 'Bundle Swap Amounts (comma-separated)', type: 'text', description: 'Custom amounts per wallet, e.g., "0.4,0.5,0.7,1.0"' },
         { key: 'SWAP_AMOUNT', label: 'Default Swap Amount (SOL)', type: 'number', description: 'Default amount if BUNDLE_SWAP_AMOUNTS not specified' },
         { key: 'USE_NORMAL_LAUNCH', label: 'Use Normal Launch (No Jito, No LUT)', type: 'checkbox', description: 'Skip Jito bundling and LUT for simpler launches', icon: RocketLaunchIcon },
+        { key: 'BUNDLE_INTERMEDIARY_HOPS', label: 'Bundle Intermediary Hops', type: 'number', description: 'Number of intermediary wallets to route through for bundle wallets (0-5, default: 2). Higher = more privacy but slower.', inputProps: { min: '0', max: '5', step: '1' } },
       ],
     },
     holders: {
@@ -147,6 +149,7 @@ export default function Settings() {
         { key: 'HOLDER_WALLET_AMOUNT', label: 'Holder Wallet Amount (SOL)', type: 'number', description: 'Default amount for each holder wallet' },
         { key: 'HOLDER_SWAP_AMOUNTS', label: 'Holder Swap Amounts (comma-separated)', type: 'text', description: 'Custom amounts per holder wallet' },
         { key: 'AUTO_HOLDER_WALLET_BUY', label: 'Auto Holder Wallet Buy', type: 'checkbox', description: 'Automatically execute holder wallet buys after launch is confirmed' },
+        { key: 'HOLDER_INTERMEDIARY_HOPS', label: 'Holder Intermediary Hops', type: 'number', description: 'Number of intermediary wallets to route through for holder wallets (0-5, default: 2). Higher = more privacy but slower.', inputProps: { min: '0', max: '5', step: '1' } },
       ],
     },
     options: {
@@ -169,6 +172,20 @@ export default function Settings() {
           type: 'checkbox',
           description: 'Creates brand new mixing wallets for each launch (better privacy). If disabled, reuses existing mixing wallets. Default: Enabled.',
           icon: ArrowPathRoundedSquareIcon
+        },
+        { 
+          key: 'USE_MULTI_INTERMEDIARY_SYSTEM', 
+          label: 'Use Multi-Intermediary System (Advanced Privacy)', 
+          type: 'checkbox',
+          description: 'Routes SOL through multiple intermediary wallets instead of mixing wallets. Each wallet gets unique intermediaries. More private but slower. Requires NUM_INTERMEDIARY_HOPS or per-wallet configs.',
+          icon: ArrowPathRoundedSquareIcon
+        },
+        { 
+          key: 'NUM_INTERMEDIARY_HOPS', 
+          label: 'Default Intermediary Hops (Global Fallback)', 
+          type: 'number', 
+          description: 'Default number of intermediary wallets if BUNDLE_INTERMEDIARY_HOPS or HOLDER_INTERMEDIARY_HOPS not set (0-5, default: 2).',
+          inputProps: { min: '0', max: '5', step: '1' }
         },
       ],
     },
@@ -312,6 +329,7 @@ export default function Settings() {
                     type={setting.type}
                     value={settings[setting.key] || ''}
                     onChange={(e) => handleChange(setting.key, e.target.value)}
+                    {...(setting.inputProps || {})}
                     className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 )}

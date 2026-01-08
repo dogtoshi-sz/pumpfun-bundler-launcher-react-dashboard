@@ -4,11 +4,13 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 // Handle bs58 v6 export format (same as other files in project)
 const base58 = require('bs58').default || require('bs58');
 const { Keypair, Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } = require('@solana/spl-token');
 const WebSocket = require('ws');
+const liveTradesTracker = require('./live-trades-tracker');
 
 // Register ts-node for TypeScript support (for marketing modules)
 try {
@@ -541,7 +543,7 @@ app.post('/api/launch-token', async (req, res) => {
     console.log(`[Launch] Latest .env has ${Object.keys(latestEnv).length} variables`);
     
     // Handle warmed wallets if provided
-    const { useWarmedWallets, creatorWalletAddress, bundleWalletAddresses, holderWalletAddresses, holderWalletAutoBuyAddresses, holderWalletAutoBuyDelays } = req.body || {};
+    const { useWarmedWallets, creatorWalletAddress, bundleWalletAddresses, holderWalletAddresses, holderWalletAutoBuyAddresses, holderWalletAutoBuyIndices, holderWalletAutoBuyDelays } = req.body || {};
     if (useWarmedWallets && (creatorWalletAddress || bundleWalletAddresses || holderWalletAddresses)) {
       console.log(`[Launch] Using warmed wallets:`);
       console.log(`   Creator wallet: ${creatorWalletAddress ? '1' : '0'}`);
@@ -648,6 +650,35 @@ app.post('/api/launch-token', async (req, res) => {
       if (fs.existsSync(warmedWalletsPath)) {
         fs.unlinkSync(warmedWalletsPath);
         console.log(`[Launch] Cleared warmed wallets file - will create fresh wallets`);
+      }
+      
+      // For fresh wallets, save auto-buy config to a temp file that index.ts can read
+      // This allows fresh wallets to also use auto-buy functionality
+      // Use indices (for fresh wallets) or addresses (if provided for some reason)
+      if ((holderWalletAutoBuyIndices && holderWalletAutoBuyIndices.length > 0) || 
+          (holderWalletAutoBuyAddresses && holderWalletAutoBuyAddresses.length > 0)) {
+        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'fresh-auto-buy-config.json');
+        const freshAutoBuyData = {
+          holderWalletAutoBuyIndices: holderWalletAutoBuyIndices || [], // Wallet indices (1, 2, 3, etc.)
+          holderWalletAutoBuyAddresses: holderWalletAutoBuyAddresses || [], // Fallback: addresses if provided
+          holderWalletAutoBuyDelays: holderWalletAutoBuyDelays || null,
+          createdAt: new Date().toISOString()
+        };
+        fs.writeFileSync(freshAutoBuyPath, JSON.stringify(freshAutoBuyData, null, 2));
+        const walletCount = holderWalletAutoBuyIndices?.length || holderWalletAutoBuyAddresses?.length || 0;
+        console.log(`[Launch] Saved fresh wallet auto-buy config: ${walletCount} wallet(s) selected`);
+        if (holderWalletAutoBuyIndices && holderWalletAutoBuyIndices.length > 0) {
+          console.log(`   Selected wallet indices: ${holderWalletAutoBuyIndices.join(', ')}`);
+        }
+        if (holderWalletAutoBuyDelays) {
+          console.log(`   Auto-buy delays config: ${holderWalletAutoBuyDelays}`);
+        }
+      } else {
+        // Clear fresh auto-buy config if not using it
+        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'fresh-auto-buy-config.json');
+        if (fs.existsSync(freshAutoBuyPath)) {
+          fs.unlinkSync(freshAutoBuyPath);
+        }
       }
     }
     
@@ -1017,7 +1048,7 @@ app.post('/api/holder-wallet/buy', async (req, res) => {
       // For tokens you created, use pump.fun SDK with PRIVATE_KEY as referrer
       // If referrerPrivateKey is provided, use that; otherwise use Jupiter for flexibility
       const useJupiter = !referrerPrivateKey; // Use Jupiter if no referrer provided
-      const feeLevel = priorityFee === 'high' ? 'high' : priorityFee === 'medium' ? 'medium' : 'low'; // Default to 'low'
+      const feeLevel = priorityFee === 'ultra' ? 'ultra' : priorityFee === 'high' ? 'high' : priorityFee === 'medium' ? 'medium' : priorityFee === 'none' ? 'none' : 'low'; // Default to 'low'
       
       const args = referrerPrivateKey 
         ? [privateKey, mintAddress, parseFloat(solAmount), referrerPrivateKey, false, feeLevel] // pump.fun with referrer
@@ -1102,7 +1133,7 @@ app.post('/api/holder-wallet/sell', async (req, res) => {
     try {
       const walletKp = Keypair.fromSecretKey(base58.decode(privateKey));
       const walletAddress = walletKp.publicKey.toBase58();
-      const feeLevel = priorityFee === 'high' ? 'high' : priorityFee === 'medium' ? 'medium' : 'low'; // Default to 'low'
+      const feeLevel = priorityFee === 'ultra' ? 'ultra' : priorityFee === 'high' ? 'high' : priorityFee === 'medium' ? 'medium' : priorityFee === 'none' ? 'none' : 'low'; // Default to 'low'
       
       const result = await callTradingFunction('sellTokenSimple', privateKey, mintAddress, parseFloat(percentage), feeLevel);
       
@@ -2685,6 +2716,149 @@ app.post('/api/marketing/twitter/auto-post', async (req, res) => {
   }
 });
 
+// Token Configuration Save/Load Endpoints
+const TOKEN_CONFIGS_DIR = path.join(__dirname, '..', 'keys', 'token-configs');
+if (!fs.existsSync(TOKEN_CONFIGS_DIR)) {
+  fs.mkdirSync(TOKEN_CONFIGS_DIR, { recursive: true });
+}
+
+// Get all saved token configurations
+app.get('/api/token-configs', (req, res) => {
+  try {
+    const files = fs.readdirSync(TOKEN_CONFIGS_DIR);
+    const configs = files
+      .filter(file => file.endsWith('.json'))
+      .map(file => {
+        try {
+          const filePath = path.join(TOKEN_CONFIGS_DIR, file);
+          const content = fs.readFileSync(filePath, 'utf8');
+          const config = JSON.parse(content);
+          return {
+            id: file.replace('.json', ''),
+            name: config.name || config.TOKEN_NAME || 'Unnamed Token',
+            symbol: config.symbol || config.TOKEN_SYMBOL || '',
+            createdAt: config.createdAt || fs.statSync(filePath).mtime.toISOString(),
+            updatedAt: config.updatedAt || fs.statSync(filePath).mtime.toISOString(),
+          };
+        } catch (error) {
+          console.error(`[Token Configs] Error reading ${file}:`, error.message);
+          return null;
+        }
+      })
+      .filter(config => config !== null)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)); // Most recent first
+    
+    res.json({ success: true, configs });
+  } catch (error) {
+    console.error('[Token Configs] Error listing configs:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get a specific token configuration
+app.get('/api/token-configs/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(TOKEN_CONFIGS_DIR, `${id}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Configuration not found' });
+    }
+    
+    const content = fs.readFileSync(filePath, 'utf8');
+    const config = JSON.parse(content);
+    res.json({ success: true, config });
+  } catch (error) {
+    console.error('[Token Configs] Error loading config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Save a token configuration
+app.post('/api/token-configs', (req, res) => {
+  try {
+    const { name, config } = req.body;
+    
+    if (!name || !config) {
+      return res.status(400).json({ success: false, error: 'Name and config are required' });
+    }
+    
+    // Generate ID from name (sanitize for filename)
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now();
+    
+    // Prepare config to save (include metadata)
+    const configToSave = {
+      ...config,
+      name: name,
+      id: id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    
+    const filePath = path.join(TOKEN_CONFIGS_DIR, `${id}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(configToSave, null, 2), 'utf8');
+    
+    console.log(`[Token Configs] Saved configuration: ${name} (${id})`);
+    res.json({ success: true, id, message: 'Configuration saved successfully' });
+  } catch (error) {
+    console.error('[Token Configs] Error saving config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update a token configuration
+app.put('/api/token-configs/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, config } = req.body;
+    
+    const filePath = path.join(TOKEN_CONFIGS_DIR, `${id}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Configuration not found' });
+    }
+    
+    // Load existing config to preserve metadata
+    const existingContent = fs.readFileSync(filePath, 'utf8');
+    const existingConfig = JSON.parse(existingContent);
+    
+    // Update config
+    const configToSave = {
+      ...existingConfig,
+      ...config,
+      name: name || existingConfig.name,
+      updatedAt: new Date().toISOString(),
+    };
+    
+    fs.writeFileSync(filePath, JSON.stringify(configToSave, null, 2), 'utf8');
+    
+    console.log(`[Token Configs] Updated configuration: ${id}`);
+    res.json({ success: true, message: 'Configuration updated successfully' });
+  } catch (error) {
+    console.error('[Token Configs] Error updating config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete a token configuration
+app.delete('/api/token-configs/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(TOKEN_CONFIGS_DIR, `${id}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Configuration not found' });
+    }
+    
+    fs.unlinkSync(filePath);
+    console.log(`[Token Configs] Deleted configuration: ${id}`);
+    res.json({ success: true, message: 'Configuration deleted successfully' });
+  } catch (error) {
+    console.error('[Token Configs] Error deleting config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // WebSocket server for real-time balance updates (optional - reduces RPC calls)
 const WS_PORT = 3002;
 let wss = null;
@@ -2748,6 +2922,153 @@ try {
 } catch (error) {
   console.log(`⚠️  WebSocket server failed to start: ${error.message}. Using HTTP polling fallback.`);
 }
+
+// Live Trades SSE endpoint
+// Get token metadata from Helius/Metaplex only
+app.get('/api/token-info/:mintAddress', async (req, res) => {
+  try {
+    const { mintAddress } = req.params;
+    const rpcEndpoint = process.env.RPC_ENDPOINT;
+    
+    if (!rpcEndpoint) {
+      return res.json({
+        name: 'Unknown Token',
+        symbol: 'UNKNOWN',
+        address: mintAddress,
+        marketCap: 0,
+        price: 0,
+        liquidity: 0,
+        volume24h: 0,
+        priceChange24h: 0,
+        logoURI: null
+      });
+    }
+    
+    try {
+      const connection = new Connection(rpcEndpoint, 'confirmed');
+      const mintPubkey = new PublicKey(mintAddress);
+      
+      // Get token metadata using Metaplex standard
+      const metadataProgramId = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+      const [metadataPDA] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('metadata'),
+          metadataProgramId.toBuffer(),
+          mintPubkey.toBuffer(),
+        ],
+        metadataProgramId
+      );
+      
+      const metadataAccount = await connection.getAccountInfo(metadataPDA);
+      let name = 'Unknown Token';
+      let symbol = 'UNKNOWN';
+      let logoURI = null;
+      
+      if (metadataAccount) {
+        // Parse metadata (simplified - you may need to use @metaplex-foundation/mpl-token-metadata for full parsing)
+        const metadataData = metadataAccount.data;
+        
+        try {
+          // Metadata structure: key(1) + update_authority(32) + mint(32) + data...
+          const dataStart = 1 + 32 + 32;
+          if (metadataData.length > dataStart + 4) {
+            const nameLen = metadataData.readUInt32LE(dataStart);
+            if (nameLen > 0 && nameLen < 100) {
+              name = metadataData.slice(dataStart + 4, dataStart + 4 + nameLen).toString('utf8').replace(/\0/g, '');
+            }
+            const symbolStart = dataStart + 4 + nameLen + 4;
+            const symbolLen = metadataData.readUInt32LE(dataStart + 4 + nameLen);
+            if (symbolLen > 0 && symbolLen < 100) {
+              symbol = metadataData.slice(symbolStart, symbolStart + symbolLen).toString('utf8').replace(/\0/g, '');
+            }
+            const uriStart = symbolStart + symbolLen + 4;
+            const uriLen = metadataData.readUInt32LE(symbolStart + symbolLen);
+            if (uriLen > 0 && uriLen < 500) {
+              logoURI = metadataData.slice(uriStart, uriStart + uriLen).toString('utf8').replace(/\0/g, '');
+            }
+          }
+        } catch (e) {
+          console.log('[Token Info] Error parsing metadata:', e.message);
+        }
+      }
+      
+      res.json({
+        name: name || 'Unknown Token',
+        symbol: symbol || 'UNKNOWN',
+        address: mintAddress,
+        marketCap: 0, // Market cap will be calculated from trades
+        price: 0, // Price will be calculated from trades
+        liquidity: 0,
+        volume24h: 0,
+        priceChange24h: 0,
+        logoURI: logoURI
+      });
+    } catch (error) {
+      console.log('[Token Info] Helius metadata fetch failed:', error.message);
+      res.json({
+        name: 'Unknown Token',
+        symbol: 'UNKNOWN',
+        address: mintAddress,
+        marketCap: 0,
+        price: 0,
+        liquidity: 0,
+        volume24h: 0,
+        priceChange24h: 0,
+        logoURI: null
+      });
+    }
+  } catch (error) {
+    console.error('[Token Info] Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/live-trades', async (req, res) => {
+  const mintAddress = req.query.mint;
+  
+  console.log(`[API] /api/live-trades called with mint: ${mintAddress}`);
+  
+  if (!mintAddress) {
+    console.error('[API] ❌ No mint address provided');
+    return res.status(400).json({ error: 'Mint address required' });
+  }
+  
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  
+  try {
+    // Start tracking this mint (this will fetch history)
+    console.log(`[API] Starting tracking for ${mintAddress.slice(0, 8)}...`);
+    await liveTradesTracker.startTracking(mintAddress);
+    
+    // Add this client as a listener
+    liveTradesTracker.addListener(res);
+    
+    // Wait a bit for trades to load, then send initial trades
+    setTimeout(() => {
+      const initialTrades = liveTradesTracker.getTrades();
+      console.log(`[API] Sending ${initialTrades.length} initial trades to client`);
+      if (initialTrades.length > 0) {
+        res.write(`data: ${JSON.stringify({ type: 'initial', trades: initialTrades })}\n\n`);
+      } else {
+        // Send empty array so frontend knows connection is working
+        res.write(`data: ${JSON.stringify({ type: 'initial', trades: [] })}\n\n`);
+      }
+    }, 1000); // Wait 1 second for trades to load
+    
+    // Clean up on client disconnect
+    req.on('close', () => {
+      console.log(`[API] Client disconnected for ${mintAddress.slice(0, 8)}...`);
+      liveTradesTracker.removeListener(res);
+    });
+  } catch (error) {
+    console.error('[API] Error in live-trades endpoint:', error);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`🚀 Control Panel API Server running on http://localhost:${PORT}`);

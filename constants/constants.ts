@@ -25,10 +25,19 @@ export const USE_MIXING_WALLETS = (process.env.USE_MIXING_WALLETS || 'true').toL
 export const CREATE_FRESH_MIXING_WALLETS = (process.env.CREATE_FRESH_MIXING_WALLETS || 'true').toLowerCase() === 'true' // Default to true - create fresh mixers each launch for better privacy
 
 // Multi-intermediary system (new, more private)
-export const NUM_INTERMEDIARY_HOPS = Number(process.env.NUM_INTERMEDIARY_HOPS || '2') // Default: 2 intermediaries
+export const NUM_INTERMEDIARY_HOPS = Number(process.env.NUM_INTERMEDIARY_HOPS || '2') // Default: 2 intermediaries (global fallback)
 export const USE_VARIABLE_GAS_FEES = (process.env.USE_VARIABLE_GAS_FEES || 'true').toLowerCase() === 'true' // Default: true - randomized gas fees
 export const CREATE_FRESH_INTERMEDIARIES = (process.env.CREATE_FRESH_INTERMEDIARIES || 'true').toLowerCase() === 'true' // Default: true - create fresh intermediaries per launch
 export const USE_MULTI_INTERMEDIARY_SYSTEM = (process.env.USE_MULTI_INTERMEDIARY_SYSTEM || 'false').toLowerCase() === 'true' // Default: false - opt-in for new system
+
+// Per-wallet-type intermediary hop configuration
+// If not set, falls back to NUM_INTERMEDIARY_HOPS
+export const BUNDLE_INTERMEDIARY_HOPS = process.env.BUNDLE_INTERMEDIARY_HOPS 
+  ? Number(process.env.BUNDLE_INTERMEDIARY_HOPS) 
+  : NUM_INTERMEDIARY_HOPS
+export const HOLDER_INTERMEDIARY_HOPS = process.env.HOLDER_INTERMEDIARY_HOPS 
+  ? Number(process.env.HOLDER_INTERMEDIARY_HOPS) 
+  : NUM_INTERMEDIARY_HOPS
 
 export const TOKEN_NAME = retrieveEnvVariable('TOKEN_NAME', '', true)
 export const TOKEN_SYMBOL = retrieveEnvVariable('TOKEN_SYMBOL', '', true)
@@ -140,16 +149,23 @@ export const MARKET_CAP_CHECK_INTERVAL = Number(process.env.MARKET_CAP_CHECK_INT
 export const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || ''
 
 // Priority fees for Jupiter swaps (in lamports) - higher = faster confirmation
+// ULTRA priority: Maximum speed - for critical trades!
+// Default: 10,000,000 lamports (0.01 SOL) - fastest possible confirmation (~500ms)
+export const PRIORITY_FEE_LAMPORTS_ULTRA = Number(process.env.PRIORITY_FEE_LAMPORTS_ULTRA || '10000000')
+
 // HIGH priority: Used when WebSocket threshold is met (auto-sell) - very fast but expensive!
 // Default: 5,000,000 lamports (0.005 SOL) - reduces confirmation from ~4s to ~1s
-// For extreme speed, can increase to 10,000,000 (0.01 SOL) or higher
 export const PRIORITY_FEE_LAMPORTS_HIGH = Number(process.env.PRIORITY_FEE_LAMPORTS_HIGH || '5000000')
 
 // MEDIUM priority: Used for rapid sells - fast and reasonable!
 // Default: 500,000 lamports (0.0005 SOL) - good balance of speed and cost (~2-3s confirmation)
 export const PRIORITY_FEE_LAMPORTS_MEDIUM = Number(process.env.PRIORITY_FEE_LAMPORTS_MEDIUM || '500000')
 
-// LOW priority: Used for manual sells or when threshold isn't met - save money!
-// Default: 0 lamports (0 SOL) - ABSOLUTE MINIMUM - NO PRIORITY FEE!
-// Set to 0 to use base transaction fee only (like GMGN and other traders)
-export const PRIORITY_FEE_LAMPORTS_LOW = Number(process.env.PRIORITY_FEE_LAMPORTS_LOW || '0')
+// LOW priority: Recommended default for regular trades - good balance!
+// Default: 100,000 lamports (0.0001 SOL) - fast enough for GMGN indexing (~3-4s confirmation)
+// This is the sweet spot: cheap but fast enough for most use cases
+export const PRIORITY_FEE_LAMPORTS_LOW = Number(process.env.PRIORITY_FEE_LAMPORTS_LOW || '100000')
+
+// NONE priority: Absolute minimum - no priority fee (slowest but cheapest)
+// Default: 0 lamports (0 SOL) - base transaction fee only (~5-10s confirmation)
+export const PRIORITY_FEE_LAMPORTS_NONE = Number(process.env.PRIORITY_FEE_LAMPORTS_NONE || '0')

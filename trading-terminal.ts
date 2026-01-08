@@ -14,6 +14,38 @@ const getConnection = () => new Connection(getRpcEndpoint(), {
   commitment: "confirmed"
 })
 
+// Fast confirmation helper - waits for "confirmed" status (usually ~400ms) for faster GMGN indexing
+const waitForConfirmation = async (connection: Connection, signature: string, timeout: number = 3000): Promise<boolean> => {
+  const startTime = Date.now()
+  const checkInterval = 100 // Check every 100ms
+  
+  while (Date.now() - startTime < timeout) {
+    try {
+      const status = await connection.getSignatureStatus(signature)
+      
+      if (status.value) {
+        if (status.value.err) {
+          // Transaction failed
+          return false
+        }
+        // Check if confirmed (included in a block)
+        if (status.value.confirmationStatus === 'confirmed' || status.value.confirmationStatus === 'finalized') {
+          return true
+        }
+      }
+      
+      // Wait before next check
+      await new Promise(resolve => setTimeout(resolve, checkInterval))
+    } catch (error) {
+      // Continue checking
+      await new Promise(resolve => setTimeout(resolve, checkInterval))
+    }
+  }
+  
+  // Timeout - transaction might still be processing
+  return false
+}
+
 // mainKp removed - buyTokenSimple now uses wallet's own public key as referrer
 // This avoids requiring PRIVATE_KEY to be loaded when called from API server
 
@@ -104,7 +136,7 @@ export const buyTokenSimple = async (
   solAmount: number,
   referrerPrivateKey?: string, // Optional: if provided, use this as referrer (must be token creator for pump.fun)
   useJupiter: boolean = false, // If true, use Jupiter swap instead of pump.fun SDK (works with any token)
-  priorityFee: 'low' | 'medium' | 'high' = 'low' // Priority fee level: 'low' (0.0001 SOL), 'medium' (0.0005 SOL), or 'high' (0.005 SOL) - only used for Jupiter swaps
+  priorityFee: 'none' | 'low' | 'medium' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low' (0.0001 SOL), 'medium' (0.0005 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
 ): Promise<{ signature: string; txUrl: string }> => {
   try {
     const connection = getConnection()
@@ -115,21 +147,25 @@ export const buyTokenSimple = async (
     if (useJupiter) {
       console.log(`Using Jupiter swap for buy (works with any token) - Priority: ${priorityFee}`)
       const buyAmountLamports = Math.floor(solAmount * 1e9)
-      const { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } = require('./constants/constants')
+      const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('./constants/constants')
       let priorityFeeLamports: number
-      if (priorityFee === 'high') {
+      if (priorityFee === 'ultra') {
+        priorityFeeLamports = PRIORITY_FEE_LAMPORTS_ULTRA
+      } else if (priorityFee === 'high') {
         priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
       } else if (priorityFee === 'medium') {
         priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
-      } else {
-        // LOW fee: Use minimal fee with random variation to avoid looking botted
+      } else if (priorityFee === 'low') {
+        // LOW fee: Use base fee with random variation to avoid looking botted
         // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
-        // This makes each trade have slightly different fees (looks more natural)
-        // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
-        const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 0
+        const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 100000
         const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
         priorityFeeLamports = baseFee + variation
         console.log(`[Buy] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
+      } else {
+        // NONE fee: No priority fee (base transaction fee only)
+        priorityFeeLamports = PRIORITY_FEE_LAMPORTS_NONE || 0
+        console.log(`[Buy] Using NONE priority fee: ${priorityFeeLamports} lamports (base fee only)`)
       }
       const tx = await getBuyTxWithJupiter(walletKp, mintPubkey, buyAmountLamports, priorityFeeLamports, priorityFee)
       
@@ -137,7 +173,7 @@ export const buyTokenSimple = async (
         throw new Error('Failed to get buy transaction from Jupiter')
       }
       
-      // Send instantly (GMGN-style - skip preflight and don't wait for confirmation)
+      // Send instantly (GMGN-style - skip preflight)
       const signature = await connection.sendTransaction(tx, {
         skipPreflight: true, // Skip preflight for instant execution (like GMGN)
         maxRetries: 3
@@ -145,9 +181,16 @@ export const buyTokenSimple = async (
       
       console.log(`Jupiter buy sent instantly: ${signature}`)
       
-      // Don't wait for confirmation - return immediately (GMGN-style)
-      // Transaction will confirm in background, but we return signature immediately
-      // This makes execution instant like GMGN
+      // Wait for fast confirmation (~400ms) for GMGN indexing
+      // This ensures transaction is included in a block before returning
+      // GMGN indexes faster when transaction is already confirmed
+      console.log(`[Buy] Waiting for fast confirmation for GMGN indexing...`)
+      const confirmed = await waitForConfirmation(connection, signature)
+      if (confirmed) {
+        console.log(`[Buy] ✅ Transaction confirmed! GMGN should index within 1-2 seconds.`)
+      } else {
+        console.log(`[Buy] ⚠️ Confirmation check timeout (transaction likely still processing)`)
+      }
       
       return {
         signature,
@@ -207,23 +250,130 @@ export const buyTokenSimple = async (
     const tx = new VersionedTransaction(msg)
     tx.sign([walletKp])
     
-    // Skip simulation for speed (GMGN-style instant execution)
-    // Send transaction immediately with skipPreflight for instant execution
-    const signature = await connection.sendTransaction(tx, {
-      skipPreflight: true, // Skip preflight for instant execution (like GMGN)
-      maxRetries: 3
-    })
+    // Retry logic for pump.fun buys (handles slippage/price movement)
+    // When multiple wallets buy simultaneously, price moves on bonding curve
+    // We retry with fresh blockhash and recalculated buy instructions
+    let signature: string | null = null
+    let lastError: Error | null = null
+    const maxRetries = 3
+    const retryDelay = 500 // 500ms delay between retries
     
-    console.log(`Trade sent instantly: ${signature}`)
-    
-    // Don't wait for confirmation - return immediately (GMGN-style)
-    // Transaction will confirm in background, but we return signature immediately
-    // This makes execution instant like GMGN
-    
-    return {
-      signature,
-      txUrl: `https://solscan.io/tx/${signature}`
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Recalculate buy instructions on retry (price may have moved)
+        // This ensures we get the correct amount for current price
+        const buyAmountLamports = Math.floor(solAmount * 1e9)
+        const currentBuyIxs = await makeBuyIx(walletKp, buyAmountLamports, 0, referrerPublicKey, mintPubkey)
+        
+        // Get fresh blockhash for each retry (important for price changes)
+        const latestBlockhash = await connection.getLatestBlockhash('confirmed')
+        
+        // Recreate transaction with fresh blockhash and recalculated instructions
+        const msg = new TransactionMessage({
+          payerKey: walletKp.publicKey,
+          recentBlockhash: latestBlockhash.blockhash,
+          instructions: [
+            ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: Math.floor(Math.random() * 3) }),
+            ...currentBuyIxs
+          ]
+        }).compileToV0Message()
+        
+        const tx = new VersionedTransaction(msg)
+        tx.sign([walletKp])
+        
+        // Send transaction
+        signature = await connection.sendTransaction(tx, {
+          skipPreflight: true, // Skip preflight for instant execution (like GMGN)
+          maxRetries: 1 // Only 1 retry per attempt
+        })
+        
+        console.log(`[Buy] Trade sent (attempt ${attempt}/${maxRetries}): ${signature}`)
+        
+        // Wait for confirmation and check if it succeeded
+        console.log(`[Buy] Waiting for confirmation...`)
+        const confirmed = await waitForConfirmation(connection, signature, 5000) // 5 second timeout
+        
+        if (confirmed) {
+          // Double-check transaction actually succeeded
+          const status = await connection.getSignatureStatus(signature)
+          if (status.value && status.value.err) {
+            const errorMsg = JSON.stringify(status.value.err)
+            // Check if it's a slippage/price movement error
+            if (errorMsg.includes('0x1') || errorMsg.includes('insufficient') || errorMsg.includes('slippage') ||
+                errorMsg.includes('BlockhashNotFound') || errorMsg.includes('blockhash')) {
+              console.log(`[Buy] ⚠️ Transaction failed (attempt ${attempt}/${maxRetries}): ${errorMsg}`)
+              lastError = new Error(`Buy failed: ${errorMsg}`)
+              if (attempt < maxRetries) {
+                console.log(`[Buy] Retrying with fresh blockhash and recalculated buy instructions in ${retryDelay}ms...`)
+                await new Promise(resolve => setTimeout(resolve, retryDelay))
+                continue // Retry with fresh blockhash and recalculated instructions
+              }
+            } else {
+              throw new Error(`Transaction failed: ${errorMsg}`)
+            }
+          } else {
+            // Transaction succeeded!
+            console.log(`[Buy] ✅ Transaction confirmed! GMGN should index within 1-2 seconds.`)
+            return {
+              signature,
+              txUrl: `https://solscan.io/tx/${signature}`
+            }
+          }
+        } else {
+          // Check if transaction failed
+          const status = await connection.getSignatureStatus(signature)
+          if (status.value && status.value.err) {
+            const errorMsg = JSON.stringify(status.value.err)
+            // Check if it's a slippage/price movement error
+            if (errorMsg.includes('0x1') || errorMsg.includes('insufficient') || errorMsg.includes('slippage') ||
+                errorMsg.includes('BlockhashNotFound') || errorMsg.includes('blockhash')) {
+              console.log(`[Buy] ⚠️ Transaction failed due to price movement/slippage (attempt ${attempt}/${maxRetries}): ${errorMsg}`)
+              lastError = new Error(`Buy failed: Price moved during transaction. ${errorMsg}`)
+              if (attempt < maxRetries) {
+                console.log(`[Buy] Retrying with fresh blockhash and recalculated buy instructions in ${retryDelay}ms...`)
+                await new Promise(resolve => setTimeout(resolve, retryDelay))
+                continue // Retry
+              }
+            } else {
+              throw new Error(`Transaction failed: ${errorMsg}`)
+            }
+          } else {
+            // Transaction still pending - might succeed later
+            console.log(`[Buy] ⚠️ Transaction still pending (attempt ${attempt}/${maxRetries})`)
+            if (attempt < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, retryDelay))
+              continue // Retry
+            }
+          }
+        }
+      } catch (error: any) {
+        lastError = error
+        const errorMsg = error.message || JSON.stringify(error)
+        
+        // Check if it's a slippage/price movement error
+        if (errorMsg.includes('insufficient') || errorMsg.includes('slippage') || errorMsg.includes('0x1') || 
+            errorMsg.includes('price') || errorMsg.includes('amount') || errorMsg.includes('BlockhashNotFound') ||
+            errorMsg.includes('blockhash')) {
+          console.log(`[Buy] ⚠️ Buy failed due to price movement/slippage (attempt ${attempt}/${maxRetries}): ${errorMsg}`)
+          if (attempt < maxRetries) {
+            console.log(`[Buy] Retrying with fresh blockhash and recalculated buy instructions in ${retryDelay}ms...`)
+            await new Promise(resolve => setTimeout(resolve, retryDelay))
+            continue // Retry
+          }
+        } else {
+          // Non-retryable error
+          throw error
+        }
+      }
     }
+    
+    // All retries failed
+    if (lastError) {
+      throw new Error(`Buy failed after ${maxRetries} attempts: ${lastError.message}. This is likely due to price movement/slippage when multiple wallets buy simultaneously. Try reducing the number of parallel buys or increasing the delay between buys.`)
+    }
+    
+    throw new Error(`Buy failed: Transaction not confirmed after ${maxRetries} attempts`)
   } catch (error: any) {
     // Provide more detailed error messages
     let errorMessage = error.message || 'Unknown error'
@@ -249,7 +399,7 @@ export const sellTokenSimple = async (
   walletPrivateKey: string,
   mintAddress: string,
   percentage: number = 100, // Percentage of tokens to sell (default 100%)
-  priorityFee: 'low' | 'medium' | 'high' = 'low' // Priority fee level: 'low' (0.0001 SOL), 'medium' (0.0005 SOL), or 'high' (0.005 SOL)
+  priorityFee: 'none' | 'low' | 'medium' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low' (0.0001 SOL), 'medium' (0.0005 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
 ): Promise<{ signature: string; txUrl: string }> => {
   try {
     const connection = getConnection()
@@ -316,22 +466,26 @@ export const sellTokenSimple = async (
     }
     
     // Get priority fee lamports based on selection (with slight variation for low fee to avoid exact same fee)
-    const { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } = require('./constants/constants')
+    const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('./constants/constants')
     let priorityFeeLamports: number
-    if (priorityFee === 'high') {
+    if (priorityFee === 'ultra') {
+      priorityFeeLamports = PRIORITY_FEE_LAMPORTS_ULTRA
+    } else if (priorityFee === 'high') {
       priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
     } else if (priorityFee === 'medium') {
       priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
-      } else {
-        // LOW fee: Use minimal fee with random variation to avoid looking botted
-        // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
-        // This makes each trade have slightly different fees (looks more natural)
-        // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
-        const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 0
-        const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-        priorityFeeLamports = baseFee + variation
-        console.log(`[Sell] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
-      }
+    } else if (priorityFee === 'low') {
+      // LOW fee: Use base fee with random variation to avoid looking botted
+      // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
+      const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 100000
+      const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
+      priorityFeeLamports = baseFee + variation
+      console.log(`[Sell] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
+    } else {
+      // NONE fee: No priority fee (base transaction fee only)
+      priorityFeeLamports = PRIORITY_FEE_LAMPORTS_NONE || 0
+      console.log(`[Sell] Using NONE priority fee: ${priorityFeeLamports} lamports (base fee only)`)
+    }
     
     // Get sell transaction from Jupiter with selected priority fee
     console.log(`[Sell] Requesting Jupiter sell transaction: mint=${mintAddress.substring(0, 8)}..., rawAmount=${rawAmount}, decimals=${decimals}, uiAmount=${amountToSell.toFixed(6)}`)
@@ -345,7 +499,7 @@ export const sellTokenSimple = async (
     
     console.log(`[Sell] ✅ Got sell transaction from Jupiter for ${mintAddress.substring(0, 8)}...`)
     
-    // Send transaction instantly (GMGN-style - skip preflight and don't wait for confirmation)
+    // Send transaction instantly (GMGN-style - skip preflight)
     const signature = await connection.sendTransaction(sellTx, {
       skipPreflight: true, // Skip preflight for instant execution (like GMGN)
       maxRetries: 3
@@ -353,9 +507,16 @@ export const sellTokenSimple = async (
     
     console.log(`Sell sent instantly: ${signature}`);
     
-    // Don't wait for confirmation - return immediately (GMGN-style)
-    // Transaction will confirm in background, but we return signature immediately
-    // This makes execution instant like GMGN
+    // Wait for fast confirmation (~400ms) for GMGN indexing
+    // This ensures transaction is included in a block before returning
+    // GMGN indexes faster when transaction is already confirmed
+    console.log(`[Sell] Waiting for fast confirmation for GMGN indexing...`)
+    const confirmed = await waitForConfirmation(connection, signature)
+    if (confirmed) {
+      console.log(`[Sell] ✅ Transaction confirmed! GMGN should index within 1-2 seconds.`)
+    } else {
+      console.log(`[Sell] ⚠️ Confirmation check timeout (transaction likely still processing)`)
+    }
     
     return {
       signature,

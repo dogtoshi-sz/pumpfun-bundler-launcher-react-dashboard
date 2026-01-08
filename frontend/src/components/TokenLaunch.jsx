@@ -131,12 +131,18 @@ export default function TokenLaunch({ onLaunch }) {
   const [selectedBundleWallets, setSelectedBundleWallets] = useState([]);
   const [selectedHolderWallets, setSelectedHolderWallets] = useState([]);
   const [selectedHolderAutoBuyWallets, setSelectedHolderAutoBuyWallets] = useState([]);
-  const [holderAutoBuyGroups, setHolderAutoBuyGroups] = useState([{ count: 1, delay: 1.0 }]);
+  const [selectedHolderAutoBuyIndices, setSelectedHolderAutoBuyIndices] = useState([]); // For fresh wallets: store indices instead of addresses
+  const [holderAutoBuyGroups, setHolderAutoBuyGroups] = useState([{ count: 1, delay: 0.1 }]);
   const [selectedCreatorWallet, setSelectedCreatorWallet] = useState(null);
   const [loadingWarmedWallets, setLoadingWarmedWallets] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
   // Filter and sort state for wallet modal
   const [searchQuery, setSearchQuery] = useState('');
+  // Token configuration save/load state
+  const [savedConfigs, setSavedConfigs] = useState([]);
+  const [loadingConfigs, setLoadingConfigs] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [configSaveName, setConfigSaveName] = useState('');
   const [tagFilter, setTagFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('createdAt');
@@ -390,6 +396,198 @@ export default function TokenLaunch({ onLaunch }) {
       console.error('Failed to load settings:', error);
     }
   };
+
+  // Load saved token configurations
+  const loadSavedConfigs = async () => {
+    try {
+      setLoadingConfigs(true);
+      const res = await apiService.getTokenConfigs();
+      setSavedConfigs(res.data.configs || []);
+    } catch (error) {
+      console.error('Failed to load saved configs:', error);
+      alert('Failed to load saved configurations: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoadingConfigs(false);
+    }
+  };
+
+  // Save current token configuration
+  const saveTokenConfig = async () => {
+    if (!configSaveName.trim()) {
+      alert('Please enter a name for this configuration');
+      return;
+    }
+
+    try {
+      // Collect all token-related settings
+      const configToSave = {
+        TOKEN_NAME: settings.TOKEN_NAME || '',
+        TOKEN_SYMBOL: settings.TOKEN_SYMBOL || '',
+        DESCRIPTION: settings.DESCRIPTION || '',
+        FILE: settings.FILE || '',
+        WEBSITE_LOGO: settings.WEBSITE_LOGO || '',
+        WEBSITE: settings.WEBSITE || '',
+        WEBSITE_URL: settings.WEBSITE_URL || '',
+        TELEGRAM: settings.TELEGRAM || '',
+        TWITTER: settings.TWITTER || '',
+        TWITTER_TWEETS: settings.TWITTER_TWEETS || '',
+        // Marketing settings
+        WEBSITE_THEME: settings.WEBSITE_THEME || '',
+        WEBSITE_CUSTOM_COLOR: settings.WEBSITE_CUSTOM_COLOR || '',
+        WEBSITE_CHAIN: settings.WEBSITE_CHAIN || '',
+        // Note: We don't save PRIVATE_KEY, BUYER_WALLET, or wallet counts for security
+      };
+
+      await apiService.saveTokenConfig(configSaveName.trim(), configToSave);
+      setConfigSaveName('');
+      setShowConfigModal(false);
+      await loadSavedConfigs();
+      alert('✅ Configuration saved successfully!');
+    } catch (error) {
+      console.error('Failed to save config:', error);
+      alert('Failed to save configuration: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  // Load a saved token configuration
+  const loadTokenConfig = async (configId) => {
+    try {
+      const res = await apiService.getTokenConfig(configId);
+      const config = res.data.config;
+      
+      // Update settings with saved config
+      const updatedSettings = { ...settings };
+      Object.keys(config).forEach(key => {
+        if (key !== 'id' && key !== 'name' && key !== 'createdAt' && key !== 'updatedAt') {
+          updatedSettings[key] = config[key];
+        }
+      });
+      
+      setSettings(updatedSettings);
+      
+      // Save to .env file
+      await apiService.updateSettings(updatedSettings);
+      
+      // Reload settings to get image previews
+      await loadSettings();
+      
+      setShowConfigModal(false);
+      alert('✅ Configuration loaded successfully!');
+    } catch (error) {
+      console.error('Failed to load config:', error);
+      alert('Failed to load configuration: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  // Delete a saved token configuration
+  const deleteTokenConfig = async (configId, e) => {
+    e.stopPropagation(); // Prevent loading the config when clicking delete
+    if (!confirm('Are you sure you want to delete this configuration?')) {
+      return;
+    }
+
+    try {
+      await apiService.deleteTokenConfig(configId);
+      await loadSavedConfigs();
+      alert('✅ Configuration deleted successfully!');
+    } catch (error) {
+      console.error('Failed to delete config:', error);
+      alert('Failed to delete configuration: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  // Export current configuration as JSON file
+  const exportConfigAsJSON = () => {
+    const configToExport = {
+      name: settings.TOKEN_NAME || 'Token Configuration',
+      symbol: settings.TOKEN_SYMBOL || '',
+      description: settings.DESCRIPTION || '',
+      tokenImage: settings.FILE || '',
+      websiteLogo: settings.WEBSITE_LOGO || '',
+      website: settings.WEBSITE || '',
+      websiteUrl: settings.WEBSITE_URL || '',
+      telegram: settings.TELEGRAM || '',
+      twitter: settings.TWITTER || '',
+      twitterTweets: settings.TWITTER_TWEETS || '',
+      websiteTheme: settings.WEBSITE_THEME || '',
+      websiteCustomColor: settings.WEBSITE_CUSTOM_COLOR || '',
+      websiteChain: settings.WEBSITE_CHAIN || '',
+      exportedAt: new Date().toISOString(),
+      version: '1.0'
+    };
+
+    const jsonStr = JSON.stringify(configToExport, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${configToExport.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-config.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    alert('✅ Configuration exported as JSON file!');
+  };
+
+  // Import configuration from JSON file
+  const importConfigFromJSON = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const importedConfig = JSON.parse(e.target.result);
+        
+        // Map imported config to settings
+        const updatedSettings = { ...settings };
+        
+        if (importedConfig.name) updatedSettings.TOKEN_NAME = importedConfig.name;
+        if (importedConfig.symbol) updatedSettings.TOKEN_SYMBOL = importedConfig.symbol;
+        if (importedConfig.description) updatedSettings.DESCRIPTION = importedConfig.description;
+        if (importedConfig.tokenImage) updatedSettings.FILE = importedConfig.tokenImage;
+        if (importedConfig.websiteLogo) updatedSettings.WEBSITE_LOGO = importedConfig.websiteLogo;
+        if (importedConfig.website) updatedSettings.WEBSITE = importedConfig.website;
+        if (importedConfig.websiteUrl) updatedSettings.WEBSITE_URL = importedConfig.websiteUrl;
+        if (importedConfig.telegram) updatedSettings.TELEGRAM = importedConfig.telegram;
+        if (importedConfig.twitter) updatedSettings.TWITTER = importedConfig.twitter;
+        if (importedConfig.twitterTweets) updatedSettings.TWITTER_TWEETS = importedConfig.twitterTweets;
+        if (importedConfig.websiteTheme) updatedSettings.WEBSITE_THEME = importedConfig.websiteTheme;
+        if (importedConfig.websiteCustomColor) updatedSettings.WEBSITE_CUSTOM_COLOR = importedConfig.websiteCustomColor;
+        if (importedConfig.websiteChain) updatedSettings.WEBSITE_CHAIN = importedConfig.websiteChain;
+        
+        setSettings(updatedSettings);
+        
+        // Save to .env file
+        apiService.updateSettings(updatedSettings).then(() => {
+          // Reload settings to get image previews
+          loadSettings();
+          alert('✅ Configuration imported successfully!');
+        }).catch(err => {
+          console.error('Failed to save imported config:', err);
+          alert('⚠️ Configuration loaded but failed to save to .env: ' + (err.response?.data?.error || err.message));
+        });
+        
+        // Reset file input
+        event.target.value = '';
+      } catch (error) {
+        console.error('Failed to parse JSON:', error);
+        alert('❌ Invalid JSON file: ' + error.message);
+        event.target.value = '';
+      }
+    };
+    reader.onerror = () => {
+      alert('❌ Failed to read file');
+      event.target.value = '';
+    };
+    reader.readAsText(file);
+  };
+
+  // Load saved configs on component mount
+  useEffect(() => {
+    loadSavedConfigs();
+  }, []);
 
   const loadNextAddress = async () => {
     try {
@@ -1423,7 +1621,7 @@ export default function TokenLaunch({ onLaunch }) {
       await apiService.updateSettings(settingsToSave);
 
       // Launch token - this will clear current-run.json and start fresh
-      // Include warmed wallet selections if using warmed wallets
+      // Include warmed wallet selections if using warmed wallets, OR auto-buy config for fresh wallets
       const launchData = useWarmedWallets ? {
         useWarmedWallets: true,
         creatorWalletAddress: selectedCreatorWallet || null,
@@ -1433,7 +1631,14 @@ export default function TokenLaunch({ onLaunch }) {
         holderWalletAutoBuyDelays: (settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) && holderAutoBuyGroups.length > 0
           ? holderAutoBuyGroups.map(g => `parallel:${g.count},delay:${g.delay}`).join(',')
           : null
-      } : {};
+      } : {
+        // For fresh wallets, pass auto-buy config using indices
+        useWarmedWallets: false,
+        holderWalletAutoBuyIndices: (settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) ? selectedHolderAutoBuyIndices : [],
+        holderWalletAutoBuyDelays: (settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) && holderAutoBuyGroups.length > 0
+          ? holderAutoBuyGroups.map(g => `parallel:${g.count},delay:${g.delay}`).join(',')
+          : null
+      };
       const res = await apiService.launchToken(launchData);
       
       // Clear wallet info immediately (since current-run.json was cleared)
@@ -1607,122 +1812,168 @@ export default function TokenLaunch({ onLaunch }) {
   };
 
   return (
-    <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-6">
-      <div className="flex justify-between items-center mb-6">
+    <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
+      <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-3">
-          <RocketLaunchIconSolid className="w-7 h-7 text-blue-400" />
-          <h2 className="text-2xl font-bold text-white">Launch Token</h2>
+          <RocketLaunchIconSolid className="w-6 h-6 text-blue-400" />
+          <h2 className="text-xl font-bold text-white">Launch Token</h2>
         </div>
-        {savingStatus && (
-          <div className={`text-sm px-3 py-1 rounded ${
-            savingStatus.startsWith('✅') ? 'bg-green-900/50 text-green-400' : 
-            savingStatus.startsWith('❌') ? 'bg-red-900/50 text-red-400' : 
-            'bg-blue-900/50 text-blue-400'
-          }`}>
-            {savingStatus}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={exportConfigAsJSON}
+            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+            title="Export current configuration as JSON file"
+          >
+            <ArrowDownTrayIcon className="w-4 h-4" />
+            Export JSON
+          </button>
+          <label className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer">
+            <ArrowPathIcon className="w-4 h-4" />
+            Import JSON
+            <input
+              type="file"
+              accept=".json"
+              onChange={importConfigFromJSON}
+              className="hidden"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setShowConfigModal(true);
+              loadSavedConfigs();
+            }}
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+          >
+            <ArrowPathIcon className="w-4 h-4" />
+            Load Config
+          </button>
+          {savingStatus && (
+            <div className={`text-sm px-3 py-1 rounded ${
+              savingStatus.startsWith('✅') ? 'bg-green-900/50 text-green-400' : 
+              savingStatus.startsWith('❌') ? 'bg-red-900/50 text-red-400' : 
+              'bg-blue-900/50 text-blue-400'
+            }`}>
+              {savingStatus}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Next Pump Address */}
       {nextAddress && (
-        <div className="mb-6 p-4 bg-gray-900/50 border border-gray-800 rounded-lg">
-          <p className="text-sm text-gray-300 mb-1">Next Pump Address</p>
+        <div className="mb-3 p-2 bg-gray-900/50 border border-gray-800 rounded-lg">
+          <p className="text-xs text-gray-300 mb-0.5">Next Pump Address</p>
           {nextAddress.address ? (
             <>
-              <p className="text-sm font-mono text-white break-all">{nextAddress.address}</p>
+              <p className="text-xs font-mono text-white break-all">{nextAddress.address}</p>
               {nextAddress.source && (
-                <p className="text-xs text-gray-500 mt-1">Source: {nextAddress.source}</p>
+                <p className="text-xs text-gray-500 mt-0.5">Source: {nextAddress.source}</p>
               )}
             </>
           ) : (
-            <p className="text-sm text-yellow-400">{nextAddress.source || 'No address available'}</p>
+            <p className="text-xs text-yellow-400">{nextAddress.source || 'No address available'}</p>
           )}
         </div>
       )}
 
       {/* Token Details Section */}
-      <div className="mb-6 p-5 bg-gray-900/50 rounded-lg border border-gray-800">
-        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-          </svg>
-          Token Details
-        </h3>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+      <div className="mb-3 p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+            </svg>
+            Token Details
+          </h3>
+          <button
+            type="button"
+            onClick={() => {
+              setConfigSaveName(settings.TOKEN_NAME || 'My Token');
+              setShowConfigModal(true);
+              loadSavedConfigs();
+            }}
+            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-colors flex items-center gap-1"
+          >
+            <ArrowDownTrayIcon className="w-3 h-3" />
+            Save Config
+          </button>
+        </div>
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-300 mb-0.5">
                 Token Name *
               </label>
               <input
                 type="text"
                 value={settings.TOKEN_NAME || ''}
                 onChange={(e) => handleChange('TOKEN_NAME', e.target.value)}
-                className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="My Awesome Token"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-300 mb-0.5">
                 Token Symbol *
               </label>
               <input
                 type="text"
                 value={settings.TOKEN_SYMBOL || ''}
                 onChange={(e) => handleChange('TOKEN_SYMBOL', e.target.value.toUpperCase())}
-                className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="MAT"
                 maxLength={10}
               />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-xs font-medium text-gray-300 mb-0.5">
               Description *
             </label>
             <textarea
               value={settings.DESCRIPTION || ''}
               onChange={(e) => handleChange('DESCRIPTION', e.target.value)}
-              rows={3}
-              className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={2}
+              className="w-full px-2 py-1.5 text-sm bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Describe your token..."
             />
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-300 mb-0.5">
                 Twitter
               </label>
               <input
                 type="text"
                 value={settings.TWITTER || ''}
                 onChange={(e) => handleChange('TWITTER', e.target.value)}
-                className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="@username"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-300 mb-0.5">
                 Telegram
               </label>
               <input
                 type="text"
                 value={settings.TELEGRAM || ''}
                 onChange={(e) => handleChange('TELEGRAM', e.target.value)}
-                className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="t.me/..."
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-300 mb-0.5">
                 Website
               </label>
               <input
                 type="text"
                 value={settings.WEBSITE || ''}
                 onChange={(e) => handleChange('WEBSITE', e.target.value)}
-                className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="https://..."
               />
             </div>
@@ -1731,12 +1982,12 @@ export default function TokenLaunch({ onLaunch }) {
       </div>
 
       {/* Wallet Private Keys Section - PROMINENT */}
-      <div className="mb-6 p-5 bg-gradient-to-r from-blue-900/30 to-purple-900/30 rounded-lg border-2 border-blue-500/50">
-        <div className="flex items-center gap-3 mb-4">
-          <LockClosedIcon className="w-6 h-6 text-blue-400" />
-          <h3 className="text-lg font-bold text-white">Wallet Private Keys</h3>
+      <div className="mb-3 p-3 bg-gradient-to-r from-blue-900/30 to-purple-900/30 rounded-lg border-2 border-blue-500/50">
+        <div className="flex items-center gap-2 mb-2">
+          <LockClosedIcon className="w-5 h-5 text-blue-400" />
+          <h3 className="text-base font-bold text-white">Wallet Private Keys</h3>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-2">
           {/* Master Wallet Private Key */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -1854,85 +2105,192 @@ export default function TokenLaunch({ onLaunch }) {
       </div>
 
       {/* Wallet Configuration - PROMINENT */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <CurrencyDollarIcon className="w-5 h-5 text-blue-400" />
+      <div className="mb-3">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <CurrencyDollarIcon className="w-4 h-4 text-blue-400" />
             Wallet Configuration
           </h3>
           {settings.USE_MIXING_WALLETS === 'true' && (
-            <div className="flex items-center gap-2 px-3 py-1 bg-purple-900/30 border border-purple-500/50 rounded-lg">
-              <ArrowPathRoundedSquareIcon className="w-4 h-4 text-purple-400" />
+            <div className="flex items-center gap-2 px-2 py-0.5 bg-purple-900/30 border border-purple-500/50 rounded-lg">
+              <ArrowPathRoundedSquareIcon className="w-3 h-3 text-purple-400" />
               <span className="text-xs text-purple-300">Mixing Wallets Enabled</span>
             </div>
           )}
         </div>
-        {/* Mixing Wallets Toggle */}
-        <div className="mb-4 p-4 bg-purple-900/20 rounded-lg border border-purple-500/30">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ArrowPathRoundedSquareIcon className="w-5 h-5 text-purple-400" />
-              <div>
-                <label htmlFor="use-mixing-wallets" className="text-sm font-semibold text-white cursor-pointer">
-                  Use Mixing Wallets (Break Connection Trail)
-                </label>
-                <p className="text-xs text-gray-400 mt-1">
-                  Routes SOL through intermediate wallets to prevent bubble maps from connecting your wallets
-                </p>
-              </div>
-            </div>
-            <input
-              type="checkbox"
-              id="use-mixing-wallets"
-              checked={settings.USE_MIXING_WALLETS !== 'false'}
-              onChange={(e) => handleChange('USE_MIXING_WALLETS', e.target.checked ? 'true' : 'false')}
-              className="w-5 h-5 text-purple-500 bg-gray-800 border-gray-700 rounded focus:ring-2 focus:ring-purple-500 cursor-pointer"
-            />
+        {/* Privacy Routing System - Simplified */}
+        <div className="mb-2 p-2 bg-gradient-to-r from-purple-900/20 to-blue-900/20 rounded-lg border border-purple-500/30">
+          <div className="flex items-center gap-2 mb-2">
+            <ArrowPathRoundedSquareIcon className="w-4 h-4 text-purple-400" />
+            <h4 className="text-sm font-bold text-white">Privacy Routing</h4>
+            <InfoTooltip content={[
+              "Choose how SOL is routed to break connection trails.",
+              "Both systems save wallets for fund recovery - your money is safe."
+            ]} />
           </div>
-          {settings.USE_MIXING_WALLETS !== 'false' && (
-            <div className="mt-2 space-y-2">
-              {/* Fresh Mixing Wallets Toggle */}
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="create-fresh-mixing-wallets"
-                  checked={settings.CREATE_FRESH_MIXING_WALLETS !== 'false'}
-                  onChange={(e) => handleChange('CREATE_FRESH_MIXING_WALLETS', e.target.checked ? 'true' : 'false')}
-                  className="w-4 h-4 text-purple-500 bg-gray-800 border-gray-700 rounded focus:ring-2 focus:ring-purple-500"
-                />
-                <label htmlFor="create-fresh-mixing-wallets" className="text-xs text-gray-300 cursor-pointer">
-                  Create Fresh Mixing Wallets Each Launch
-                </label>
-                <InfoTooltip content={settings.CREATE_FRESH_MIXING_WALLETS !== 'false' 
-                  ? "✨ Fresh Wallets: Creates brand new mixing wallets for each launch. Better privacy - no wallet reuse. Old wallets preserved in file."
-                  : "⚠️ Reuse Mode: Reuses existing mixing wallets. Less private - wallets can be traced across launches."
-                } />
+
+          {/* Radio Button Selection - Compact */}
+          <div className="space-y-1.5">
+            {/* Option 1: Mixing Wallets */}
+            <label 
+              className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
+                settings.USE_MULTI_INTERMEDIARY_SYSTEM !== 'true' 
+                  ? 'border-purple-500 bg-purple-900/30' 
+                  : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
+              }`}
+              onClick={(e) => {
+                const target = e.target;
+                if (target.type !== 'radio' && target.type !== 'checkbox' && target.tagName !== 'INPUT' && target.tagName !== 'BUTTON') {
+                  e.preventDefault();
+                  const newSettings = { ...settings };
+                  newSettings.USE_MULTI_INTERMEDIARY_SYSTEM = 'false';
+                  newSettings.USE_MIXING_WALLETS = 'true';
+                  setSettings(newSettings);
+                  if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+                  autoSaveTimeoutRef.current = setTimeout(() => {
+                    apiService.updateSettings({
+                      USE_MULTI_INTERMEDIARY_SYSTEM: 'false',
+                      USE_MIXING_WALLETS: 'true'
+                    }).catch(err => console.error('Failed to save:', err));
+                  }, 100);
+                }
+              }}
+            >
+              <input
+                type="radio"
+                name="privacy-routing"
+                checked={settings.USE_MULTI_INTERMEDIARY_SYSTEM !== 'true'}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  const newSettings = { ...settings };
+                  newSettings.USE_MULTI_INTERMEDIARY_SYSTEM = 'false';
+                  newSettings.USE_MIXING_WALLETS = 'true';
+                  setSettings(newSettings);
+                  if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+                  autoSaveTimeoutRef.current = setTimeout(() => {
+                    apiService.updateSettings({
+                      USE_MULTI_INTERMEDIARY_SYSTEM: 'false',
+                      USE_MIXING_WALLETS: 'true'
+                    }).catch(err => console.error('Failed to save:', err));
+                  }, 100);
+                }}
+                className="w-4 h-4 text-purple-500 bg-gray-800 border-gray-700 focus:ring-2 focus:ring-purple-500 cursor-pointer"
+              />
+              <div className="flex-1 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-white">Mixing Wallets</span>
+                  <span className="text-xs px-1.5 py-0.5 bg-green-600/30 text-green-400 rounded">FAST</span>
+                  <InfoTooltip content={[
+                    "Routes: Main → Shared Mixer → Target",
+                    "Speed: Fast (fewer transactions)",
+                    "Privacy: Good (breaks connection trail)",
+                    "Safety: All wallets saved for recovery"
+                  ]} />
+                </div>
+                {settings.USE_MULTI_INTERMEDIARY_SYSTEM !== 'true' && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      id="create-fresh-mixing-wallets"
+                      checked={settings.CREATE_FRESH_MIXING_WALLETS !== 'false'}
+                      onChange={(e) => handleChange('CREATE_FRESH_MIXING_WALLETS', e.target.checked ? 'true' : 'false')}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-3 h-3 text-purple-500 bg-gray-800 border-gray-700 rounded focus:ring-1 focus:ring-purple-500"
+                    />
+                    <label htmlFor="create-fresh-mixing-wallets" className="text-xs text-gray-400 cursor-pointer">
+                      Fresh
+                    </label>
+                    <InfoTooltip content="Create fresh mixing wallets each launch for better privacy" />
+                  </div>
+                )}
               </div>
-              <CollapsibleInfo title="How Mixing Wallets Work">
-                <ul className="ml-3 list-disc space-y-0.5">
-                  <li>Main Wallet → Mixing Wallet → Target Wallet</li>
-                  <li>Breaks on-chain connection trail</li>
-                  <li>Prevents bubble map detection</li>
-                  <li>Auto-creates mixing wallets if missing</li>
-                </ul>
-              </CollapsibleInfo>
-            </div>
-          )}
+            </label>
+
+            {/* Option 2: Multi-Intermediary System */}
+            <label 
+              className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
+                settings.USE_MULTI_INTERMEDIARY_SYSTEM === 'true' 
+                  ? 'border-blue-500 bg-blue-900/30' 
+                  : 'border-gray-700 bg-gray-800/30 hover:border-gray-600'
+              }`}
+              onClick={(e) => {
+                const target = e.target;
+                if (target.type !== 'radio' && target.type !== 'number' && target.tagName !== 'INPUT' && target.tagName !== 'BUTTON') {
+                  e.preventDefault();
+                  const newSettings = { ...settings };
+                  newSettings.USE_MULTI_INTERMEDIARY_SYSTEM = 'true';
+                  newSettings.USE_MIXING_WALLETS = 'false';
+                  setSettings(newSettings);
+                  if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+                  autoSaveTimeoutRef.current = setTimeout(() => {
+                    apiService.updateSettings({
+                      USE_MULTI_INTERMEDIARY_SYSTEM: 'true',
+                      USE_MIXING_WALLETS: 'false'
+                    }).catch(err => console.error('Failed to save:', err));
+                  }, 100);
+                }
+              }}
+            >
+              <input
+                type="radio"
+                name="privacy-routing"
+                checked={settings.USE_MULTI_INTERMEDIARY_SYSTEM === 'true'}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  const newSettings = { ...settings };
+                  newSettings.USE_MULTI_INTERMEDIARY_SYSTEM = 'true';
+                  newSettings.USE_MIXING_WALLETS = 'false';
+                  setSettings(newSettings);
+                  if (autoSaveTimeoutRef.current) clearTimeout(autoSaveTimeoutRef.current);
+                  autoSaveTimeoutRef.current = setTimeout(() => {
+                    apiService.updateSettings({
+                      USE_MULTI_INTERMEDIARY_SYSTEM: 'true',
+                      USE_MIXING_WALLETS: 'false'
+                    }).catch(err => console.error('Failed to save:', err));
+                  }, 100);
+                }}
+                className="w-4 h-4 text-blue-500 bg-gray-800 border-gray-700 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              />
+              <div className="flex-1 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-white">Multi-Intermediary</span>
+                  <span className="text-xs px-1.5 py-0.5 bg-blue-600/30 text-blue-400 rounded">MAX PRIVACY</span>
+                  <InfoTooltip content={[
+                    "Routes: Main → Unique Inter1 → Unique Inter2 → Target",
+                    "Speed: Slower (more transactions)",
+                    "Privacy: Maximum (each wallet gets unique chain)",
+                    "Safety: All intermediaries saved for recovery"
+                  ]} />
+                </div>
+                {settings.USE_MULTI_INTERMEDIARY_SYSTEM === 'true' && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max="5"
+                      step="1"
+                      value={settings.NUM_INTERMEDIARY_HOPS || '2'}
+                      onChange={(e) => handleChange('NUM_INTERMEDIARY_HOPS', e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-12 px-1 py-0.5 bg-black/50 border border-gray-700 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <InfoTooltip content="Default intermediary hops (0-5). Global fallback if bundle/holder hops not set." />
+                  </div>
+                )}
+              </div>
+            </label>
+          </div>
         </div>
 
         {/* Wallet Source Selection */}
-        <div className="mb-6 p-4 bg-blue-900/20 rounded-lg border border-blue-500/30">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <WalletIcon className="w-5 h-5 text-blue-400" />
-              <div>
-                <label className="text-sm font-semibold text-white cursor-pointer">
-                  Wallet Source
-                </label>
-                <p className="text-xs text-gray-400 mt-1">
-                  Choose to create fresh wallets or use warmed wallets with transaction history
-                </p>
-              </div>
+        <div className="mb-3 p-2 bg-blue-900/20 rounded-lg border border-blue-500/30">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <WalletIcon className="w-4 h-4 text-blue-400" />
+              <label className="text-xs font-semibold text-white cursor-pointer">
+                Wallet Source
+              </label>
+              <InfoTooltip content="Choose to create fresh wallets or use warmed wallets with transaction history" />
             </div>
             <div className="flex gap-3">
               <button
@@ -2407,14 +2765,12 @@ export default function TokenLaunch({ onLaunch }) {
                     useWarmedWallets ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 />
-                {useWarmedWallets && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    Select warmed wallets above to use as bundle wallets
-                  </p>
-                )}
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Amounts (comma-separated SOL)</label>
+                <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
+                  Amounts (comma-separated SOL)
+                  <InfoTooltip content="Comma-separated SOL amounts for each bundle wallet. Leave empty to use SWAP_AMOUNT for all." />
+                </label>
                 <input
                   type="text"
                   value={settings.BUNDLE_SWAP_AMOUNTS || ''}
@@ -2422,7 +2778,6 @@ export default function TokenLaunch({ onLaunch }) {
                   placeholder="0.1,0.1,0.2"
                   className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                 />
-                <p className="text-xs text-gray-600 mt-1">Leave empty to use SWAP_AMOUNT</p>
               </div>
               <div className="flex items-center space-x-2 pt-2 border-t border-gray-800">
                 <input
@@ -2436,11 +2791,29 @@ export default function TokenLaunch({ onLaunch }) {
                   <RocketLaunchIcon className="w-3 h-3" />
                   Use Normal Launch
                 </label>
+                <InfoTooltip content={settings.USE_NORMAL_LAUNCH === 'true' 
+                  ? "Normal Launch: Skips Jito bundling and LUT creation. Best for token creation + DEV buy only."
+                  : "Bundle Launch: Uses Jito bundling and LUT for faster, atomic execution of multiple transactions."
+                } />
               </div>
-              <InfoTooltip content={settings.USE_NORMAL_LAUNCH === 'true' 
-                ? "Normal Launch: Skips Jito bundling and LUT creation. Best for token creation + DEV buy only."
-                : "Bundle Launch: Uses Jito bundling and LUT for faster, atomic execution of multiple transactions."
-              } />
+              {settings.USE_MULTI_INTERMEDIARY_SYSTEM === 'true' && (
+                <div className="pt-2 border-t border-gray-800">
+                  <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
+                    Bundle Intermediary Hops
+                    <InfoTooltip content="Number of intermediary wallets for bundle wallets (0-5). Higher = more privacy but slower." />
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="5"
+                    step="1"
+                    value={settings.BUNDLE_INTERMEDIARY_HOPS || settings.NUM_INTERMEDIARY_HOPS || '2'}
+                    onChange={(e) => handleChange('BUNDLE_INTERMEDIARY_HOPS', e.target.value)}
+                    placeholder={settings.NUM_INTERMEDIARY_HOPS || '2'}
+                    className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              )}
             </div>
           </div>
 
@@ -2473,14 +2846,12 @@ export default function TokenLaunch({ onLaunch }) {
                     useWarmedWallets ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                 />
-                {useWarmedWallets && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    Select warmed wallets above to use as holder wallets
-                  </p>
-                )}
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Amounts (comma-separated SOL)</label>
+                <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
+                  Amounts (comma-separated SOL)
+                  <InfoTooltip content="Comma-separated SOL amounts for each holder wallet. Leave empty to use Amount per Wallet for all." />
+                </label>
                 <input
                   type="text"
                   value={settings.HOLDER_SWAP_AMOUNTS || ''}
@@ -2488,10 +2859,12 @@ export default function TokenLaunch({ onLaunch }) {
                   placeholder="0.5,0.2,1"
                   className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
                 />
-                <p className="text-xs text-gray-600 mt-1">Leave empty to use Amount per Wallet</p>
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Amount per Wallet (SOL)</label>
+                <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
+                  Amount per Wallet (SOL)
+                  <InfoTooltip content="Default SOL amount per holder wallet if amounts not specified above" />
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -2514,107 +2887,223 @@ export default function TokenLaunch({ onLaunch }) {
                   <InfoTooltip content="Automatically execute holder wallet buys right after launch is confirmed. Select which wallets to auto-buy below." />
                 </label>
               </div>
-              {(settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) && useWarmedWallets && selectedHolderWallets.length > 0 && (
+              {settings.USE_MULTI_INTERMEDIARY_SYSTEM === 'true' && (
+                <div className="pt-2 border-t border-gray-800">
+                  <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
+                    Holder Intermediary Hops
+                    <InfoTooltip content="Number of intermediary wallets for holder wallets (0-5). Higher = more privacy but slower." />
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="5"
+                    step="1"
+                    value={settings.HOLDER_INTERMEDIARY_HOPS || settings.NUM_INTERMEDIARY_HOPS || '2'}
+                    onChange={(e) => handleChange('HOLDER_INTERMEDIARY_HOPS', e.target.value)}
+                    placeholder={settings.NUM_INTERMEDIARY_HOPS || '2'}
+                    className="w-full px-3 py-2 bg-black/50 border border-gray-800 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                  />
+                </div>
+              )}
+              {(settings.AUTO_HOLDER_WALLET_BUY === 'true' || settings.AUTO_HOLDER_WALLET_BUY === true) && 
+               (selectedHolderWallets.length > 0 || (parseInt(settings.HOLDER_WALLET_COUNT || '0') > 0 && !useWarmedWallets)) && (
                 <div className="mt-3 p-3 bg-gray-800/50 rounded border border-gray-700">
                   <label className="block text-xs font-semibold text-yellow-400 mb-2">
-                    Step 1: Select & Order Wallets for Auto-Buy ({selectedHolderAutoBuyWallets.length} of {selectedHolderWallets.length} selected)
+                    Step 1: Select & Order Wallets for Auto-Buy
+                    {useWarmedWallets ? (
+                      <span> ({selectedHolderAutoBuyWallets.length} of {selectedHolderWallets.length} selected)</span>
+                    ) : (
+                      <span> ({selectedHolderAutoBuyIndices.length} of {parseInt(settings.HOLDER_WALLET_COUNT || '0')} selected)</span>
+                    )}
                   </label>
                   <p className="text-xs text-gray-400 mb-2">
-                    Click wallets to select. Selected wallets will buy in the order shown below. Use ↑↓ buttons to reorder.
+                    {useWarmedWallets 
+                      ? "Click wallets to select. Selected wallets will buy in the order shown below. Use ↑↓ buttons to reorder."
+                      : "Select which holder wallets (by position) should auto-buy. Wallets will be created in order and selected ones will snipe immediately after launch."
+                    }
                   </p>
                   
-                  {/* Unselected wallets */}
-                  <div className="mb-3">
-                    <p className="text-xs text-gray-500 mb-1">Available wallets (click to add):</p>
-                    <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
-                      {selectedHolderWallets
-                        .filter(addr => !selectedHolderAutoBuyWallets.includes(addr))
-                        .map(addr => {
-                          const wallet = warmedWallets.find(w => w.address === addr);
-                          return (
-                            <button
-                              key={addr}
-                              type="button"
-                              onClick={() => {
-                                setSelectedHolderAutoBuyWallets(prev => [...prev, addr]);
-                              }}
-                              className="px-2 py-1 rounded text-xs font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600"
-                            >
-                              {addr.slice(0, 6)}...{addr.slice(-4)}
-                              {wallet && ` (${wallet.totalTrades || 0} trades)`}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                  
-                  {/* Selected wallets in order */}
-                  {selectedHolderAutoBuyWallets.length > 0 && (
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1">Buy order (top to bottom):</p>
-                      <div className="space-y-1 max-h-32 overflow-y-auto">
-                        {selectedHolderAutoBuyWallets.map((addr, idx) => {
-                          const wallet = warmedWallets.find(w => w.address === addr);
-                          return (
-                            <div
-                              key={addr}
-                              className="flex items-center gap-2 p-2 bg-yellow-900/30 border border-yellow-600/50 rounded"
-                            >
-                              <span className="text-xs font-bold text-yellow-400 w-6">#{idx + 1}</span>
-                              <span className="flex-1 text-xs font-mono text-white">
-                                {addr.slice(0, 8)}...{addr.slice(-6)}
-                                {wallet && ` (${wallet.totalTrades || 0} trades)`}
-                              </span>
-                              <div className="flex gap-1">
+                  {useWarmedWallets ? (
+                    <>
+                      {/* Unselected wallets - Warmed wallets */}
+                      <div className="mb-3">
+                        <p className="text-xs text-gray-500 mb-1">Available wallets (click to add):</p>
+                        <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+                          {selectedHolderWallets
+                            .filter(addr => !selectedHolderAutoBuyWallets.includes(addr))
+                            .map(addr => {
+                              const wallet = warmedWallets.find(w => w.address === addr);
+                              return (
                                 <button
+                                  key={addr}
                                   type="button"
                                   onClick={() => {
-                                    if (idx > 0) {
-                                      const newOrder = [...selectedHolderAutoBuyWallets];
-                                      [newOrder[idx - 1], newOrder[idx]] = [newOrder[idx], newOrder[idx - 1]];
-                                      setSelectedHolderAutoBuyWallets(newOrder);
-                                    }
+                                    setSelectedHolderAutoBuyWallets(prev => [...prev, addr]);
                                   }}
-                                  disabled={idx === 0}
-                                  className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
-                                  title="Move up"
+                                  className="px-2 py-1 rounded text-xs font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600"
                                 >
-                                  ↑
+                                  {addr.slice(0, 6)}...{addr.slice(-4)}
+                                  {wallet && ` (${wallet.totalTrades || 0} trades)`}
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (idx < selectedHolderAutoBuyWallets.length - 1) {
-                                      const newOrder = [...selectedHolderAutoBuyWallets];
-                                      [newOrder[idx], newOrder[idx + 1]] = [newOrder[idx + 1], newOrder[idx]];
-                                      setSelectedHolderAutoBuyWallets(newOrder);
-                                    }
-                                  }}
-                                  disabled={idx === selectedHolderAutoBuyWallets.length - 1}
-                                  className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
-                                  title="Move down"
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedHolderAutoBuyWallets(prev => prev.filter(a => a !== addr));
-                                  }}
-                                  className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
-                                  title="Remove"
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
+                              );
+                            })}
+                        </div>
                       </div>
-                    </div>
+                      
+                      {/* Selected wallets in order - Warmed wallets */}
+                      {selectedHolderAutoBuyWallets.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Buy order (top to bottom):</p>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {selectedHolderAutoBuyWallets.map((addr, idx) => {
+                              const wallet = warmedWallets.find(w => w.address === addr);
+                              return (
+                                <div
+                                  key={addr}
+                                  className="flex items-center gap-2 p-2 bg-yellow-900/30 border border-yellow-600/50 rounded"
+                                >
+                                  <span className="text-xs font-bold text-yellow-400 w-6">#{idx + 1}</span>
+                                  <span className="flex-1 text-xs font-mono text-white">
+                                    {addr.slice(0, 8)}...{addr.slice(-6)}
+                                    {wallet && ` (${wallet.totalTrades || 0} trades)`}
+                                  </span>
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (idx > 0) {
+                                          const newOrder = [...selectedHolderAutoBuyWallets];
+                                          [newOrder[idx - 1], newOrder[idx]] = [newOrder[idx], newOrder[idx - 1]];
+                                          setSelectedHolderAutoBuyWallets(newOrder);
+                                        }
+                                      }}
+                                      disabled={idx === 0}
+                                      className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
+                                      title="Move up"
+                                    >
+                                      ↑
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (idx < selectedHolderAutoBuyWallets.length - 1) {
+                                          const newOrder = [...selectedHolderAutoBuyWallets];
+                                          [newOrder[idx], newOrder[idx + 1]] = [newOrder[idx + 1], newOrder[idx]];
+                                          setSelectedHolderAutoBuyWallets(newOrder);
+                                        }
+                                      }}
+                                      disabled={idx === selectedHolderAutoBuyWallets.length - 1}
+                                      className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
+                                      title="Move down"
+                                    >
+                                      ↓
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedHolderAutoBuyWallets(prev => prev.filter(a => a !== addr));
+                                      }}
+                                      className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
+                                      title="Remove"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* Fresh wallets - Select by index */}
+                      <div className="mb-3">
+                        <p className="text-xs text-gray-500 mb-1">Select wallet positions (will be created in order):</p>
+                        <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+                          {Array.from({ length: parseInt(settings.HOLDER_WALLET_COUNT || '0') }, (_, i) => i + 1)
+                            .filter(idx => !selectedHolderAutoBuyIndices.includes(idx))
+                            .map(idx => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedHolderAutoBuyIndices(prev => [...prev, idx].sort((a, b) => a - b));
+                                }}
+                                className="px-2 py-1 rounded text-xs font-medium transition-colors bg-gray-700 text-gray-300 hover:bg-gray-600"
+                              >
+                                Wallet #{idx}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                      
+                      {/* Selected wallet indices in order - Fresh wallets */}
+                      {selectedHolderAutoBuyIndices.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Buy order (top to bottom):</p>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {selectedHolderAutoBuyIndices.map((idx, orderIdx) => (
+                              <div
+                                key={idx}
+                                className="flex items-center gap-2 p-2 bg-yellow-900/30 border border-yellow-600/50 rounded"
+                              >
+                                <span className="text-xs font-bold text-yellow-400 w-6">#{orderIdx + 1}</span>
+                                <span className="flex-1 text-xs font-mono text-white">
+                                  Wallet #{idx} (will be created at launch)
+                                </span>
+                                <div className="flex gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (orderIdx > 0) {
+                                        const newOrder = [...selectedHolderAutoBuyIndices];
+                                        [newOrder[orderIdx - 1], newOrder[orderIdx]] = [newOrder[orderIdx], newOrder[orderIdx - 1]];
+                                        setSelectedHolderAutoBuyIndices(newOrder);
+                                      }
+                                    }}
+                                    disabled={orderIdx === 0}
+                                    className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
+                                    title="Move up"
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (orderIdx < selectedHolderAutoBuyIndices.length - 1) {
+                                        const newOrder = [...selectedHolderAutoBuyIndices];
+                                        [newOrder[orderIdx], newOrder[orderIdx + 1]] = [newOrder[orderIdx + 1], newOrder[orderIdx]];
+                                        setSelectedHolderAutoBuyIndices(newOrder);
+                                      }
+                                    }}
+                                    disabled={orderIdx === selectedHolderAutoBuyIndices.length - 1}
+                                    className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs rounded"
+                                    title="Move down"
+                                  >
+                                    ↓
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedHolderAutoBuyIndices(prev => prev.filter(i => i !== idx));
+                                    }}
+                                    className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded"
+                                    title="Remove"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                   
-                  {selectedHolderAutoBuyWallets.length > 0 && (
+                  {((useWarmedWallets && selectedHolderAutoBuyWallets.length > 0) || (!useWarmedWallets && selectedHolderAutoBuyIndices.length > 0)) && (
                     <div className="mt-4">
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-xs font-semibold text-yellow-400">
@@ -2622,89 +3111,92 @@ export default function TokenLaunch({ onLaunch }) {
                         </label>
                         <button
                           type="button"
-                          onClick={() => setHolderAutoBuyGroups([...holderAutoBuyGroups, { count: 1, delay: 1.0 }])}
+                          onClick={() => setHolderAutoBuyGroups([...holderAutoBuyGroups, { count: 1, delay: 0.1 }])}
                           className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
                         >
                           + Add Timing Group
                         </button>
                       </div>
                       <p className="text-xs text-gray-400 mb-2">
-                        Each group buys at the same time, then waits before the next group. Groups execute in order.
+                        Each group buys at the same time, then waits before the next group. Groups execute in order. Set delay to 0 for instant sniping!
                       </p>
                       <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {holderAutoBuyGroups.map((group, idx) => (
-                          <div key={idx} className="p-2 bg-gray-900/50 rounded border border-gray-700">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs font-semibold text-yellow-400">Group {idx + 1}:</span>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <label className="text-xs text-gray-400 whitespace-nowrap">Buy</label>
-                              <input
-                                type="number"
-                                min="1"
-                                max={selectedHolderAutoBuyWallets.length}
-                                value={group.count}
-                                onChange={(e) => {
-                                  const newGroups = [...holderAutoBuyGroups];
-                                  newGroups[idx].count = Math.min(parseInt(e.target.value) || 1, selectedHolderAutoBuyWallets.length);
-                                  setHolderAutoBuyGroups(newGroups);
-                                }}
-                                className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
-                              />
-                              <label className="text-xs text-gray-400 whitespace-nowrap">wallet(s) at the same time</label>
-                              {idx === 0 && (
-                                <>
-                                  <label className="text-xs text-gray-400 whitespace-nowrap ml-2">after</label>
-                                  <input
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="10"
-                                    value={group.delay}
-                                    onChange={(e) => {
-                                      const newGroups = [...holderAutoBuyGroups];
-                                      newGroups[idx].delay = parseFloat(e.target.value) || 0;
-                                      setHolderAutoBuyGroups(newGroups);
-                                    }}
-                                    className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
-                                  />
-                                  <label className="text-xs text-gray-400 whitespace-nowrap">seconds from launch</label>
-                                </>
+                        {holderAutoBuyGroups.map((group, idx) => {
+                          const maxWallets = useWarmedWallets ? selectedHolderAutoBuyWallets.length : selectedHolderAutoBuyIndices.length;
+                          return (
+                            <div key={idx} className="p-2 bg-gray-900/50 rounded border border-gray-700">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-xs font-semibold text-yellow-400">Group {idx + 1}:</span>
+                              </div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <label className="text-xs text-gray-400 whitespace-nowrap">Buy</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max={maxWallets}
+                                  value={group.count}
+                                  onChange={(e) => {
+                                    const newGroups = [...holderAutoBuyGroups];
+                                    newGroups[idx].count = Math.min(parseInt(e.target.value) || 1, maxWallets);
+                                    setHolderAutoBuyGroups(newGroups);
+                                  }}
+                                  className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                                />
+                                <label className="text-xs text-gray-400 whitespace-nowrap">wallet(s) at the same time</label>
+                                {idx === 0 && (
+                                  <>
+                                    <label className="text-xs text-gray-400 whitespace-nowrap ml-2">after</label>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      min="0"
+                                      max="10"
+                                      value={group.delay}
+                                      onChange={(e) => {
+                                        const newGroups = [...holderAutoBuyGroups];
+                                        newGroups[idx].delay = parseFloat(e.target.value) || 0;
+                                        setHolderAutoBuyGroups(newGroups);
+                                      }}
+                                      className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                                    />
+                                    <label className="text-xs text-gray-400 whitespace-nowrap">seconds from launch</label>
+                                  </>
+                                )}
+                                {idx > 0 && (
+                                  <>
+                                    <label className="text-xs text-gray-400 whitespace-nowrap ml-2">then wait</label>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      min="0"
+                                      max="10"
+                                      value={group.delay}
+                                      onChange={(e) => {
+                                        const newGroups = [...holderAutoBuyGroups];
+                                        newGroups[idx].delay = parseFloat(e.target.value) || 0;
+                                        setHolderAutoBuyGroups(newGroups);
+                                      }}
+                                      className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
+                                    />
+                                    <label className="text-xs text-gray-400 whitespace-nowrap">seconds before next group</label>
+                                  </>
+                                )}
+                              </div>
+                              {holderAutoBuyGroups.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const newGroups = holderAutoBuyGroups.filter((_, i) => i !== idx);
+                                    setHolderAutoBuyGroups(newGroups);
+                                  }}
+                                  className="mt-2 px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
+                                >
+                                  Remove Group
+                                </button>
                               )}
-                              {idx > 0 && (
-                                <>
-                                  <label className="text-xs text-gray-400 whitespace-nowrap ml-2">then wait</label>
-                                  <input
-                                    type="number"
-                                    step="0.1"
-                                    min="0"
-                                    max="10"
-                                    value={group.delay}
-                                    onChange={(e) => {
-                                      const newGroups = [...holderAutoBuyGroups];
-                                      newGroups[idx].delay = parseFloat(e.target.value) || 0;
-                                      setHolderAutoBuyGroups(newGroups);
-                                    }}
-                                    className="w-16 px-2 py-1 bg-black/50 border border-gray-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-yellow-500"
-                                  />
-                                  <label className="text-xs text-gray-400 whitespace-nowrap">seconds before next group</label>
-                                </>
-                              )}
                             </div>
-                            {holderAutoBuyGroups.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const newGroups = holderAutoBuyGroups.filter((_, i) => i !== idx);
-                                  setHolderAutoBuyGroups(newGroups);
-                                }}
-                                className="mt-2 px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
-                              >
-                                Remove Group
-                              </button>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       <div className="mt-2 p-2 bg-blue-900/20 border border-blue-700/50 rounded">
                         <p className="text-xs text-blue-300 font-semibold mb-1">📝 Example: 2 wallets at 0.1s, then 1 wallet at 1.0s</p>
@@ -2748,12 +3240,12 @@ export default function TokenLaunch({ onLaunch }) {
         </div>
 
         {/* WebSocket Tracking Section */}
-        <div className="mt-6 p-5 bg-gradient-to-r from-cyan-900/30 to-blue-900/30 rounded-lg border-2 border-cyan-500/50">
-          <div className="flex items-center gap-3 mb-4">
-            <BellIcon className="w-6 h-6 text-cyan-400" />
-            <h3 className="text-lg font-bold text-white">WebSocket Tracking (Auto-Sell on External Buys)</h3>
+        <div className="mt-3 p-3 bg-gradient-to-r from-cyan-900/30 to-blue-900/30 rounded-lg border-2 border-cyan-500/50">
+          <div className="flex items-center gap-2 mb-2">
+            <BellIcon className="w-5 h-5 text-cyan-400" />
+            <h3 className="text-base font-bold text-white">WebSocket Tracking (Auto-Sell on External Buys)</h3>
           </div>
-          <div className="space-y-4">
+          <div className="space-y-2">
             {/* Enable Toggle */}
             <div className="flex items-center justify-between mb-3">
               <label htmlFor="websocket-tracking-enabled" className="text-sm font-semibold text-white cursor-pointer flex items-center gap-2">
@@ -2769,7 +3261,7 @@ export default function TokenLaunch({ onLaunch }) {
             </div>
 
             {settings.WEBSOCKET_TRACKING_ENABLED === 'true' && (
-              <div className="space-y-3 pl-3 border-l-2 border-cyan-500">
+              <div className="space-y-2 pl-2 border-l-2 border-cyan-500">
                 {/* External Buy Threshold */}
                 <div>
                   <label className="block text-xs font-medium text-white mb-1 flex items-center gap-1">
@@ -2909,16 +3401,16 @@ export default function TokenLaunch({ onLaunch }) {
       </div>
 
       {/* Image/Logo Uploads */}
-      <div className="mb-6 p-5 bg-gray-900/50 rounded-lg border border-gray-800">
-        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="mb-3 p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+        <h3 className="text-base font-bold text-white mb-2 flex items-center gap-2">
+          <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
           Images & Logos
         </h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Token Image</label>
+            <label className="block text-xs font-medium text-gray-300 mb-1">Token Image</label>
             <div className="flex items-center gap-3">
               <input
                 type="file"
@@ -2935,7 +3427,7 @@ export default function TokenLaunch({ onLaunch }) {
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Website Logo</label>
+            <label className="block text-xs font-medium text-gray-300 mb-1">Website Logo</label>
             <div className="flex items-center gap-3">
               <input
                 type="file"
@@ -2955,20 +3447,20 @@ export default function TokenLaunch({ onLaunch }) {
       </div>
 
       {/* Launch Token Button - PROMINENT */}
-      <div className="mb-6 flex gap-2">
+      <div className="mb-3 flex gap-2">
         <button
           onClick={handleLaunch}
           disabled={loading}
-          className="flex-1 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold text-lg rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed glow-blue flex items-center justify-center gap-3"
+          className="flex-1 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-bold text-base rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed glow-blue flex items-center justify-center gap-2"
         >
           {loading ? (
             <>
-              <ArrowPathIcon className="w-6 h-6 animate-spin" />
+              <ArrowPathIcon className="w-5 h-5 animate-spin" />
               Launching...
             </>
           ) : (
             <>
-              <RocketLaunchIconSolid className="w-6 h-6" />
+              <RocketLaunchIconSolid className="w-5 h-5" />
               Launch Token
             </>
           )}
@@ -2982,10 +3474,10 @@ export default function TokenLaunch({ onLaunch }) {
               setSavingStatus('Launch cancelled. You can retry.');
               setTimeout(() => setSavingStatus(''), 3000);
             }}
-            className="px-6 py-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2"
+            className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2"
             title="Cancel Launch"
           >
-            <XCircleIcon className="w-6 h-6" />
+            <XCircleIcon className="w-5 h-5" />
             Cancel
           </button>
         )}
@@ -2993,8 +3485,8 @@ export default function TokenLaunch({ onLaunch }) {
         
         {/* Launch Progress Bar */}
         {loading && launchStage && (
-          <div className="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-800">
-            <div className="flex justify-between items-center mb-2">
+          <div className="mt-3 p-3 bg-gray-900/50 rounded-lg border border-gray-800">
+            <div className="flex justify-between items-center mb-1">
               <span className="text-sm font-semibold text-white">
                 {launchStage === 'INITIALIZING' && (
                   <>
@@ -3075,7 +3567,7 @@ export default function TokenLaunch({ onLaunch }) {
         )}
         
       {/* Save Settings Button */}
-      <div className="mb-6">
+      <div className="mb-3">
         <button
           onClick={handleSaveSettings}
           disabled={loading}
@@ -3096,13 +3588,13 @@ export default function TokenLaunch({ onLaunch }) {
       </div>
 
       {/* Marketing Options - PROMINENT */}
-      <div className="mb-6 p-5 bg-gradient-to-r from-purple-900/30 to-pink-900/30 rounded-lg border-2 border-purple-500/50">
-        <div className="flex items-center gap-3 mb-4">
-          <MegaphoneIcon className="w-6 h-6 text-purple-400" />
-          <h3 className="text-lg font-bold text-white">Marketing Options</h3>
-          <span className="text-xs text-gray-400 bg-gray-800/50 px-2 py-1 rounded">Optional</span>
+      <div className="mb-3 p-3 bg-gradient-to-r from-purple-900/30 to-pink-900/30 rounded-lg border-2 border-purple-500/50">
+        <div className="flex items-center gap-2 mb-2">
+          <MegaphoneIcon className="w-5 h-5 text-purple-400" />
+          <h3 className="text-base font-bold text-white">Marketing Options</h3>
+          <span className="text-xs text-gray-400 bg-gray-800/50 px-1.5 py-0.5 rounded">Optional</span>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-2">
               {/* Enable Marketing Toggle */}
               <div className="flex items-center gap-2">
                 <input
@@ -3118,9 +3610,9 @@ export default function TokenLaunch({ onLaunch }) {
               </div>
 
               {settings.ENABLE_MARKETING === 'true' && (
-                <div className="space-y-4 pl-4 border-l-2 border-blue-500">
+                <div className="space-y-2 pl-3 border-l-2 border-blue-500">
                   {/* Website Update */}
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
@@ -3827,6 +4319,147 @@ export default function TokenLaunch({ onLaunch }) {
             </div>
           </div>
         )}
+      )}
+
+      {/* Token Configuration Save/Load Modal */}
+      {showConfigModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-gray-800">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <ArrowDownTrayIcon className="w-5 h-5 text-blue-400" />
+                  Saved Token Configurations
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowConfigModal(false);
+                    setConfigSaveName('');
+                  }}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <XCircleIcon className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1">
+              {/* Save New Configuration */}
+              <div className="mb-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold text-white">Save Current Configuration</h4>
+                  <button
+                    onClick={exportConfigAsJSON}
+                    className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded transition-colors flex items-center gap-1"
+                    title="Export as JSON file"
+                  >
+                    <ArrowDownTrayIcon className="w-3 h-3" />
+                    Export JSON
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={configSaveName}
+                    onChange={(e) => setConfigSaveName(e.target.value)}
+                    placeholder="Enter configuration name..."
+                    className="flex-1 px-3 py-2 bg-black/50 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        saveTokenConfig();
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={saveTokenConfig}
+                    disabled={!configSaveName.trim()}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  Saves: Token name, symbol, description, images, links, and marketing settings
+                </p>
+              </div>
+
+              {/* Import JSON Configuration */}
+              <div className="mb-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                <h4 className="text-sm font-semibold text-white mb-2">Import JSON Configuration</h4>
+                <label className="block w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer">
+                  <ArrowPathIcon className="w-4 h-4" />
+                  Choose JSON File
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={importConfigFromJSON}
+                    className="hidden"
+                  />
+                </label>
+                <p className="text-xs text-gray-400 mt-2">
+                  Import a previously exported JSON configuration file
+                </p>
+              </div>
+
+              {/* Load Saved Configurations */}
+              <div>
+                <h4 className="text-sm font-semibold text-white mb-3">Load Saved Configuration</h4>
+                {loadingConfigs ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <ArrowPathIcon className="w-8 h-8 animate-spin mx-auto mb-2" />
+                    Loading configurations...
+                  </div>
+                ) : savedConfigs.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <p>No saved configurations yet.</p>
+                    <p className="text-xs mt-2">Save a configuration above to get started!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {savedConfigs.map((config) => (
+                      <div
+                        key={config.id}
+                        onClick={() => loadTokenConfig(config.id)}
+                        className="p-4 bg-gray-800/50 hover:bg-gray-800 border border-gray-700 rounded-lg cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h5 className="font-semibold text-white">{config.name}</h5>
+                              {config.symbol && (
+                                <span className="text-xs px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded">
+                                  {config.symbol}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-400">
+                              Updated: {new Date(config.updatedAt).toLocaleString()}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => deleteTokenConfig(config.id, e)}
+                              className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+                              title="Delete configuration"
+                            >
+                              <XCircleIcon className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => loadTokenConfig(config.id)}
+                              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
+                            >
+                              Load
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
