@@ -36,6 +36,8 @@
     "retry-bundle": "ts-node retry-bundle.ts",
     "find-creator": "ts-node find-creator-wallet.ts",
     "warm-wallets": "ts-node warm-wallets.ts",
+    "test-warmer": "ts-node test-wallet-warmer.ts",
+    "sell-all-tokens": "ts-node sell-all-tokens.ts",
     "import-wallets": "ts-node scripts/import-wallets.ts",
     "test-market-cap": "ts-node test-market-cap.ts"
   },

@@ -24,6 +24,12 @@ export const USE_NORMAL_LAUNCH = (process.env.USE_NORMAL_LAUNCH || 'false').toLo
 export const USE_MIXING_WALLETS = (process.env.USE_MIXING_WALLETS || 'true').toLowerCase() === 'true' // Default to true for privacy
 export const CREATE_FRESH_MIXING_WALLETS = (process.env.CREATE_FRESH_MIXING_WALLETS || 'true').toLowerCase() === 'true' // Default to true - create fresh mixers each launch for better privacy
 
+// Multi-intermediary system (new, more private)
+export const NUM_INTERMEDIARY_HOPS = Number(process.env.NUM_INTERMEDIARY_HOPS || '2') // Default: 2 intermediaries
+export const USE_VARIABLE_GAS_FEES = (process.env.USE_VARIABLE_GAS_FEES || 'true').toLowerCase() === 'true' // Default: true - randomized gas fees
+export const CREATE_FRESH_INTERMEDIARIES = (process.env.CREATE_FRESH_INTERMEDIARIES || 'true').toLowerCase() === 'true' // Default: true - create fresh intermediaries per launch
+export const USE_MULTI_INTERMEDIARY_SYSTEM = (process.env.USE_MULTI_INTERMEDIARY_SYSTEM || 'false').toLowerCase() === 'true' // Default: false - opt-in for new system
+
 export const TOKEN_NAME = retrieveEnvVariable('TOKEN_NAME', '', true)
 export const TOKEN_SYMBOL = retrieveEnvVariable('TOKEN_SYMBOL', '', true)
 export const DESCRIPTION = retrieveEnvVariable('DESCRIPTION', '', true)
@@ -144,5 +150,6 @@ export const PRIORITY_FEE_LAMPORTS_HIGH = Number(process.env.PRIORITY_FEE_LAMPOR
 export const PRIORITY_FEE_LAMPORTS_MEDIUM = Number(process.env.PRIORITY_FEE_LAMPORTS_MEDIUM || '500000')
 
 // LOW priority: Used for manual sells or when threshold isn't met - save money!
-// Default: 100,000 lamports (0.0001 SOL) - cheap but slower confirmation (~4-5s)
-export const PRIORITY_FEE_LAMPORTS_LOW = Number(process.env.PRIORITY_FEE_LAMPORTS_LOW || '100000')
+// Default: 0 lamports (0 SOL) - ABSOLUTE MINIMUM - NO PRIORITY FEE!
+// Set to 0 to use base transaction fee only (like GMGN and other traders)
+export const PRIORITY_FEE_LAMPORTS_LOW = Number(process.env.PRIORITY_FEE_LAMPORTS_LOW || '0')

@@ -24,8 +24,8 @@ import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WE
 const BUYER_WALLET = process.env.BUYER_WALLET || ''
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
 import { buyTokenSimple } from "./trading-terminal"
-import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend, fundExistingWalletWithMixing, loadMixingWallets } from "./src/main";
-import { USE_MIXING_WALLETS } from "./constants/constants";
+import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend, fundExistingWalletWithMixing, loadMixingWallets, fundExistingWalletWithMultipleIntermediaries } from "./src/main";
+import { USE_MIXING_WALLETS, USE_MULTI_INTERMEDIARY_SYSTEM, NUM_INTERMEDIARY_HOPS } from "./constants/constants";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
 import { sendBundle } from "./executor/liljito";
 import { updateWebsite, createTelegramGroup, postToTwitter } from "./utils/marketing-helpers";
@@ -352,8 +352,15 @@ const main = async () => {
         console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.15 SOL (buffer for fees/rent/safety)`)
         console.log(`\n💰 Funding warmed creator wallet with ${fundingNeeded.toFixed(4)} SOL...`)
         
-        // Use mixer wallets if enabled, otherwise direct funding
-        if (USE_MIXING_WALLETS) {
+        // Use multi-intermediary system if enabled, otherwise use mixing wallets or direct funding
+        if (USE_MULTI_INTERMEDIARY_SYSTEM) {
+          console.log(`   🔀 Using ${NUM_INTERMEDIARY_HOPS} intermediary wallet(s) to break connection trail...`)
+          const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, buyerKp, fundingNeeded, NUM_INTERMEDIARY_HOPS)
+          if (!success) {
+            console.error(`   ❌ Failed to fund warmed creator wallet through intermediaries`)
+            return
+          }
+        } else if (USE_MIXING_WALLETS) {
           console.log(`   🔀 Using mixing wallets to break connection trail...`)
           const mixingWallets = loadMixingWallets()
           
@@ -468,8 +475,15 @@ const main = async () => {
         console.log(`   Breakdown: ${buyerAmount.toFixed(4)} SOL (buy) + 0.15 SOL (buffer for fees/rent/safety)`)
         console.log(`\n💰 Funding BUYER_WALLET with ${fundingNeeded.toFixed(4)} SOL...`)
         
-        // Use mixer wallets if enabled, otherwise direct funding
-        if (USE_MIXING_WALLETS) {
+        // Use multi-intermediary system if enabled, otherwise use mixing wallets or direct funding
+        if (USE_MULTI_INTERMEDIARY_SYSTEM) {
+          console.log(`   🔀 Using ${NUM_INTERMEDIARY_HOPS} intermediary wallet(s) to break connection trail...`)
+          const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, buyerKp, fundingNeeded, NUM_INTERMEDIARY_HOPS)
+          if (!success) {
+            console.error(`   ❌ Failed to fund BUYER_WALLET through intermediaries`)
+            return
+          }
+        } else if (USE_MIXING_WALLETS) {
           console.log(`   🔀 Using mixing wallets to break connection trail...`)
           const mixingWallets = loadMixingWallets()
           
@@ -630,7 +644,13 @@ const main = async () => {
         const fundingNeeded = requiredAmount - currentBalanceSol
         console.log(`   💰 Funding wallet ${i + 1}/${warmedBundleWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
         
-        if (USE_MIXING_WALLETS) {
+        if (USE_MULTI_INTERMEDIARY_SYSTEM) {
+          const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS)
+          if (!success) {
+            console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1} through intermediaries`)
+            return
+          }
+        } else if (USE_MIXING_WALLETS) {
           const mixingWallets = loadMixingWallets()
           if (mixingWallets.length > 0) {
             const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)
@@ -768,7 +788,14 @@ const main = async () => {
         const fundingNeeded = requiredAmount - currentBalanceSol
         console.log(`   💰 Funding holder wallet ${i + 1}/${warmedHolderWallets.length} (${wallet.publicKey.toBase58().slice(0, 8)}...): ${fundingNeeded.toFixed(4)} SOL`)
         
-        if (USE_MIXING_WALLETS) {
+        if (USE_MULTI_INTERMEDIARY_SYSTEM) {
+          const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS)
+          if (!success) {
+            console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} through intermediaries - skipping this wallet`)
+            console.warn(`   ⚠️  Continuing with successfully funded wallets...`)
+            continue // Skip this wallet and continue with others
+          }
+        } else if (USE_MIXING_WALLETS) {
           const mixingWallets = loadMixingWallets()
           if (mixingWallets.length > 0) {
             const success = await fundExistingWalletWithMixing(connection, mainKp, wallet, fundingNeeded, mixingWallets)

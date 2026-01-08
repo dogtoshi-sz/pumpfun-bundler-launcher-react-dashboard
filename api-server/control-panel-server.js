@@ -1120,6 +1120,203 @@ app.post('/api/holder-wallet/sell', async (req, res) => {
   }
 });
 
+// Sell all tokens (99.9%) from a wallet
+app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress) {
+      return res.status(400).json({ success: false, error: 'Wallet address is required' });
+    }
+    
+    // Load wallet from warmed wallets to get private key
+    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const wallets = loadWarmedWallets();
+    const wallet = wallets.find(w => w.address === walletAddress);
+    
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found in warmed wallets' });
+    }
+    
+    if (!wallet.privateKey) {
+      return res.status(400).json({ success: false, error: 'Private key not found for this wallet' });
+    }
+    
+    const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
+    const { TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+    // Use top-level base58 import (handles bs58 v6 export format)
+    const { callTradingFunction } = require('./call-trading-function');
+    
+    const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey));
+    
+    // Get RPC endpoint
+    const RPC_ENDPOINT = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const RPC_WEBSOCKET_ENDPOINT = process.env.RPC_WEBSOCKET_ENDPOINT || '';
+    const connection = new Connection(RPC_ENDPOINT, {
+      wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+      commitment: 'confirmed'
+    });
+    
+    // Get all token accounts
+    const tokenAccounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+      programId: TOKEN_PROGRAM_ID,
+    });
+    
+    console.log(`[Sell All] Found ${tokenAccounts.value.length} token account(s) for wallet ${walletAddress.substring(0, 8)}...`);
+    
+    if (tokenAccounts.value.length === 0) {
+      return res.json({ success: true, message: 'No tokens found', results: [], summary: { successful: 0, failed: 0, total: 0 } });
+    }
+    
+    const results = [];
+    const tokensToSell = []; // Store tokens with balance for selling
+    
+    // First, identify all tokens with balance (check raw amount to catch very small balances)
+    for (let i = 0; i < tokenAccounts.value.length; i++) {
+      const { account } = tokenAccounts.value[i];
+      const accountData = account.data;
+      const mintPubkey = new PublicKey(accountData.slice(0, 32));
+      const mintAddress = mintPubkey.toBase58();
+      
+      try {
+        // Get token balance (check both UI amount and raw amount)
+        const tokenBalance = await connection.getTokenAccountBalance(tokenAccounts.value[i].pubkey);
+        const uiAmount = tokenBalance.value?.uiAmount;
+        const rawAmount = tokenBalance.value?.amount; // Raw amount (not divided by decimals)
+        
+        // Check if token has any balance (using raw amount for accuracy - catches very small balances)
+        // Raw amount is a string, so check if it's not "0" or 0
+        const hasBalance = tokenBalance.value && rawAmount && rawAmount !== '0' && rawAmount !== 0 && rawAmount !== '0' && Number(rawAmount) > 0;
+        
+        if (!hasBalance) {
+          console.log(`[Sell All] Skipping ${mintAddress.substring(0, 8)}... (zero balance - raw: ${rawAmount})`);
+          continue; // Skip empty accounts
+        }
+        
+        tokensToSell.push({
+          mintAddress,
+          uiAmount,
+          rawAmount,
+          accountIndex: i
+        });
+        
+        console.log(`[Sell All] Token ${tokensToSell.length}: ${mintAddress.substring(0, 8)}... (balance: ${uiAmount || 'N/A'}, raw: ${rawAmount})`);
+      } catch (error) {
+        console.error(`[Sell All] Error checking balance for ${mintAddress.substring(0, 8)}...:`, error.message);
+      }
+    }
+    
+    const tokensWithBalance = tokensToSell.length;
+    
+    console.log(`[Sell All] Found ${tokensWithBalance} token(s) with balance, proceeding to sell...`);
+    
+    // Now sell each token with balance
+    for (let i = 0; i < tokensToSell.length; i++) {
+      const { mintAddress, uiAmount, rawAmount, accountIndex } = tokensToSell[i];
+      
+      try {
+        console.log(`[Sell All] [${i + 1}/${tokensWithBalance}] Selling ${mintAddress.substring(0, 8)}... (balance: ${uiAmount || 'N/A'}, raw: ${rawAmount})`);
+        
+        // Re-check balance right before selling to ensure tokens are still there
+        // Wait a bit if tokens were just bought (they might not be fully settled)
+        let retries = 0;
+        let currentBalance = null;
+        while (retries < 5) {
+          const freshBalance = await connection.getTokenAccountBalance(tokenAccounts.value[accountIndex].pubkey);
+          const freshUiAmount = freshBalance.value?.uiAmount;
+          const freshRawAmount = freshBalance.value?.amount;
+          
+          if (freshUiAmount && freshUiAmount > 0 && freshRawAmount && Number(freshRawAmount) > 0) {
+            currentBalance = freshUiAmount;
+            console.log(`[Sell All] Confirmed balance: ${freshUiAmount} (raw: ${freshRawAmount})`);
+            break;
+          } else {
+            retries++;
+            if (retries < 5) {
+              console.log(`[Sell All] Waiting for tokens to settle... (attempt ${retries}/5)`);
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            }
+          }
+        }
+        
+        if (!currentBalance || currentBalance === 0) {
+          console.log(`[Sell All] Token ${mintAddress.substring(0, 8)}... has no balance after retries, skipping`);
+          results.push({ mint: mintAddress, success: false, error: 'No balance found after retries' });
+          continue;
+        }
+        
+        // For very small amounts, sell 100% instead of 99.9% to avoid "too small" error
+        // If UI amount is less than 0.01 or very small, sell 100% to ensure we can sell it
+        const sellPercentage = (currentBalance && currentBalance < 0.01) ? 100 : 99.9;
+        
+        console.log(`[Sell All] Selling ${sellPercentage}% of ${mintAddress.substring(0, 8)}... (current balance: ${currentBalance})`);
+        
+        // Sell with lowest priority fee (same as holder wallets)
+        try {
+          const result = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, sellPercentage, 'low');
+          if (result && result.signature) {
+            results.push({ mint: mintAddress, success: true, result, sellPercentage });
+            console.log(`[Sell All] ✅ Successfully sold ${mintAddress.substring(0, 8)}... - Tx: ${result.signature}`);
+          } else {
+            throw new Error('No signature returned from sell transaction');
+          }
+        } catch (sellError) {
+          console.error(`[Sell All] ❌ Failed to sell ${mintAddress.substring(0, 8)}...:`, sellError.message);
+          throw sellError; // Re-throw to be caught by outer catch
+        }
+        
+        // Invalidate cache
+        invalidateBalanceCache(walletAddress, mintAddress);
+        
+        // Small delay between sells
+        if (i < tokensToSell.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        console.error(`[Sell All] Failed to sell ${mintAddress.substring(0, 8)}...:`, error.message);
+        // If "too small" error or "No tokens" error, try selling 100% instead
+        if (error.message && (error.message.includes('too small') || error.message.includes('Amount to sell') || error.message.includes('No tokens'))) {
+          try {
+            console.log(`[Sell All] Retrying with 100% for ${mintAddress.substring(0, 8)}...`);
+            // Wait a bit before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const retryResult = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 100, 'low');
+            results.push({ mint: mintAddress, success: true, result: retryResult, sellPercentage: 100, retried: true });
+            invalidateBalanceCache(walletAddress, mintAddress);
+          } catch (retryError) {
+            console.error(`[Sell All] Retry also failed for ${mintAddress.substring(0, 8)}...:`, retryError.message);
+            results.push({ mint: mintAddress, success: false, error: retryError.message });
+          }
+        } else {
+          results.push({ mint: mintAddress, success: false, error: error.message });
+        }
+      }
+    }
+    
+    // Update wallet balance after selling
+    try {
+      const { updateWalletBalance } = require('../src/wallet-warming-manager.ts');
+      await updateWalletBalance(walletAddress);
+      console.log(`[Sell All] Updated balance for ${walletAddress.substring(0, 8)}...`);
+    } catch (error) {
+      console.error(`[Sell All] Failed to update balance:`, error.message);
+    }
+    
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success).length;
+    
+    res.json({
+      success: true,
+      message: `Sold ${successful} token(s) successfully${failed > 0 ? `, ${failed} failed` : ''}${tokensWithBalance > 0 ? ` out of ${tokensWithBalance} token(s) with balance` : ''}`,
+      results,
+      summary: { successful, failed, total: results.length, tokensWithBalance }
+    });
+  } catch (error) {
+    console.error('[Sell All Tokens] Error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to sell all tokens' });
+  }
+});
+
 // Execute command
 app.post('/api/command', async (req, res) => {
   try {
@@ -1817,11 +2014,13 @@ app.get('/api/warming-wallets', async (req, res) => {
         firstTransactionDate: w.firstTransactionDate,
         lastTransactionDate: w.lastTransactionDate,
         totalTrades: w.totalTrades,
+        tradesLast7Days: w.tradesLast7Days !== undefined ? w.tradesLast7Days : null,
         createdAt: w.createdAt,
         status: w.status,
         tags: w.tags || [],
         solBalance: w.solBalance || null,
-        lastBalanceUpdate: w.lastBalanceUpdate || null
+        lastBalanceUpdate: w.lastBalanceUpdate || null,
+        lastWarmedAt: w.lastWarmedAt || null
       }))
     });
   } catch (error) {
@@ -1831,11 +2030,44 @@ app.get('/api/warming-wallets', async (req, res) => {
   }
 });
 
+// Get private key for a specific wallet (secure - requires wallet address)
+app.post('/api/warming-wallets/get-private-key', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress) {
+      return res.status(400).json({ success: false, error: 'Wallet address is required' });
+    }
+    
+    // Load wallet from warmed wallets to get private key
+    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const wallets = loadWarmedWallets();
+    const wallet = wallets.find(w => w.address === walletAddress);
+    
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+    
+    if (!wallet.privateKey) {
+      return res.status(404).json({ success: false, error: 'Private key not found for this wallet' });
+    }
+    
+    res.json({
+      success: true,
+      privateKey: wallet.privateKey
+    });
+  } catch (error) {
+    console.error('[Warming] Get private key error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to get private key' });
+  }
+});
+
 // Create new wallet
 app.post('/api/warming-wallets/create', async (req, res) => {
   try {
+    const { tags } = req.body; // Optional tags array
     const { createWarmingWallet } = require('../src/wallet-warming-manager.ts');
-    const wallet = createWarmingWallet();
+    const wallet = createWarmingWallet(Array.isArray(tags) ? tags : []);
     
     res.json({
       success: true,
@@ -1846,7 +2078,8 @@ app.post('/api/warming-wallets/create', async (req, res) => {
         lastTransactionDate: wallet.lastTransactionDate,
         totalTrades: wallet.totalTrades,
         createdAt: wallet.createdAt,
-        status: wallet.status
+        status: wallet.status,
+        tags: wallet.tags || []
       }
     });
   } catch (error) {
@@ -1980,6 +2213,113 @@ app.post('/api/warming-wallets/gather-sol', async (req, res) => {
   }
 });
 
+// Withdraw all SOL from a single wallet to funding wallet
+app.post('/api/warming-wallets/withdraw-sol', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress) {
+      return res.status(400).json({ success: false, error: 'Wallet address is required' });
+    }
+    
+    // Load wallet from warmed wallets to get private key
+    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const wallets = loadWarmedWallets();
+    const wallet = wallets.find(w => w.address === walletAddress);
+    
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found in warmed wallets' });
+    }
+    
+    if (!wallet.privateKey) {
+      return res.status(400).json({ success: false, error: 'Private key not found for this wallet' });
+    }
+    
+    const { Connection, Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } = require('@solana/web3.js');
+    
+    const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey));
+    const PRIVATE_KEY = process.env.PRIVATE_KEY;
+    if (!PRIVATE_KEY) {
+      return res.status(500).json({ success: false, error: 'PRIVATE_KEY not found in environment' });
+    }
+    const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY));
+    
+    // Get RPC endpoint
+    const RPC_ENDPOINT = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const RPC_WEBSOCKET_ENDPOINT = process.env.RPC_WEBSOCKET_ENDPOINT || '';
+    const connection = new Connection(RPC_ENDPOINT, {
+      wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+      commitment: 'confirmed'
+    });
+    
+    // Get wallet balance
+    const balance = await connection.getBalance(walletKp.publicKey);
+    const balanceSol = balance / 1e9;
+    
+    // Keep 0.001 SOL for rent exemption
+    const rentExemption = 0.001;
+    const amountToTransfer = balanceSol - rentExemption;
+    
+    if (amountToTransfer <= 0) {
+      return res.json({
+        success: true,
+        message: `Insufficient balance (${balanceSol.toFixed(6)} SOL) - keeping ${rentExemption} SOL for rent`,
+        amountTransferred: 0,
+        balance: balanceSol
+      });
+    }
+    
+    console.log(`[Warming] Withdrawing ${amountToTransfer.toFixed(6)} SOL from ${walletAddress.substring(0, 8)}...`);
+    
+    const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+    const transferMsg = new TransactionMessage({
+      payerKey: walletKp.publicKey,
+      recentBlockhash: latestBlockhash.blockhash,
+      instructions: [
+        SystemProgram.transfer({
+          fromPubkey: walletKp.publicKey,
+          toPubkey: mainKp.publicKey,
+          lamports: Math.floor(amountToTransfer * 1e9)
+        })
+      ]
+    }).compileToV0Message();
+    
+    const transferTx = new VersionedTransaction(transferMsg);
+    transferTx.sign([walletKp]);
+    
+    const sig = await connection.sendTransaction(transferTx, { skipPreflight: true, maxRetries: 3 });
+    
+    // Update balance in wallet record from blockchain (more accurate)
+    try {
+      const { updateWalletBalance } = require('../src/wallet-warming-manager.ts');
+      await updateWalletBalance(walletAddress);
+      console.log(`[Withdraw] Updated balance for ${walletAddress.substring(0, 8)}...`);
+    } catch (error) {
+      console.error(`[Withdraw] Failed to update balance, using estimated:`, error.message);
+      // Fallback to estimated balance
+      const walletIndex = wallets.findIndex(w => w.address === walletAddress);
+      if (walletIndex >= 0) {
+        wallets[walletIndex].solBalance = rentExemption;
+        wallets[walletIndex].lastBalanceUpdate = new Date().toISOString();
+        const { saveWarmedWallets } = require('../src/wallet-warming-manager.ts');
+        saveWarmedWallets(wallets);
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Withdrew ${amountToTransfer.toFixed(6)} SOL to funding wallet`,
+      amountTransferred: amountToTransfer,
+      balance: balanceSol,
+      remainingBalance: rentExemption,
+      txUrl: `https://solscan.io/tx/${sig}`
+    });
+  } catch (error) {
+    console.error('[Warming] Withdraw SOL error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to withdraw SOL' });
+  }
+});
+
 // Update wallet stats from blockchain (RPC call - only when user requests)
 app.post('/api/warming-wallets/update-stats', async (req, res) => {
   try {
@@ -2046,8 +2386,8 @@ app.post('/api/warm-wallets/start', async (req, res) => {
     const warmConfig = {
       walletsPerBatch: config?.walletsPerBatch || 2,
       tradesPerWallet: config?.tradesPerWallet || 10,
-      minBuyAmount: config?.minBuyAmount || 0.001, // SUPER TINY
-      maxBuyAmount: config?.maxBuyAmount || 0.005, // SUPER TINY
+      minBuyAmount: config?.minBuyAmount || 0.01, // Increased to reduce slippage (was 0.001)
+      maxBuyAmount: config?.maxBuyAmount || 0.02, // Increased to reduce slippage (was 0.005)
       minIntervalSeconds: config?.minIntervalSeconds || 30,
       maxIntervalSeconds: config?.maxIntervalSeconds || 300,
       priorityFee: 'low', // ALWAYS cheapest
