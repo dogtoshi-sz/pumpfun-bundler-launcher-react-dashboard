@@ -663,8 +663,8 @@ const main = async () => {
           
           try {
             if (USE_MULTI_INTERMEDIARY_SYSTEM) {
-              // Reuse intermediaries across all wallets (reuseIntermediaries=true)
-              const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS, true)
+              // Create unique intermediaries for each wallet (better privacy - each wallet gets its own chain)
+              const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS)
               if (!success) {
                 console.error(`   ❌ Failed to fund warmed bundle wallet ${i + 1} through intermediaries`)
                 return
@@ -823,8 +823,8 @@ const main = async () => {
           
           try {
             if (USE_MULTI_INTERMEDIARY_SYSTEM) {
-              // Reuse intermediaries across all wallets (reuseIntermediaries=true)
-              const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS, true)
+              // Create unique intermediaries for each wallet (better privacy - each wallet gets its own chain)
+              const success = await fundExistingWalletWithMultipleIntermediaries(connection, mainKp, wallet, fundingNeeded, NUM_INTERMEDIARY_HOPS)
               if (!success) {
                 console.error(`   ❌ Failed to fund warmed holder wallet ${i + 1} through intermediaries - skipping this wallet`)
                 console.warn(`   ⚠️  Continuing with successfully funded wallets...`)

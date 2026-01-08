@@ -936,63 +936,32 @@ const getVariableGasFee = (): number => {
   return Math.floor(baseFee * variation)
 }
 
-// Global cache for intermediary wallets (shared across all transfers in a launch)
-// This ensures we reuse the same intermediaries for all wallets, not create fresh ones for each
-let globalIntermediaryWalletsCache: { [hopNumber: number]: Keypair[] } | null = null
-
 // New function: Fund wallet through multiple intermediaries
 // Route: Funding → Inter1 → Inter2 → Final Wallet
 // Saves ALL intermediary wallets and uses variable gas fees
-// IMPORTANT: Reuses the same intermediaries for all wallets in a launch (better privacy + efficiency)
+// IMPORTANT: Creates UNIQUE intermediaries for EACH wallet (better privacy - each wallet appears from different source)
 export const fundExistingWalletWithMultipleIntermediaries = async (
   connection: Connection,
   mainKp: Keypair,
   targetWallet: Keypair,
   amount: number,
-  numIntermediaries: number = 2,
-  reuseIntermediaries: boolean = true // If true, reuse intermediaries across all transfers
+  numIntermediaries: number = 2
 ): Promise<boolean> => {
   try {
     const solAmount = Math.floor(amount * 1e9)
     const randomDelay = () => Math.random() * 500 + 200 // 200-700ms random delay
     
-    // Load or create intermediary wallets
-    const CREATE_FRESH_INTERMEDIARIES = (process.env.CREATE_FRESH_INTERMEDIARIES || 'true').toLowerCase() === 'true'
-    let walletsByHop: { [hopNumber: number]: Keypair[] } = {}
-    
-    // If reusing intermediaries, check global cache first
-    if (reuseIntermediaries && globalIntermediaryWalletsCache) {
-      walletsByHop = globalIntermediaryWalletsCache
-      console.log(`🔀 Reusing existing intermediary wallets from cache (shared across all transfers)`)
-    } else if (CREATE_FRESH_INTERMEDIARIES) {
-      // Create fresh intermediaries for this launch (better privacy)
-      // Only create once per launch, then reuse for all wallets
-      console.log(`🔀 Creating ${numIntermediaries} fresh intermediary wallet(s) for this launch (will be reused for all transfers)...`)
-      for (let hop = 1; hop <= numIntermediaries; hop++) {
-        walletsByHop[hop] = [Keypair.generate()]
-      }
-      saveIntermediaryWallets(walletsByHop)
-      // Cache for reuse
-      if (reuseIntermediaries) {
-        globalIntermediaryWalletsCache = walletsByHop
-      }
-    } else {
-      // Reuse existing intermediaries from file
-      walletsByHop = loadIntermediaryWallets()
-      
-      // Create missing intermediaries if needed
-      for (let hop = 1; hop <= numIntermediaries; hop++) {
-        if (!walletsByHop[hop] || walletsByHop[hop].length === 0) {
-          console.log(`🔀 Creating intermediary wallet for hop ${hop}...`)
-          walletsByHop[hop] = [Keypair.generate()]
-        }
-      }
-      saveIntermediaryWallets(walletsByHop)
-      // Cache for reuse
-      if (reuseIntermediaries) {
-        globalIntermediaryWalletsCache = walletsByHop
-      }
+    // CRITICAL: Create FRESH intermediaries for EACH wallet transfer
+    // This ensures each wallet (DEV, bundle, holder) gets its own unique chain
+    // Better privacy: each wallet appears to come from a different source
+    console.log(`🔀 Creating ${numIntermediaries} unique intermediary wallet(s) for this transfer...`)
+    const walletsByHop: { [hopNumber: number]: Keypair[] } = {}
+    for (let hop = 1; hop <= numIntermediaries; hop++) {
+      walletsByHop[hop] = [Keypair.generate()]
     }
+    
+    // ALWAYS save intermediaries - they're critical for fund recovery
+    saveIntermediaryWallets(walletsByHop)
     
     // Build the chain: Funding → Inter1 → Inter2 → ... → Final
     const chain: Keypair[] = [mainKp]
@@ -1004,8 +973,8 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
     }
     chain.push(targetWallet)
     
-    console.log(`🔀 Routing through ${numIntermediaries} intermediary wallet(s)...`)
-    console.log(`   Route: ${mainKp.publicKey.toBase58().slice(0, 8)}... → ... → ${targetWallet.publicKey.toBase58().slice(0, 8)}...`)
+    console.log(`🔀 Routing through ${numIntermediaries} unique intermediary wallet(s)...`)
+    console.log(`   Route: ${mainKp.publicKey.toBase58().slice(0, 8)}... → Inter1 → Inter2 → ${targetWallet.publicKey.toBase58().slice(0, 8)}...`)
     
     // Transfer through each hop
     let currentAmount = solAmount
