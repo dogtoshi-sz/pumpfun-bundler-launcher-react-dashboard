@@ -960,8 +960,10 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
       walletsByHop[hop] = [Keypair.generate()]
     }
     
-    // ALWAYS save intermediaries - they're critical for fund recovery
+    // CRITICAL: Save intermediaries IMMEDIATELY after creation
+    // This ensures funds are recoverable even if transfer fails mid-chain
     saveIntermediaryWallets(walletsByHop)
+    console.log(`💾 Intermediary wallets saved - funds are recoverable if transfer fails`)
     
     // Build the chain: Funding → Inter1 → Inter2 → ... → Final
     const chain: Keypair[] = [mainKp]
@@ -1107,24 +1109,59 @@ export const fundExistingWalletWithMultipleIntermediaries = async (
       console.log(`   ✅ Hop ${i + 1} complete: ${fromWallet.publicKey.toBase58().slice(0, 8)}... → ${toWallet.publicKey.toBase58().slice(0, 8)}...`)
       console.log(`      Transaction: https://solscan.io/tx/${transferSig}`)
       
-      currentAmount = amountToTransfer
+      // CRITICAL: Update currentAmount to what the NEXT wallet actually received
+      // For intermediate hops, the next wallet receives amountToTransfer minus transaction fees
+      // For last hop, we sent exact solAmount, so that's what was received
+      if (isLastHop) {
+        currentAmount = solAmount // Last hop sent exact amount
+      } else {
+        // Intermediate hop: next wallet receives amountToTransfer minus transaction fees (~0.000005 SOL)
+        // We need to check actual balance of next wallet to be precise
+        await sleep(500) // Wait for transaction to confirm
+        const nextWalletBalance = await connection.getBalance(toWallet.publicKey)
+        currentAmount = nextWalletBalance // Use actual received amount
+        console.log(`   📊 Next wallet received: ${(currentAmount / 1e9).toFixed(6)} SOL`)
+      }
+      
       await sleep(randomDelay())
     }
     
-    // Verify final balance
+    // CRITICAL: Verify final balance - ensure funds actually arrived
     const finalBalance = await connection.getBalance(targetWallet.publicKey)
+    const balanceDifference = finalBalance - solAmount
     if (finalBalance < solAmount - 1000) { // Allow 1000 lamport tolerance
-      console.warn(`   ⚠️  Final balance (${(finalBalance / 1e9).toFixed(6)} SOL) is less than expected (${(solAmount / 1e9).toFixed(6)} SOL)`)
+      console.error(`   ❌ CRITICAL: Final balance (${(finalBalance / 1e9).toFixed(6)} SOL) is less than expected (${(solAmount / 1e9).toFixed(6)} SOL)`)
+      console.error(`   ⚠️  Missing: ${(Math.abs(balanceDifference) / 1e9).toFixed(6)} SOL`)
+      console.error(`   💡 Check intermediaries in keys/intermediary-wallets.json for stuck funds`)
+      throw new Error(`Final wallet balance insufficient: expected ${(solAmount / 1e9).toFixed(6)} SOL, got ${(finalBalance / 1e9).toFixed(6)} SOL`)
     } else {
       console.log(`   ✅ Final wallet funded! Balance: ${(finalBalance / 1e9).toFixed(6)} SOL`)
+      if (balanceDifference > 1000) {
+        console.log(`   ℹ️  Received ${(balanceDifference / 1e9).toFixed(6)} SOL more than expected (due to 100% routing)`)
+      }
     }
     
-    // Save all intermediary wallets
+    // CRITICAL: Save intermediaries again at end (in case of any updates)
+    // This ensures we have the latest state even if something went wrong
     saveIntermediaryWallets(walletsByHop)
+    console.log(`💾 All intermediary wallets saved successfully`)
     
     return true
   } catch (error: any) {
     console.error(`❌ Failed to fund wallet through intermediaries:`, error.message || error)
+    console.error(`💡 IMPORTANT: Intermediary wallets have been saved to keys/intermediary-wallets.json`)
+    console.error(`💡 You can recover any stuck funds using the saved private keys`)
+    
+    // CRITICAL: Save intermediaries even on error so funds are recoverable
+    try {
+      if (typeof walletsByHop !== 'undefined' && walletsByHop !== null) {
+        saveIntermediaryWallets(walletsByHop)
+        console.log(`💾 Saved intermediary wallets for fund recovery`)
+      }
+    } catch (saveError) {
+      console.error(`⚠️  Failed to save intermediaries on error:`, saveError)
+    }
+    
     return false
   }
 }
