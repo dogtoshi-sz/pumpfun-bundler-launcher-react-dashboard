@@ -17,7 +17,7 @@ if (fs.existsSync(rootEnvPath)) {
   console.log(`[index.ts] Using default .env location`)
 }
 
-import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT, USE_NORMAL_LAUNCH, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, AUTO_SELL_50_PERCENT, AUTO_HOLDER_WALLET_BUY, HOLDER_WALLET_PRIORITY_FEE, HOLDER_WALLET_AUTO_BUY_DELAYS, MARKET_CAP_TRACKING_ENABLED, MARKET_CAP_SELL_THRESHOLD, MARKET_CAP_CHECK_INTERVAL } from "./constants"
+import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT, USE_NORMAL_LAUNCH, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, AUTO_SELL_50_PERCENT, AUTO_HOLDER_WALLET_BUY, HOLDER_WALLET_PRIORITY_FEE, HOLDER_WALLET_AUTO_BUY_DELAYS, MARKET_CAP_TRACKING_ENABLED, MARKET_CAP_SELL_THRESHOLD, MARKET_CAP_CHECK_INTERVAL, TOKEN_NAME, TOKEN_SYMBOL } from "./constants"
 
 // CRITICAL: Read BUYER_WALLET directly from process.env AFTER reloading .env
 // This ensures we get the latest value even if it was just updated
@@ -29,6 +29,8 @@ import { USE_MIXING_WALLETS, USE_MULTI_INTERMEDIARY_SYSTEM, NUM_INTERMEDIARY_HOP
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
 import { sendBundle } from "./executor/liljito";
 import { updateWebsite, createTelegramGroup, postToTwitter } from "./utils/marketing-helpers";
+import { startRunTracking, completeRunTracking, updateLaunchSettings } from "./lib/profit-loss-tracker";
+import type { LaunchSettings } from "./lib/profit-loss-tracker";
 
 
 
@@ -97,6 +99,23 @@ const main = async () => {
   const mainBal = await connection.getBalance(mainKp.publicKey)
   console.log((mainBal / 10 ** 9).toFixed(3), "SOL in main keypair")
 
+  // Start profit/loss tracking NOW - BEFORE any wallets are created or funded
+  // This captures the TRUE starting balance before ANY funds leave the main wallet
+  let profitLossRunId: string | null = null;
+  try {
+    profitLossRunId = await startRunTracking(
+      connection,
+      mainKp.publicKey,
+      TOKEN_NAME,
+      TOKEN_SYMBOL,
+      mintAddress.toBase58()
+      // Note: Launch settings will be added later after we know wallet sources
+    );
+    console.log(`\n📊 [ProfitLoss] Started tracking BEFORE any wallet creation. Balance: ${(mainBal / 10 ** 9).toFixed(4)} SOL`);
+  } catch (error: any) {
+    console.warn(`[ProfitLoss] Failed to start tracking: ${error.message}`);
+  }
+
   console.log("Mint address of token ", mintAddress.toBase58())
   saveDataToFile([base58.encode(mintKp.secretKey)], "mint.json")
 
@@ -143,15 +162,18 @@ const main = async () => {
   
   let buyerKp: Keypair
   let buyerWalletSource: string
+  let creatorWalletSourceType: 'warmed' | 'env' | 'auto-created' = 'auto-created'
   if (warmedCreatorWalletKey && warmedCreatorWalletKey.trim() !== '') {
     // PRIORITY 1: Use warmed creator wallet
     buyerKp = Keypair.fromSecretKey(base58.decode(warmedCreatorWalletKey))
     buyerWalletSource = 'warmed creator wallet (from wallet warming system)'
+    creatorWalletSourceType = 'warmed'
     console.log("🔥 Using warmed creator wallet:", buyerKp.publicKey.toBase58())
   } else if (currentBuyerWallet && currentBuyerWallet.trim() !== '') {
     // PRIORITY 2: Use BUYER_WALLET from .env (persistent wallet)
     buyerKp = Keypair.fromSecretKey(base58.decode(currentBuyerWallet))
     buyerWalletSource = 'BUYER_WALLET env var (persistent)'
+    creatorWalletSourceType = 'env'
     console.log("Dev buyer wallet (from .env):", buyerKp.publicKey.toBase58())
   } else {
     // Create DEV wallet FIRST using distributeSol (same as bundle wallets) - saves to data.json automatically
@@ -186,6 +208,7 @@ const main = async () => {
     }
     buyerKp = devWalletResult[0]
     buyerWalletSource = 'auto-created (saved to data.json like bundle wallets)'
+    creatorWalletSourceType = 'auto-created'
     console.log(`   ✅ Created DEV wallet: ${buyerKp.publicKey.toBase58()}`)
     console.log(`   ✅ Saved to data.json (same as bundle wallets)`)
     
@@ -307,6 +330,43 @@ const main = async () => {
     console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS is empty! All wallets will use SWAP_AMOUNT (${SWAP_AMOUNT})`);
     swapAmountsToUse = Array(bundleWalletCount).fill(SWAP_AMOUNT);
   }
+  
+  // Update launch settings now that we have all the info
+  const usedWarmedWallets = fs.existsSync(warmedWalletsPath);
+  const launchSettings: LaunchSettings = {
+    usedWarmedWallets,
+    creatorWalletSource: creatorWalletSourceType,
+    bundleWalletCount,
+    holderWalletCount,
+    devBuyAmount: buyerAmount,
+    bundleSwapAmounts: swapAmountsToUse,
+    holderWalletAmount,
+    autoRapidSell: AUTO_RAPID_SELL,
+    autoSell50Percent: AUTO_SELL_50_PERCENT,
+    autoSellStaged: process.env.AUTO_SELL_STAGED === 'true',
+    autoGather: AUTO_GATHER,
+    websocketTracking: WEBSOCKET_TRACKING_ENABLED,
+    websocketUltraFastMode: WEBSOCKET_ULTRA_FAST_MODE,
+    jitoFee: Number(process.env.JITO_FEE || '0.001'),
+    useMixingWallets: USE_MIXING_WALLETS,
+    useMultiIntermediary: USE_MULTI_INTERMEDIARY_SYSTEM,
+    tokenImageUrl: process.env.FILE || undefined,
+    twitter: process.env.TWITTER || undefined,
+    telegram: process.env.TELEGRAM || undefined,
+    website: process.env.WEBSITE || undefined,
+    description: process.env.DESCRIPTION || undefined,
+  };
+  
+  // Update the existing P/L record with launch settings now that we know them
+  if (profitLossRunId) {
+    try {
+      updateLaunchSettings(profitLossRunId, launchSettings);
+      console.log(`\n📊 [ProfitLoss] Updated tracking record with launch settings`);
+    } catch (error: any) {
+      console.warn(`[ProfitLoss] Failed to update launch settings: ${error.message}`);
+    }
+  }
+  
   const minimumSolAmount = swapAmountsToUse.reduce((sum, amount) => sum + amount + 0.01, 0) + 0.04 + buyerAmount
 
   if (mainBal / 10 ** 9 < minimumSolAmount) {
@@ -1603,14 +1663,34 @@ const main = async () => {
             const { gather } = await import('./gather')
             await gather()
             console.log("\n✅✅✅ AUTOMATIC GATHER COMPLETED ✅✅✅")
+            
+            // Complete profit/loss tracking after gather
+            if (profitLossRunId) {
+              try {
+                await completeRunTracking(connection, mainKp.publicKey, profitLossRunId, 'completed');
+              } catch (error: any) {
+                console.warn(`[ProfitLoss] Failed to complete tracking: ${error.message}`);
+              }
+            }
           } catch (error: any) {
             console.error("❌ Error starting automatic gather:", error.message)
             console.error("   You can manually run: npm run gather")
+            
+            // Mark as failed if gather errored
+            if (profitLossRunId) {
+              try {
+                await completeRunTracking(connection, mainKp.publicKey, profitLossRunId, 'failed', `Gather error: ${error.message}`);
+              } catch (trackError: any) {
+                console.warn(`[ProfitLoss] Failed to update tracking: ${trackError.message}`);
+              }
+            }
           }
         } else {
           console.log("\n⏸️  AUTO_GATHER is disabled in .env")
           console.log("   Gather will NOT start automatically")
           console.log("   Run manually with: npm run gather")
+          console.log(`   💡 Profit/Loss tracking started (run ID: ${profitLossRunId})`)
+          console.log(`   💡 Tracking will complete automatically when you run: npm run gather`)
         }
       } catch (error: any) {
         console.error("❌ Error in rapid sell:", error.message)
@@ -1913,6 +1993,16 @@ const main = async () => {
         fs.writeFileSync(keysPath, JSON.stringify(failedRunWallets, null, 2))
         console.log("\n   ⚠️  Created current-run.json with FAILED status")
       }
+      
+      // Complete profit/loss tracking for failed launch
+      if (profitLossRunId) {
+        try {
+          await completeRunTracking(connection, mainKp.publicKey, profitLossRunId, 'failed', 'Launch failed - bundle not included on-chain');
+        } catch (error: any) {
+          console.warn(`[ProfitLoss] Failed to update tracking: ${error.message}`);
+        }
+      }
+      
       return false
     } else {
       // Update existing current-run.json with SUCCESS status
