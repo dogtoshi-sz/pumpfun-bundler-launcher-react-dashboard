@@ -262,30 +262,6 @@ export default function Settings() {
             <SectionIcon className="w-6 h-6 text-blue-400" />
             <h2 className="text-2xl font-bold text-white">{activeSectionData.title}</h2>
           </div>
-          <div className="flex items-center gap-2">
-            <a
-              href="http://localhost:3001/profit-loss"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors flex items-center gap-1.5"
-              title="View Profit/Loss Dashboard"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              <span>P/L Dashboard</span>
-            </a>
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('navigate-to-tab', { detail: 'test' }))}
-              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors flex items-center gap-1.5"
-              title="Go to Test Tab"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.586V5L7 4z" />
-              </svg>
-              <span>Test Tab</span>
-            </button>
-          </div>
         </div>
         <p className="text-sm text-gray-500">{activeSectionData.description}</p>
       </div>
