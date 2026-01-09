@@ -1913,29 +1913,17 @@ export default function TokenLaunch({ onLaunch }) {
           <RocketLaunchIconSolid className="w-6 h-6 text-blue-400" />
           <h2 className="text-xl font-bold text-white">Launch Token</h2>
         </div>
-        <div className="flex items-center gap-2">
-          <a
-            href="http://localhost:3001/profit-loss"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
-            title="View Profit/Loss Dashboard"
-          >
-            <CurrencyDollarIcon className="w-4 h-4" />
-            📊 P/L Dashboard
-          </a>
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={exportConfigAsJSON}
-            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
-            title="Export current configuration as JSON file"
+            className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
+            title="Export configuration as JSON"
           >
             <ArrowDownTrayIcon className="w-4 h-4" />
-            Export JSON
           </button>
-          <label className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer">
+          <label className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors cursor-pointer" title="Import configuration from JSON">
             <ArrowPathIcon className="w-4 h-4" />
-            Import JSON
             <input
               type="file"
               accept=".json"
@@ -1949,10 +1937,12 @@ export default function TokenLaunch({ onLaunch }) {
               setShowConfigModal(true);
               loadSavedConfigs();
             }}
-            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+            className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
+            title="Load saved configuration"
           >
-            <ArrowPathIcon className="w-4 h-4" />
-            Load Config
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+            </svg>
           </button>
           {savingStatus && (
             <div className={`text-sm px-3 py-1 rounded ${
@@ -1969,45 +1959,33 @@ export default function TokenLaunch({ onLaunch }) {
       {/* Token Card Preview */}
       {(settings.TOKEN_NAME || settings.FILE) && (
         <div className="mb-4 relative overflow-hidden">
-          {/* Gradient Background */}
-          <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-blue-900/20 to-pink-900/20 backdrop-blur-xl" />
-          
-          <div className="relative p-6 border border-purple-500/30 rounded-2xl shadow-2xl">
-            {/* Animated glow effect */}
-            <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 via-blue-500/10 to-pink-500/10 animate-pulse rounded-2xl" />
+          <div className="relative p-4 border border-gray-700/50 rounded-lg bg-gray-900/30"
             
-            <div className="relative flex items-start gap-6">
+            <div className="relative flex items-start gap-4">
               {/* Token Image */}
               {settings.FILE && (
                 <div className="flex-shrink-0">
-                  <div className="relative group">
-                    <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 via-blue-600 to-pink-600 rounded-2xl blur opacity-75 group-hover:opacity-100 transition duration-300 animate-pulse" />
-                    <img 
-                      src={settings.FILE} 
-                      alt={settings.TOKEN_NAME || 'Token'} 
-                      className="relative w-32 h-32 rounded-2xl object-cover border-4 border-gray-900/50 shadow-2xl"
-                    />
-                  </div>
+                  <img 
+                    src={settings.FILE} 
+                    alt={settings.TOKEN_NAME || 'Token'} 
+                    className="w-20 h-20 rounded-lg object-cover border border-gray-700/50"
+                  />
                 </div>
               )}
               
               {/* Token Info */}
               <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="flex items-start justify-between gap-4 mb-2">
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-blue-400 to-pink-400 mb-1 truncate animate-pulse">
+                    <h3 className="text-xl font-bold text-white mb-1 truncate">
                       {settings.TOKEN_NAME || 'Token Name'}
                     </h3>
                     {settings.TOKEN_SYMBOL && (
-                      <div className="flex items-center gap-2 animate-fade-in">
-                        <div className="relative group">
-                          {/* Animated glow effect */}
-                          <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg blur opacity-25 group-hover:opacity-75 transition duration-300 animate-pulse" />
-                          <span className="relative text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 px-3 py-1 flex items-center gap-1">
-                            <span className="text-purple-300">$</span>{settings.TOKEN_SYMBOL}
-                          </span>
-                        </div>
-                        <span className="px-2 py-0.5 bg-purple-500/20 border border-purple-500/30 rounded-full text-xs font-medium text-purple-300 animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-semibold text-gray-300 flex items-center gap-1">
+                          <span className="text-gray-400">$</span>{settings.TOKEN_SYMBOL}
+                        </span>
+                        <span className="px-2 py-0.5 bg-gray-800/50 border border-gray-700/50 rounded text-xs text-gray-400">
                           Pump.fun
                         </span>
                       </div>
@@ -2017,24 +1995,24 @@ export default function TokenLaunch({ onLaunch }) {
                   {/* Launch Status Badge */}
                   <div className="flex-shrink-0">
                     {loading ? (
-                      <div className="px-3 py-1.5 bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 rounded-full">
-                        <div className="flex items-center gap-2">
+                      <div className="px-2 py-1 bg-blue-900/20 border border-blue-800/30 rounded">
+                        <div className="flex items-center gap-1.5">
                           <ArrowPathIcon className="w-3 h-3 text-blue-400 animate-spin" />
-                          <span className="text-xs font-semibold text-blue-300">Launching...</span>
+                          <span className="text-xs text-blue-300">Launching...</span>
                         </div>
                       </div>
                     ) : (!settings.TOKEN_NAME || !settings.TOKEN_SYMBOL || !settings.DESCRIPTION) ? (
-                      <div className="px-3 py-1.5 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border border-yellow-500/30 rounded-full">
-                        <div className="flex items-center gap-2">
+                      <div className="px-2 py-1 bg-yellow-900/20 border border-yellow-800/30 rounded">
+                        <div className="flex items-center gap-1.5">
                           <ExclamationTriangleIcon className="w-3 h-3 text-yellow-400" />
-                          <span className="text-xs font-semibold text-yellow-300">Incomplete</span>
+                          <span className="text-xs text-yellow-300">Incomplete</span>
                         </div>
                       </div>
                     ) : (
-                      <div className="px-3 py-1.5 bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-500/30 rounded-full">
-                        <div className="flex items-center gap-2">
+                      <div className="px-2 py-1 bg-green-900/20 border border-green-800/30 rounded">
+                        <div className="flex items-center gap-1.5">
                           <CheckCircleIcon className="w-3 h-3 text-green-400" />
-                          <span className="text-xs font-semibold text-green-300">Ready to Launch</span>
+                          <span className="text-xs text-green-300">Ready</span>
                         </div>
                       </div>
                     )}
@@ -2043,50 +2021,50 @@ export default function TokenLaunch({ onLaunch }) {
                 
                 {/* Description */}
                 {settings.DESCRIPTION && (
-                  <p className="text-sm text-gray-300 mb-3 line-clamp-2 leading-relaxed">
+                  <p className="text-xs text-gray-400 mb-2 line-clamp-2">
                     {settings.DESCRIPTION}
                   </p>
                 )}
                 
                 {/* Launch Stats */}
                 {(settings.BUNDLE_WALLET_COUNT || settings.HOLDER_WALLET_COUNT || walletInfo?.totalSolRequired) && (
-                  <div className="flex flex-wrap items-center gap-3 mb-3 pb-3 border-b border-gray-700/50">
+                  <div className="flex flex-wrap items-center gap-2 mb-2 pb-2 border-b border-gray-800/50">
                     {settings.BUNDLE_WALLET_COUNT && parseInt(settings.BUNDLE_WALLET_COUNT) > 0 && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <WalletIcon className="w-4 h-4 text-blue-400" />
-                        <span className="text-gray-400">Bundle:</span>
-                        <span className="font-semibold text-blue-300">{settings.BUNDLE_WALLET_COUNT}</span>
+                      <div className="flex items-center gap-1 text-xs">
+                        <WalletIcon className="w-3 h-3 text-gray-500" />
+                        <span className="text-gray-500">Bundle:</span>
+                        <span className="text-gray-400">{settings.BUNDLE_WALLET_COUNT}</span>
                       </div>
                     )}
                     {settings.HOLDER_WALLET_COUNT && parseInt(settings.HOLDER_WALLET_COUNT) > 0 && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <UserGroupIcon className="w-4 h-4 text-purple-400" />
-                        <span className="text-gray-400">Holders:</span>
-                        <span className="font-semibold text-purple-300">{settings.HOLDER_WALLET_COUNT}</span>
+                      <div className="flex items-center gap-1 text-xs">
+                        <UserGroupIcon className="w-3 h-3 text-gray-500" />
+                        <span className="text-gray-500">Holders:</span>
+                        <span className="text-gray-400">{settings.HOLDER_WALLET_COUNT}</span>
                       </div>
                     )}
                     {walletInfo?.totalSolRequired && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <CurrencyDollarIcon className="w-4 h-4 text-yellow-400" />
-                        <span className="text-gray-400">Total:</span>
-                        <span className="font-semibold text-yellow-300">{walletInfo.totalSolRequired.toFixed(4)} SOL</span>
+                      <div className="flex items-center gap-1 text-xs">
+                        <CurrencyDollarIcon className="w-3 h-3 text-gray-500" />
+                        <span className="text-gray-500">Total:</span>
+                        <span className="text-gray-400">{walletInfo.totalSolRequired.toFixed(4)} SOL</span>
                       </div>
                     )}
                   </div>
                 )}
                 
                 {/* Links and Info */}
-                <div className="flex flex-wrap items-center gap-3 mb-3">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
                   {settings.WEBSITE && (
                     <a 
                       href={settings.WEBSITE.startsWith('http') ? settings.WEBSITE : `https://${settings.WEBSITE}`} 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-sm text-blue-300 hover:text-blue-200 transition-all group"
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-gray-800/30 hover:bg-gray-800/50 border border-gray-700/30 rounded text-xs text-gray-400 hover:text-gray-300 transition-all"
                       title={settings.WEBSITE}
                     >
-                      <GlobeAltIcon className="w-4 h-4" />
-                      <span className="truncate max-w-[150px]">{settings.WEBSITE.replace(/^https?:\/\//, '').replace(/\/$/, '')}</span>
+                      <GlobeAltIcon className="w-3 h-3" />
+                      <span className="truncate max-w-[120px]">{settings.WEBSITE.replace(/^https?:\/\//, '').replace(/\/$/, '')}</span>
                     </a>
                   )}
                   {settings.TWITTER && (
@@ -2094,7 +2072,7 @@ export default function TokenLaunch({ onLaunch }) {
                       href={settings.TWITTER.startsWith('http') ? settings.TWITTER : `https://twitter.com/${settings.TWITTER.replace('@', '')}`} 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-400/10 hover:bg-blue-400/20 border border-blue-400/30 rounded-lg text-sm text-blue-300 hover:text-blue-200 transition-all group"
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-gray-800/30 hover:bg-gray-800/50 border border-gray-700/30 rounded text-xs text-gray-400 hover:text-gray-300 transition-all"
                       title={`@${settings.TWITTER.replace('@', '')}`}
                     >
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -2108,77 +2086,63 @@ export default function TokenLaunch({ onLaunch }) {
                       href={settings.TELEGRAM.startsWith('http') ? settings.TELEGRAM : `https://t.me/${settings.TELEGRAM.replace('@', '')}`} 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-sm text-cyan-300 hover:text-cyan-200 transition-all group"
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-gray-800/30 hover:bg-gray-800/50 border border-gray-700/30 rounded text-xs text-gray-400 hover:text-gray-300 transition-all"
                       title={settings.TELEGRAM}
                     >
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                       </svg>
-                      <span className="truncate max-w-[120px]">{settings.TELEGRAM.replace('@', '').replace(/^https?:\/\/t\.me\//, '')}</span>
+                      <span className="truncate max-w-[100px]">{settings.TELEGRAM.replace('@', '').replace(/^https?:\/\/t\.me\//, '')}</span>
                     </a>
                   )}
                 </div>
                 
-                {/* Pump Address - PROMINENT */}
+                {/* Pump Address */}
                 {nextAddress?.address ? (
-                  <div className="relative group">
-                    {/* Animated border glow */}
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 via-pink-600 to-blue-600 rounded-xl blur opacity-30 group-hover:opacity-60 transition duration-500 animate-pulse" />
-                    
-                    <div className="relative p-4 bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900 border-2 border-purple-400/50 rounded-xl shadow-2xl">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
-                              <p className="text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 uppercase tracking-wide">
-                                Contract Address
-                              </p>
-                            </div>
-                            {nextAddress.source && (
-                              <span className="text-xs text-purple-300 bg-purple-500/20 px-2 py-1 rounded-full border border-purple-400/30 animate-pulse">
-                                {nextAddress.source}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <code className="text-base font-mono font-bold text-purple-200 bg-black/30 px-3 py-2 rounded-lg border border-purple-400/30 shadow-lg animate-pulse">
-                              {nextAddress.address}
-                            </code>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(nextAddress.address);
-                                // You could add a toast notification here
-                              }}
-                              className="flex-shrink-0 p-2 bg-purple-600/40 hover:bg-purple-600/60 border-2 border-purple-400/50 rounded-lg transition-all hover:scale-110 active:scale-95 shadow-lg hover:shadow-purple-500/50"
-                              title="Copy address"
-                            >
-                              <svg className="w-5 h-5 text-purple-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="p-3 bg-gray-900/50 border border-gray-700/50 rounded">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-500 mb-1 flex items-center gap-1.5">
+                          <span>Contract Address</span>
+                          {nextAddress.source && (
+                            <span className="text-xs text-gray-400 bg-gray-800/50 px-1.5 py-0.5 rounded">
+                              {nextAddress.source}
+                            </span>
+                          )}
+                        </p>
+                        <code className="text-xs font-mono text-gray-300 bg-black/30 px-2 py-1 rounded border border-gray-700/30 break-all">
+                          {nextAddress.address}
+                        </code>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(nextAddress.address);
+                          }}
+                          className="p-1.5 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded transition-all"
+                          title="Copy address"
+                        >
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                               </svg>
                             </button>
-                            <a
-                              href={`https://pump.fun/${nextAddress.address}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-shrink-0 p-2 bg-blue-600/40 hover:bg-blue-600/60 border-2 border-blue-400/50 rounded-lg transition-all hover:scale-110 active:scale-95 shadow-lg hover:shadow-blue-500/50"
-                              title="View on Pump.fun"
-                            >
-                              <svg className="w-5 h-5 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                              </svg>
-                            </a>
-                          </div>
-                        </div>
+                        <a
+                          href={`https://pump.fun/${nextAddress.address}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded transition-all"
+                          title="View on Pump.fun"
+                        >
+                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="p-3 bg-gray-900/70 border border-gray-500/30 rounded-xl">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" />
-                      <p className="text-xs text-gray-400">Contract address will be assigned upon launch</p>
-                    </div>
+                  <div className="p-2 bg-gray-900/30 border border-gray-700/30 rounded">
+                    <p className="text-xs text-gray-500">Contract address will be assigned upon launch</p>
                   </div>
                 )}
               </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   RocketLaunchIcon, 
   UserGroupIcon, 
@@ -32,6 +32,99 @@ function App() {
   const [activeTab, setActiveTab] = useState('launch');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [activeSettingsSection, setActiveSettingsSection] = useState('wallets');
+  const [marketData, setMarketData] = useState({
+    sol: { price: 0, change24h: 0 },
+    eth: { price: 0, change24h: 0 },
+    bnb: { price: 0, change24h: 0 },
+    fearGreed: { value: 50, classification: 'Neutral' },
+    totalMarketCap: 0,
+    altcoinMarketCap: 0
+  });
+  const [loadingMarketData, setLoadingMarketData] = useState(true);
+
+  useEffect(() => {
+    // Listen for navigation events from Settings
+    const handleNavigate = (e) => {
+      setActiveTab(e.detail);
+    };
+    window.addEventListener('navigate-to-tab', handleNavigate);
+    
+    const fetchMarketData = async () => {
+      try {
+        // Fetch crypto prices from CoinGecko API
+        const coinsResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana,ethereum,binancecoin&vs_currencies=usd&include_24hr_change=true');
+        const coinsData = await coinsResponse.json();
+        
+        // Fetch global market data
+        const globalResponse = await fetch('https://api.coingecko.com/api/v3/global');
+        const globalData = await globalResponse.json();
+        
+        // Fetch Fear & Greed Index
+        let fearGreedValue = 50;
+        let fearGreedClassification = 'Neutral';
+        try {
+          const fearGreedResponse = await fetch('https://api.alternative.me/fng/');
+          const fearGreedData = await fearGreedResponse.json();
+          if (fearGreedData.data && fearGreedData.data[0]) {
+            fearGreedValue = parseInt(fearGreedData.data[0].value);
+            fearGreedClassification = fearGreedData.data[0].value_classification;
+          }
+        } catch (e) {
+          console.error('Failed to fetch fear & greed:', e);
+        }
+
+        setMarketData({
+          sol: {
+            price: coinsData.solana?.usd || 0,
+            change24h: coinsData.solana?.usd_24h_change || 0
+          },
+          eth: {
+            price: coinsData.ethereum?.usd || 0,
+            change24h: coinsData.ethereum?.usd_24h_change || 0
+          },
+          bnb: {
+            price: coinsData.binancecoin?.usd || 0,
+            change24h: coinsData.binancecoin?.usd_24h_change || 0
+          },
+          fearGreed: {
+            value: fearGreedValue,
+            classification: fearGreedClassification
+          },
+          totalMarketCap: globalData.data?.total_market_cap?.usd || 0,
+          altcoinMarketCap: globalData.data?.total_market_cap?.usd && globalData.data?.market_cap_percentage?.btc 
+            ? (globalData.data.total_market_cap.usd * (100 - globalData.data.market_cap_percentage.btc) / 100)
+            : 0
+        });
+        setLoadingMarketData(false);
+      } catch (error) {
+        console.error('Failed to fetch market data:', error);
+        setLoadingMarketData(false);
+      }
+    };
+
+    fetchMarketData();
+    // Refresh every 60 seconds
+    const interval = setInterval(fetchMarketData, 60000);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('navigate-to-tab', handleNavigate);
+    };
+  }, []);
+
+  const formatMarketCap = (value) => {
+    if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+    return `$${value.toFixed(2)}`;
+  };
+
+  const getFearGreedColor = (value) => {
+    if (value >= 75) return 'text-red-400';
+    if (value >= 55) return 'text-yellow-400';
+    if (value >= 45) return 'text-green-400';
+    if (value >= 25) return 'text-yellow-400';
+    return 'text-red-400';
+  };
 
   const tabs = [
     { id: 'launch', name: 'Launch', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, component: TokenLaunch },
@@ -198,25 +291,80 @@ function App() {
         {/* Footer - Sticky Bottom */}
         <footer className="bg-black/80 backdrop-blur-sm border-t border-gray-900">
           <div className="w-full px-6 py-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-6">
+            <div className="flex items-center justify-between gap-4 overflow-x-auto">
+              <div className="flex items-center gap-6 flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                   <span className="text-sm text-gray-300">Connected</span>
                 </div>
                 <span className="text-sm text-gray-500">Fees</span>
               </div>
-              <div className="flex items-center gap-6">
-                <button className="text-gray-400 hover:text-white transition-colors">
+              <div className="flex items-center gap-4 flex-shrink-0">
+                {/* Crypto Prices */}
+                {!loadingMarketData && (
+                  <>
+                    {/* SOL */}
+                    <div className="flex items-center gap-1.5">
+                      <img src="/image/icons/sol_logo.svg" alt="SOL" className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs text-gray-300 font-semibold">SOL</span>
+                      <span className="text-sm text-white font-medium">${marketData.sol.price.toFixed(2)}</span>
+                      <span className={`text-xs font-semibold ${marketData.sol.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {marketData.sol.change24h >= 0 ? '↑' : '↓'} {Math.abs(marketData.sol.change24h).toFixed(2)}%
+                      </span>
+                    </div>
+
+                    {/* ETH */}
+                    <div className="flex items-center gap-1.5">
+                      <img src="/image/icons/eth-logo.svg" alt="ETH" className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs text-gray-300 font-semibold">ETH</span>
+                      <span className="text-sm text-white font-medium">${marketData.eth.price.toFixed(2)}</span>
+                      <span className={`text-xs font-semibold ${marketData.eth.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {marketData.eth.change24h >= 0 ? '↑' : '↓'} {Math.abs(marketData.eth.change24h).toFixed(2)}%
+                      </span>
+                    </div>
+
+                    {/* BNB */}
+                    <div className="flex items-center gap-1.5">
+                      <img src="/image/icons/bnb_logo.svg" alt="BNB" className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs text-gray-300 font-semibold">BNB</span>
+                      <span className="text-sm text-white font-medium">${marketData.bnb.price.toFixed(2)}</span>
+                      <span className={`text-xs font-semibold ${marketData.bnb.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {marketData.bnb.change24h >= 0 ? '↑' : '↓'} {Math.abs(marketData.bnb.change24h).toFixed(2)}%
+                      </span>
+                    </div>
+
+                    {/* Fear & Greed Index */}
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-gray-800/50 rounded border border-gray-700">
+                      <span className="text-xs text-gray-400">Fear & Greed:</span>
+                      <span className={`text-xs font-bold ${getFearGreedColor(marketData.fearGreed.value)}`}>
+                        {marketData.fearGreed.value}
+                      </span>
+                      <span className="text-[10px] text-gray-500">({marketData.fearGreed.classification})</span>
+                    </div>
+
+                    {/* Total Market Cap */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-gray-400">Total MCap:</span>
+                      <span className="text-sm text-white font-semibold">{formatMarketCap(marketData.totalMarketCap)}</span>
+                    </div>
+
+                    {/* Altcoin Market Cap */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-gray-400">Altcoin MCap:</span>
+                      <span className="text-sm text-white font-semibold">{formatMarketCap(marketData.altcoinMarketCap)}</span>
+                    </div>
+                  </>
+                )}
+                {loadingMarketData && (
+                  <span className="text-xs text-gray-400">Loading market data...</span>
+                )}
+                <button className="text-gray-400 hover:text-white transition-colors flex-shrink-0">
                   <ChatBubbleLeftRightIcon className="w-5 h-5" />
                 </button>
-                <button className="text-gray-400 hover:text-white transition-colors">
+                <button className="text-gray-400 hover:text-white transition-colors flex-shrink-0">
                   <XMarkIcon className="w-5 h-5" />
                 </button>
-                <span className="text-sm text-gray-300">$133.76</span>
-                <span className="text-sm text-gray-300">$881.79</span>
-                <span className="text-sm text-gray-300">$3143.56</span>
-                <button className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                <button className="text-sm text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0">
                   Popout
                 </button>
               </div>
