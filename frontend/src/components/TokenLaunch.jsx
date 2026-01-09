@@ -1959,8 +1959,7 @@ export default function TokenLaunch({ onLaunch }) {
       {/* Token Card Preview */}
       {(settings.TOKEN_NAME || settings.FILE) && (
         <div className="mb-4 relative overflow-hidden">
-          <div className="relative p-4 border border-gray-700/50 rounded-lg bg-gray-900/30"
-            
+          <div className="relative p-4 border border-gray-700/50 rounded-lg bg-gray-900/30">
             <div className="relative flex items-start gap-4">
               {/* Token Image */}
               {settings.FILE && (
