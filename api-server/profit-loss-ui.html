@@ -3,47 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Profit/Loss Dashboard</title>
+  <title>PnL Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
+      transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
     }
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: #000;
-      color: #e0e0e0;
-      min-height: 100vh;
+      background-color: #000000;
+      color: #ffffff;
       overflow-x: hidden;
     }
     
-    /* Starry Background */
+    /* Starry background effect - EXACT COPY from React app */
     .starry-background {
       position: fixed;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      background: radial-gradient(2px 2px at 20% 30%, white, transparent),
-                  radial-gradient(2px 2px at 60% 70%, white, transparent),
-                  radial-gradient(1px 1px at 50% 50%, white, transparent),
-                  radial-gradient(1px 1px at 80% 10%, white, transparent),
-                  radial-gradient(2px 2px at 90% 60%, white, transparent),
-                  radial-gradient(1px 1px at 33% 80%, white, transparent),
-                  radial-gradient(1px 1px at 15% 90%, white, transparent);
+      background: 
+        radial-gradient(2px 2px at 20% 30%, #fff, transparent),
+        radial-gradient(2px 2px at 60% 70%, #fff, transparent),
+        radial-gradient(1px 1px at 50% 50%, #fff, transparent),
+        radial-gradient(1px 1px at 80% 10%, #fff, transparent),
+        radial-gradient(2px 2px at 90% 40%, #fff, transparent),
+        radial-gradient(1px 1px at 33% 60%, #fff, transparent),
+        radial-gradient(1px 1px at 55% 80%, #fff, transparent),
+        radial-gradient(2px 2px at 10% 90%, #fff, transparent),
+        radial-gradient(1px 1px at 70% 20%, #fff, transparent),
+        radial-gradient(1px 1px at 40% 40%, #fff, transparent);
       background-size: 200% 200%;
-      animation: twinkle 8s infinite;
+      background-position: 0% 0%;
+      animation: starryMove 60s linear infinite;
       opacity: 0.3;
       z-index: 0;
+      pointer-events: none;
     }
     
-    @keyframes twinkle {
-      0%, 100% { opacity: 0.3; }
-      50% { opacity: 0.5; }
+    @keyframes starryMove {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 100% 100%; }
     }
     
+    /* Grid pattern overlay - EXACT COPY from React app */
     .grid-overlay {
       position: fixed;
       top: 0;
@@ -51,494 +59,162 @@
       width: 100%;
       height: 100%;
       background-image: 
-        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-      background-size: 30px 30px;
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
       z-index: 0;
+      pointer-events: none;
+      opacity: 0.2;
     }
     
-    /* Header */
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(10px);
-      border-bottom: 1px solid #1a1a1a;
-      padding: 16px 24px;
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
     }
     
-    .header-content {
-      max-width: 1600px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+    ::-webkit-scrollbar-track {
+      background: #000000;
     }
     
-    .header-logo {
-      height: 40px;
-      width: auto;
-      object-fit: contain;
-    }
-    
-    .header-nav {
-      display: flex;
-      gap: 4px;
-      align-items: center;
-    }
-    
-    .header-nav-item {
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
-      color: #9ca3af;
-      text-decoration: none;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    
-    .header-nav-item:hover {
-      background: rgba(255, 255, 255, 0.05);
-      color: #fff;
-    }
-    
-    .header-nav-item.active {
-      background: #1e40af;
-      color: #fff;
-      box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
-    }
-    
-    .container {
-      position: relative;
-      z-index: 10;
-      max-width: 1600px;
-      margin: 0 auto;
-      padding: 24px;
-    }
-    
-    h1 {
-      color: #fff;
-      margin-bottom: 24px;
-      font-size: 32px;
-      font-weight: 800;
-    }
-    
-    .stats-bar {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 15px;
-      margin-bottom: 30px;
-    }
-    
-    .stat-card {
+    ::-webkit-scrollbar-thumb {
       background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 8px;
-      padding: 20px;
+      border-radius: 4px;
     }
     
-    .stat-label {
-      font-size: 12px;
-      color: #888;
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
-    
-    .stat-value {
-      font-size: 24px;
-      font-weight: bold;
-      color: #fff;
-    }
-    
-    .stat-value.positive {
-      color: #4ade80;
-    }
-    
-    .stat-value.negative {
-      color: #f87171;
-    }
-    
-    .records-grid {
-      display: grid;
-      gap: 20px;
-    }
-    
-    .record-card {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 12px;
-      padding: 24px;
-      transition: all 0.2s;
-    }
-    
-    .record-card:hover {
-      border-color: #555;
-      transform: translateY(-2px);
-    }
-    
-    .record-header {
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      margin-bottom: 20px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #333;
-    }
-    
-    .token-image {
-      width: 80px;
-      height: 80px;
-      border-radius: 12px;
-      object-fit: cover;
-      border: 2px solid #333;
-    }
-    
-    .token-info {
-      flex: 1;
-    }
-    
-    .token-name {
-      font-size: 20px;
-      font-weight: bold;
-      color: #fff;
-      margin-bottom: 4px;
-    }
-    
-    .token-symbol {
-      font-size: 14px;
-      color: #888;
-      margin-bottom: 8px;
-    }
-    
-    .token-links {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    
-    .link-icon {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
+    ::-webkit-scrollbar-thumb:hover {
       background: #2a2a2a;
-      border: 1px solid #444;
-      border-radius: 6px;
-      color: #e0e0e0;
-      text-decoration: none;
-      font-size: 12px;
-      transition: all 0.2s;
-    }
-    
-    .link-icon:hover {
-      background: #3a3a3a;
-      border-color: #666;
-      color: #fff;
-    }
-    
-    .profit-loss {
-      text-align: right;
-    }
-    
-    .profit-loss-value {
-      font-size: 28px;
-      font-weight: bold;
-      margin-bottom: 4px;
-    }
-    
-    .profit-loss-value.positive {
-      color: #4ade80;
-    }
-    
-    .profit-loss-value.negative {
-      color: #f87171;
-    }
-    
-    .profit-loss-label {
-      font-size: 12px;
-      color: #888;
-    }
-    
-    .record-details {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 20px;
-      margin-top: 20px;
-    }
-    
-    .detail-section {
-      background: #0f0f0f;
-      border: 1px solid #222;
-      border-radius: 8px;
-      padding: 16px;
-    }
-    
-    .detail-section-title {
-      font-size: 14px;
-      font-weight: bold;
-      color: #fff;
-      margin-bottom: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .detail-item {
-      display: flex;
-      justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid #222;
-    }
-    
-    .detail-item:last-child {
-      border-bottom: none;
-    }
-    
-    .detail-label {
-      color: #888;
-      font-size: 13px;
-    }
-    
-    .detail-value {
-      color: #e0e0e0;
-      font-size: 13px;
-      font-weight: 500;
-    }
-    
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-    
-    .badge.completed {
-      background: #1a4d2e;
-      color: #4ade80;
-    }
-    
-    .badge.failed {
-      background: #4d1a1a;
-      color: #f87171;
-    }
-    
-    .badge.in_progress {
-      background: #4d3d1a;
-      color: #fbbf24;
-    }
-    
-    .badge.true {
-      background: #1a4d2e;
-      color: #4ade80;
-    }
-    
-    .badge.false {
-      background: #4d1a1a;
-      color: #f87171;
-    }
-    
-    .badge.warmed {
-      background: #1a3d4d;
-      color: #60a5fa;
-    }
-    
-    .badge.env {
-      background: #3d1a4d;
-      color: #a78bfa;
-    }
-    
-    .badge.auto-created {
-      background: #4d3d1a;
-      color: #fbbf24;
-    }
-    
-    .mint-address {
-      font-family: 'Courier New', monospace;
-      font-size: 11px;
-      color: #888;
-      word-break: break-all;
-    }
-    
-    .analysis-section {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 12px;
-      padding: 24px;
-      margin-top: 30px;
-    }
-    
-    .analysis-title {
-      font-size: 18px;
-      font-weight: bold;
-      color: #fff;
-      margin-bottom: 20px;
-    }
-    
-    .pattern-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px;
-    }
-    
-    .pattern-card {
-      background: #0f0f0f;
-      border: 1px solid #222;
-      border-radius: 8px;
-      padding: 16px;
-    }
-    
-    .pattern-title {
-      font-size: 14px;
-      font-weight: bold;
-      color: #fff;
-      margin-bottom: 12px;
-    }
-    
-    .pattern-stats {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 8px;
-    }
-    
-    .pattern-count {
-      color: #888;
-      font-size: 12px;
-    }
-    
-    .pattern-avg {
-      font-size: 16px;
-      font-weight: bold;
-    }
-    
-    .pattern-avg.positive {
-      color: #4ade80;
-    }
-    
-    .pattern-avg.negative {
-      color: #f87171;
-    }
-    
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: #888;
-    }
-    
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
-      color: #888;
-    }
-    
-    .empty-state-icon {
-      font-size: 48px;
-      margin-bottom: 16px;
-    }
-    
-    .refresh-btn {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      padding: 12px 24px;
-      background: #3b82f6;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-      transition: all 0.2s;
-    }
-    
-    .refresh-btn:hover {
-      background: #2563eb;
-      transform: translateY(-2px);
-      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
-    }
-    
-    .icon {
-      width: 16px;
-      height: 16px;
     }
   </style>
 </head>
-<body>
-  <!-- Starry Background -->
+<body class="fixed inset-0 bg-black text-white overflow-hidden">
+  <!-- Starry Background - EXACT COPY from React app -->
   <div class="starry-background"></div>
   <div class="grid-overlay"></div>
   
-  <!-- Header -->
-  <header>
-    <div class="header-content">
-      <div style="display: flex; align-items: center; gap: 32px;">
-        <img src="/image/goatlogo.png" alt="GOAT TOOLS Logo" class="header-logo">
-        <nav class="header-nav">
-          <a href="http://localhost:3000" class="header-nav-item">
-            <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            <span>Launch</span>
-          </a>
-          <a href="http://localhost:3000" class="header-nav-item">
-            <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-            <span>Terminal</span>
-          </a>
-          <a href="/profit-loss" class="header-nav-item active">
-            <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <span>P/L Dashboard</span>
-          </a>
-        </nav>
+  <!-- Main Container -->
+  <div class="relative z-10 h-full flex flex-col">
+    <!-- Header - EXACT COPY from React app -->
+    <header class="bg-black/80 backdrop-blur-sm border-b border-gray-900 sticky top-0 z-50">
+      <div class="w-full px-6 py-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-8">
+            <div class="flex items-center">
+              <img 
+                src="/image/goatlogo.png" 
+                alt="GOAT TOOLS Logo" 
+                class="h-10 w-auto object-contain"
+              />
+            </div>
+            <nav class="flex gap-1">
+              <!-- Launch Tab -->
+              <a
+                href="http://localhost:3000"
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-gray-400 hover:text-white hover:bg-gray-900/50"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>Launch</span>
+              </a>
+              <!-- Terminal Tab -->
+              <a
+                href="http://localhost:3000"
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-gray-400 hover:text-white hover:bg-gray-900/50"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <span>Terminal</span>
+              </a>
+              <!-- Warming Tab -->
+              <a
+                href="http://localhost:3000"
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-gray-400 hover:text-white hover:bg-gray-900/50"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                </svg>
+                <span>Warming</span>
+              </a>
+              <!-- PnL Tab (ACTIVE) -->
+              <a
+                href="/profit-loss"
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 bg-gray-900 text-white"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span>PnL</span>
+              </a>
+              <!-- Settings Tab -->
+              <a
+                href="http://localhost:3000"
+                class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-gray-400 hover:text-white hover:bg-gray-900/50"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Settings</span>
+              </a>
+            </nav>
+          </div>
+          <div class="flex items-center gap-4">
+            <div class="relative">
+              <input
+                type="text"
+                placeholder="Search tokens..."
+                class="bg-gray-900/50 border border-gray-800 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-48"
+              />
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  </header>
-  
-  <div class="container">
-    <h1>📊 Profit/Loss & Launch Analysis</h1>
-    
-    <div class="stats-bar" id="statsBar">
-      <div class="stat-card">
-        <div class="stat-label">Cumulative P/L</div>
-        <div class="stat-value" id="cumulativePL">0.0000 SOL</div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 overflow-y-auto">
+      <div class="max-w-7xl mx-auto p-6">
+        <h1 class="text-3xl font-bold text-white mb-6">📊 Profit/Loss & Launch Analysis</h1>
+        
+        <!-- Stats Bar -->
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6" id="statsBar">
+          <div class="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
+            <div class="text-xs text-gray-500 uppercase mb-2">Cumulative P/L</div>
+            <div class="text-2xl font-bold text-white" id="cumulativePL">0.0000 SOL</div>
+          </div>
+          <div class="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
+            <div class="text-xs text-gray-500 uppercase mb-2">Total Runs</div>
+            <div class="text-2xl font-bold text-white" id="totalRuns">0</div>
+          </div>
+          <div class="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
+            <div class="text-xs text-gray-500 uppercase mb-2">Successful</div>
+            <div class="text-2xl font-bold text-white" id="successfulRuns">0</div>
+          </div>
+          <div class="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
+            <div class="text-xs text-gray-500 uppercase mb-2">Failed</div>
+            <div class="text-2xl font-bold text-white" id="failedRuns">0</div>
+          </div>
+          <div class="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
+            <div class="text-xs text-gray-500 uppercase mb-2">Avg P/L</div>
+            <div class="text-2xl font-bold text-white" id="avgPL">0.0000 SOL</div>
+          </div>
+        </div>
+        
+        <!-- Records Grid -->
+        <div class="space-y-4" id="recordsGrid">
+          <div class="text-center py-12 text-gray-500">Loading profit/loss data...</div>
+        </div>
+        
+        <!-- Analysis Section -->
+        <div class="mt-6 bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-6" id="analysisSection" style="display: none;">
+          <div class="text-xl font-bold text-white mb-4">🔍 Launch Style Analysis</div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="patternGrid"></div>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Total Runs</div>
-        <div class="stat-value" id="totalRuns">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Successful</div>
-        <div class="stat-value" id="successfulRuns">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Failed</div>
-        <div class="stat-value" id="failedRuns">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Avg P/L per Run</div>
-        <div class="stat-value" id="avgPL">0.0000 SOL</div>
-      </div>
-    </div>
-    
-    <div class="records-grid" id="recordsGrid">
-      <div class="loading">Loading profit/loss data...</div>
-    </div>
-    
-    <div class="analysis-section" id="analysisSection" style="display: none;">
-      <div class="analysis-title">🔍 Launch Style Analysis</div>
-      <div class="pattern-grid" id="patternGrid"></div>
     </div>
   </div>
-  
-  <button class="refresh-btn" onclick="loadData()">🔄 Refresh</button>
   
   <script>
     async function loadData() {
@@ -547,25 +223,20 @@
         const result = await response.json();
         
         if (!result.success) {
-          document.getElementById('recordsGrid').innerHTML = '<div class="empty-state">Error loading data</div>';
+          document.getElementById('recordsGrid').innerHTML = '<div class="text-center py-12 text-gray-500">Error loading data</div>';
           return;
         }
         
         const data = result.data;
-        const records = (data.records || []).reverse(); // Show newest first
+        const records = (data.records || []).reverse();
         
-        // Update stats
         updateStats(data, records);
-        
-        // Render records
         renderRecords(records);
-        
-        // Render analysis
         renderAnalysis(records);
         
       } catch (error) {
         console.error('Error loading data:', error);
-        document.getElementById('recordsGrid').innerHTML = '<div class="empty-state">Error loading data</div>';
+        document.getElementById('recordsGrid').innerHTML = '<div class="text-center py-12 text-gray-500">Error loading data</div>';
       }
     }
     
@@ -579,13 +250,13 @@
       document.getElementById('cumulativePL').textContent = 
         `${data.cumulativeProfitLoss >= 0 ? '+' : ''}${data.cumulativeProfitLoss.toFixed(4)} SOL`;
       document.getElementById('cumulativePL').className = 
-        `stat-value ${data.cumulativeProfitLoss >= 0 ? 'positive' : 'negative'}`;
+        `text-2xl font-bold ${data.cumulativeProfitLoss >= 0 ? 'text-green-400' : 'text-red-400'}`;
       
       document.getElementById('totalRuns').textContent = records.length;
       document.getElementById('successfulRuns').textContent = completed.length;
       document.getElementById('failedRuns').textContent = failed.length;
       document.getElementById('avgPL').textContent = `${avgPL >= 0 ? '+' : ''}${avgPL.toFixed(4)} SOL`;
-      document.getElementById('avgPL').className = `stat-value ${avgPL >= 0 ? 'positive' : 'negative'}`;
+      document.getElementById('avgPL').className = `text-2xl font-bold ${avgPL >= 0 ? 'text-green-400' : 'text-red-400'}`;
     }
     
     function renderRecords(records) {
@@ -593,9 +264,9 @@
       
       if (records.length === 0) {
         grid.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-state-icon">📊</div>
-            <div>No records yet. Launch a token to start tracking!</div>
+          <div class="text-center py-12">
+            <div class="text-5xl mb-4">📊</div>
+            <div class="text-gray-500">No records yet. Launch a token to start tracking!</div>
           </div>
         `;
         return;
@@ -605,151 +276,50 @@
         const profitLoss = record.profitLoss || 0;
         const isPositive = profitLoss >= 0;
         const settings = record.launchSettings || {};
-        
-        // Get token image
-        const tokenImage = settings.tokenImageUrl 
-          ? (settings.tokenImageUrl.startsWith('http') 
-              ? settings.tokenImageUrl 
-              : `http://localhost:3001/image/${settings.tokenImageUrl.split('/').pop()}`)
-          : null;
-        
-        // Build links
-        const links = [];
-        if (settings.website) {
-          links.push(`<a href="${settings.website}" target="_blank" class="link-icon">🌐 Website</a>`);
-        }
-        if (settings.twitter) {
-          links.push(`<a href="https://twitter.com/${settings.twitter.replace('@', '')}" target="_blank" class="link-icon">🐦 Twitter</a>`);
-        }
-        if (settings.telegram) {
-          links.push(`<a href="${settings.telegram}" target="_blank" class="link-icon">💬 Telegram</a>`);
-        }
-        if (record.mintAddress) {
-          links.push(`<a href="https://pump.fun/${record.mintAddress}" target="_blank" class="link-icon">🚀 Pump.fun</a>`);
-          links.push(`<a href="https://solscan.io/token/${record.mintAddress}" target="_blank" class="link-icon">🔍 Solscan</a>`);
-        }
-        
         const date = new Date(record.timestamp).toLocaleString();
         
         return `
-          <div class="record-card">
-            <div class="record-header">
-              ${tokenImage ? `<img src="${tokenImage}" alt="${record.tokenName || 'Token'}" class="token-image" onerror="this.style.display='none'">` : ''}
-              <div class="token-info">
-                <div class="token-name">${record.tokenName || 'Unknown Token'}</div>
-                <div class="token-symbol">${record.tokenSymbol || 'N/A'}</div>
-                ${record.mintAddress ? `<div class="mint-address">${record.mintAddress}</div>` : ''}
-                ${links.length > 0 ? `<div class="token-links">${links.join('')}</div>` : ''}
-              </div>
-              <div class="profit-loss">
-                <div class="profit-loss-value ${isPositive ? 'positive' : 'negative'}">
-                  ${isPositive ? '+' : ''}${profitLoss.toFixed(4)} SOL
+          <div class="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-6">
+            <div class="flex items-start gap-6 mb-4">
+              ${settings.tokenImageUrl ? `<img src="${settings.tokenImageUrl}" class="w-20 h-20 rounded-lg object-cover border border-gray-700" />` : ''}
+              <div class="flex-1">
+                <div class="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 class="text-xl font-bold text-white">${record.tokenName || 'Unknown Token'}</h3>
+                    <div class="text-sm text-gray-400">${record.tokenSymbol || 'N/A'}</div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-2xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}">
+                      ${isPositive ? '+' : ''}${profitLoss.toFixed(4)} SOL
+                    </div>
+                    <span class="px-2 py-1 text-xs rounded ${
+                      record.status === 'completed' ? 'bg-green-900/50 text-green-400' : 
+                      record.status === 'failed' ? 'bg-red-900/50 text-red-400' : 
+                      'bg-yellow-900/50 text-yellow-400'
+                    }">${record.status.toUpperCase()}</span>
+                  </div>
                 </div>
-                <div class="profit-loss-label">${record.status === 'completed' ? 'Profit/Loss' : 'In Progress'}</div>
-                <div style="margin-top: 8px;">
-                  <span class="badge ${record.status}">${record.status.toUpperCase()}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div class="record-details">
-              <div class="detail-section">
-                <div class="detail-section-title">💰 Financials</div>
-                <div class="detail-item">
-                  <span class="detail-label">Balance Before</span>
-                  <span class="detail-value">${record.balanceBefore.toFixed(4)} SOL</span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Balance After</span>
-                  <span class="detail-value">${record.balanceAfter.toFixed(4)} SOL</span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Profit/Loss</span>
-                  <span class="detail-value ${isPositive ? 'positive' : 'negative'}">
-                    ${isPositive ? '+' : ''}${profitLoss.toFixed(4)} SOL
-                  </span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Date</span>
-                  <span class="detail-value">${date}</span>
-                </div>
-              </div>
-              
-              <div class="detail-section">
-                <div class="detail-section-title">🎯 Launch Strategy</div>
-                <div class="detail-item">
-                  <span class="detail-label">Creator Wallet</span>
-                  <span class="detail-value">
-                    <span class="badge ${settings.creatorWalletSource || 'auto-created'}">${(settings.creatorWalletSource || 'auto-created').toUpperCase()}</span>
-                  </span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Used Warmed Wallets</span>
-                  <span class="detail-value">
-                    <span class="badge ${settings.usedWarmedWallets ? 'true' : 'false'}">${settings.usedWarmedWallets ? 'YES' : 'NO'}</span>
-                  </span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Bundle Wallets</span>
-                  <span class="detail-value">${settings.bundleWalletCount || 0}</span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Holder Wallets</span>
-                  <span class="detail-value">${settings.holderWalletCount || 0}</span>
-                </div>
-              </div>
-              
-              <div class="detail-section">
-                <div class="detail-section-title">💵 Buy Amounts</div>
-                <div class="detail-item">
-                  <span class="detail-label">DEV Buy</span>
-                  <span class="detail-value">${settings.devBuyAmount?.toFixed(4) || '0'} SOL</span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Bundle Amounts</span>
-                  <span class="detail-value">${settings.bundleSwapAmounts?.length ? settings.bundleSwapAmounts.map(a => a.toFixed(2)).join(', ') + ' SOL' : 'N/A'}</span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Holder Amount</span>
-                  <span class="detail-value">${settings.holderWalletAmount?.toFixed(4) || '0'} SOL</span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Total Bundle SOL</span>
-                  <span class="detail-value">${settings.bundleSwapAmounts?.reduce((a, b) => a + b, 0).toFixed(4) || '0'} SOL</span>
-                </div>
-              </div>
-              
-              <div class="detail-section">
-                <div class="detail-section-title">⚙️ Features</div>
-                <div class="detail-item">
-                  <span class="detail-label">Auto Rapid Sell</span>
-                  <span class="detail-value"><span class="badge ${settings.autoRapidSell ? 'true' : 'false'}">${settings.autoRapidSell ? 'ON' : 'OFF'}</span></span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Auto Sell 50%</span>
-                  <span class="detail-value"><span class="badge ${settings.autoSell50Percent ? 'true' : 'false'}">${settings.autoSell50Percent ? 'ON' : 'OFF'}</span></span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Auto Gather</span>
-                  <span class="detail-value"><span class="badge ${settings.autoGather ? 'true' : 'false'}">${settings.autoGather ? 'ON' : 'OFF'}</span></span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">WebSocket Tracking</span>
-                  <span class="detail-value"><span class="badge ${settings.websocketTracking ? 'true' : 'false'}">${settings.websocketTracking ? 'ON' : 'OFF'}</span></span>
-                </div>
-                <div class="detail-item">
-                  <span class="detail-label">Mixing Wallets</span>
-                  <span class="detail-value"><span class="badge ${settings.useMixingWallets ? 'true' : 'false'}">${settings.useMixingWallets ? 'ON' : 'OFF'}</span></span>
+                <div class="text-xs text-gray-500 mb-3">${date}</div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div>
+                    <div class="text-gray-500">Balance Before</div>
+                    <div class="text-white font-medium">${record.balanceBefore.toFixed(4)} SOL</div>
+                  </div>
+                  <div>
+                    <div class="text-gray-500">Balance After</div>
+                    <div class="text-white font-medium">${record.balanceAfter.toFixed(4)} SOL</div>
+                  </div>
+                  <div>
+                    <div class="text-gray-500">Bundle Wallets</div>
+                    <div class="text-white font-medium">${settings.bundleWalletCount || 0}</div>
+                  </div>
+                  <div>
+                    <div class="text-gray-500">Holder Wallets</div>
+                    <div class="text-white font-medium">${settings.holderWalletCount || 0}</div>
+                  </div>
                 </div>
               </div>
             </div>
-            
-            ${settings.description ? `
-              <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #333;">
-                <div style="font-size: 12px; color: #888; margin-bottom: 8px;">Description</div>
-                <div style="color: #ccc; font-size: 14px; line-height: 1.5;">${settings.description}</div>
-              </div>
-            ` : ''}
           </div>
         `;
       }).join('');
@@ -765,23 +335,19 @@
       
       document.getElementById('analysisSection').style.display = 'block';
       
-      // Analyze patterns
       const patterns = analyzePatterns(completed);
       
       const patternGrid = document.getElementById('patternGrid');
       patternGrid.innerHTML = patterns.map(pattern => {
         const avgPL = pattern.avgProfitLoss;
         return `
-          <div class="pattern-card">
-            <div class="pattern-title">${pattern.name}</div>
-            <div class="pattern-stats">
-              <span class="pattern-count">${pattern.count} launches</span>
-              <span class="pattern-avg ${avgPL >= 0 ? 'positive' : 'negative'}">
-                ${avgPL >= 0 ? '+' : ''}${avgPL.toFixed(4)} SOL avg
+          <div class="bg-black/50 border border-gray-700 rounded-lg p-4">
+            <div class="text-sm font-medium text-white mb-2">${pattern.name}</div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-gray-500">${pattern.count} launches</span>
+              <span class="text-lg font-bold ${avgPL >= 0 ? 'text-green-400' : 'text-red-400'}">
+                ${avgPL >= 0 ? '+' : ''}${avgPL.toFixed(4)} SOL
               </span>
-            </div>
-            <div style="margin-top: 8px; font-size: 12px; color: #888;">
-              ${pattern.description}
             </div>
           </div>
         `;
@@ -791,185 +357,29 @@
     function analyzePatterns(records) {
       const patterns = [];
       
-      // Pattern 1: Warmed vs Fresh wallets
       const warmed = records.filter(r => r.launchSettings?.usedWarmedWallets);
       const fresh = records.filter(r => !r.launchSettings?.usedWarmedWallets);
       
       if (warmed.length > 0) {
-        const avg = warmed.reduce((sum, r) => sum + r.profitLoss, 0) / warmed.length;
         patterns.push({
           name: '🔥 Warmed Wallets',
           count: warmed.length,
-          avgProfitLoss: avg,
-          description: `Using pre-warmed wallets`
+          avgProfitLoss: warmed.reduce((sum, r) => sum + r.profitLoss, 0) / warmed.length
         });
       }
       
       if (fresh.length > 0) {
-        const avg = fresh.reduce((sum, r) => sum + r.profitLoss, 0) / fresh.length;
         patterns.push({
           name: '🆕 Fresh Wallets',
           count: fresh.length,
-          avgProfitLoss: avg,
-          description: `Creating fresh wallets per launch`
+          avgProfitLoss: fresh.reduce((sum, r) => sum + r.profitLoss, 0) / fresh.length
         });
       }
       
-      // Pattern 2: Creator wallet source
-      const warmedCreator = records.filter(r => r.launchSettings?.creatorWalletSource === 'warmed');
-      const envCreator = records.filter(r => r.launchSettings?.creatorWalletSource === 'env');
-      const autoCreator = records.filter(r => r.launchSettings?.creatorWalletSource === 'auto-created');
-      
-      if (warmedCreator.length > 0) {
-        const avg = warmedCreator.reduce((sum, r) => sum + r.profitLoss, 0) / warmedCreator.length;
-        patterns.push({
-          name: '🔥 Warmed Creator',
-          count: warmedCreator.length,
-          avgProfitLoss: avg,
-          description: `Creator wallet from warmed pool`
-        });
-      }
-      
-      if (envCreator.length > 0) {
-        const avg = envCreator.reduce((sum, r) => sum + r.profitLoss, 0) / envCreator.length;
-        patterns.push({
-          name: '💾 Env Creator',
-          count: envCreator.length,
-          avgProfitLoss: avg,
-          description: `Creator wallet from BUYER_WALLET env`
-        });
-      }
-      
-      if (autoCreator.length > 0) {
-        const avg = autoCreator.reduce((sum, r) => sum + r.profitLoss, 0) / autoCreator.length;
-        patterns.push({
-          name: '⚡ Auto Creator',
-          count: autoCreator.length,
-          avgProfitLoss: avg,
-          description: `Auto-created creator wallet`
-        });
-      }
-      
-      // Pattern 3: DEV buy amount ranges
-      const lowDev = records.filter(r => {
-        const amount = r.launchSettings?.devBuyAmount || 0;
-        return amount > 0 && amount < 0.2;
-      });
-      const medDev = records.filter(r => {
-        const amount = r.launchSettings?.devBuyAmount || 0;
-        return amount >= 0.2 && amount < 0.5;
-      });
-      const highDev = records.filter(r => {
-        const amount = r.launchSettings?.devBuyAmount || 0;
-        return amount >= 0.5;
-      });
-      
-      if (lowDev.length > 0) {
-        const avg = lowDev.reduce((sum, r) => sum + r.profitLoss, 0) / lowDev.length;
-        patterns.push({
-          name: '💰 Low DEV Buy (<0.2 SOL)',
-          count: lowDev.length,
-          avgProfitLoss: avg,
-          description: `Small creator wallet buy`
-        });
-      }
-      
-      if (medDev.length > 0) {
-        const avg = medDev.reduce((sum, r) => sum + r.profitLoss, 0) / medDev.length;
-        patterns.push({
-          name: '💰💰 Medium DEV Buy (0.2-0.5 SOL)',
-          count: medDev.length,
-          avgProfitLoss: avg,
-          description: `Medium creator wallet buy`
-        });
-      }
-      
-      if (highDev.length > 0) {
-        const avg = highDev.reduce((sum, r) => sum + r.profitLoss, 0) / highDev.length;
-        patterns.push({
-          name: '💰💰💰 High DEV Buy (≥0.5 SOL)',
-          count: highDev.length,
-          avgProfitLoss: avg,
-          description: `Large creator wallet buy`
-        });
-      }
-      
-      // Pattern 4: Bundle wallet count
-      const lowBundle = records.filter(r => {
-        const count = r.launchSettings?.bundleWalletCount || 0;
-        return count > 0 && count <= 4;
-      });
-      const medBundle = records.filter(r => {
-        const count = r.launchSettings?.bundleWalletCount || 0;
-        return count > 4 && count <= 6;
-      });
-      const highBundle = records.filter(r => {
-        const count = r.launchSettings?.bundleWalletCount || 0;
-        return count > 6;
-      });
-      
-      if (lowBundle.length > 0) {
-        const avg = lowBundle.reduce((sum, r) => sum + r.profitLoss, 0) / lowBundle.length;
-        patterns.push({
-          name: '📦 Low Bundle Count (≤4)',
-          count: lowBundle.length,
-          avgProfitLoss: avg,
-          description: `Fewer bundle wallets`
-        });
-      }
-      
-      if (medBundle.length > 0) {
-        const avg = medBundle.reduce((sum, r) => sum + r.profitLoss, 0) / medBundle.length;
-        patterns.push({
-          name: '📦📦 Medium Bundle Count (5-6)',
-          count: medBundle.length,
-          avgProfitLoss: avg,
-          description: `Standard bundle wallet count`
-        });
-      }
-      
-      if (highBundle.length > 0) {
-        const avg = highBundle.reduce((sum, r) => sum + r.profitLoss, 0) / highBundle.length;
-        patterns.push({
-          name: '📦📦📦 High Bundle Count (>6)',
-          count: highBundle.length,
-          avgProfitLoss: avg,
-          description: `Many bundle wallets`
-        });
-      }
-      
-      // Pattern 5: Auto features
-      const autoRapidSell = records.filter(r => r.launchSettings?.autoRapidSell);
-      const noAutoRapidSell = records.filter(r => !r.launchSettings?.autoRapidSell);
-      
-      if (autoRapidSell.length > 0) {
-        const avg = autoRapidSell.reduce((sum, r) => sum + r.profitLoss, 0) / autoRapidSell.length;
-        patterns.push({
-          name: '⚡ Auto Rapid Sell ON',
-          count: autoRapidSell.length,
-          avgProfitLoss: avg,
-          description: `Automatic rapid sell enabled`
-        });
-      }
-      
-      if (noAutoRapidSell.length > 0) {
-        const avg = noAutoRapidSell.reduce((sum, r) => sum + r.profitLoss, 0) / noAutoRapidSell.length;
-        patterns.push({
-          name: '⏸️ Auto Rapid Sell OFF',
-          count: noAutoRapidSell.length,
-          avgProfitLoss: avg,
-          description: `Manual rapid sell`
-        });
-      }
-      
-      // Sort by count (most data first)
       return patterns.sort((a, b) => b.count - a.count);
     }
     
-    // Load data on page load
     loadData();
-    
-    // Auto-refresh every 30 seconds
     setInterval(loadData, 30000);
   </script>
 </body>
