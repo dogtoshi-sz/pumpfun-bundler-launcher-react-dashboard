@@ -167,6 +167,10 @@ export default function TokenLaunch({ onLaunch }) {
   const [selectedHolderAutoBuyIndices, setSelectedHolderAutoBuyIndices] = useState([]); // For fresh wallets: store indices instead of addresses
   const [holderAutoBuyGroups, setHolderAutoBuyGroups] = useState([{ count: 1, delay: 0.1 }]);
   const [selectedCreatorWallet, setSelectedCreatorWallet] = useState(null);
+  
+  // Mixed Mode: Track holder wallet types (warmed or fresh) per position
+  const [useMixedHolderMode, setUseMixedHolderMode] = useState(false);
+  const [holderWalletTypes, setHolderWalletTypes] = useState([]); // Array of {type: 'warmed'|'fresh', address?: string}
   const [loadingWarmedWallets, setLoadingWarmedWallets] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
   // Filter and sort state for wallet modal
@@ -1910,6 +1914,16 @@ export default function TokenLaunch({ onLaunch }) {
           <h2 className="text-xl font-bold text-white">Launch Token</h2>
         </div>
         <div className="flex items-center gap-2">
+          <a
+            href="http://localhost:3001/profit-loss"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+            title="View Profit/Loss Dashboard"
+          >
+            <CurrencyDollarIcon className="w-4 h-4" />
+            📊 P/L Dashboard
+          </a>
           <button
             type="button"
             onClick={exportConfigAsJSON}
