@@ -5,6 +5,7 @@ import dotenv from "dotenv"
 import { readJson, retrieveEnvVariable, getDataDirectory } from "./utils"
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
+import { completeRunTracking, getLatestRecord } from "./lib/profit-loss-tracker";
 
 // CRITICAL: Reload .env file to ensure we get the latest PRIVATE_KEY
 // This prevents using stale values from process.env
@@ -334,6 +335,17 @@ async function gatherAllWallets() {
     failed.forEach(f => {
       console.log(`   - ${f.address}: ${f.error}`)
     })
+  }
+  
+  // Complete profit/loss tracking if there's an in-progress run
+  try {
+    const latestRecord = getLatestRecord();
+    if (latestRecord && latestRecord.status === 'in_progress') {
+      console.log(`\n📊 Completing profit/loss tracking for run: ${latestRecord.id}`)
+      await completeRunTracking(connection, mainKp.publicKey, latestRecord.id, 'completed', 'Gather-all completed manually');
+    }
+  } catch (error: any) {
+    console.warn(`[ProfitLoss] Failed to complete tracking after gather-all: ${error.message}`);
   }
 }
 
