@@ -130,7 +130,7 @@ function App() {
     { id: 'launch', name: 'Launch', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, component: TokenLaunch },
     { id: 'holders', name: 'Terminal', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
     { id: 'warming', name: 'Warming', icon: CpuChipIcon, iconSolid: CpuChipIconSolid, component: WalletWarming },
-    { id: 'test', name: 'Test', icon: BeakerIcon, iconSolid: BeakerIconSolid, component: WalletTester },
+    { id: 'pnl', name: 'PnL', icon: null, iconSolid: null, component: null, isExternal: true, url: 'http://localhost:3001/profit-loss' },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid, component: Settings },
   ];
 
@@ -167,6 +167,22 @@ function App() {
                 </div>
                 <nav className="flex gap-1">
                   {tabs.filter(tab => tab.id !== 'settings').map((tab) => {
+                    if (tab.isExternal) {
+                      return (
+                        <a
+                          key={tab.id}
+                          href={tab.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 text-gray-400 hover:text-white hover:bg-gray-900/50"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          <span>{tab.name}</span>
+                        </a>
+                      );
+                    }
                     const Icon = activeTab === tab.id ? tab.iconSolid : tab.icon;
                     return (
                       <button
