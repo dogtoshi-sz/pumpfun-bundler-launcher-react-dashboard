@@ -1,107 +1,55 @@
-// Wrapper script to call TypeScript trading functions from Node.js
-const { exec } = require('child_process');
-const { promisify } = require('util');
+// FAST wrapper - uses direct require instead of spawning processes
+// Register ts-node once at startup for direct TypeScript imports
 const path = require('path');
-const execAsync = promisify(exec);
+const projectRoot = path.join(__dirname, '..');
+
+// Register ts-node/esm loader for TypeScript imports
+require('ts-node').register({
+  project: path.join(projectRoot, 'tsconfig.ts-node.json'),
+  transpileOnly: true,
+  compilerOptions: {
+    module: 'commonjs',
+    esModuleInterop: true
+  }
+});
+
+// Cache the imported module to avoid re-importing each time
+let tradingTerminal = null;
+
+function getTradingTerminal() {
+  if (!tradingTerminal) {
+    try {
+      tradingTerminal = require(path.join(projectRoot, 'trading-terminal.ts'));
+      console.log('[Trading] ✅ Trading terminal loaded (fast mode)');
+    } catch (e) {
+      console.error('[Trading] ❌ Failed to load trading-terminal:', e.message);
+      throw e;
+    }
+  }
+  return tradingTerminal;
+}
 
 async function callTradingFunction(functionName, ...args) {
-  const projectRoot = path.join(__dirname, '..');
-  const fs = require('fs');
-  
-  // Create a temporary TypeScript file in project root to avoid import path issues
-  const tempFile = path.join(projectRoot, `temp-trading-${Date.now()}.ts`);
-  
-  // Escape args properly for JSON
-  const argsJson = JSON.stringify(args);
-  
-  const scriptContent = `import { ${functionName} } from './trading-terminal';
-
-const args = ${argsJson};
-${functionName}(...args)
-  .then((r) => {
-    console.log('RESULT:' + JSON.stringify(r));
-    process.exit(0);
-  })
-  .catch((e) => {
-    console.error('ERROR:', e.message);
-    process.exit(1);
-  });
-`;
-  
   try {
-    // Write temporary file
-    fs.writeFileSync(tempFile, scriptContent, 'utf8');
+    const terminal = getTradingTerminal();
+    const fn = terminal[functionName];
     
-    // Use ts-node with a tsconfig that supports commonjs (required for ts-node)
-    const tsconfigPath = path.join(projectRoot, 'tsconfig.ts-node.json');
-    const command = `npx ts-node --project "${tsconfigPath}" --transpile-only "${tempFile}"`;
-    
-    const { stdout, stderr } = await execAsync(command, { 
-      cwd: projectRoot,
-      maxBuffer: 10 * 1024 * 1024,
-      shell: true,
-      env: { 
-        ...process.env, 
-        NODE_ENV: process.env.NODE_ENV || 'development'
-      }
-    });
-    
-    // Clean up temp file
-    try {
-      fs.unlinkSync(tempFile);
-    } catch (e) {
-      // Ignore cleanup errors
+    if (typeof fn !== 'function') {
+      throw new Error(`Function ${functionName} not found in trading-terminal`);
     }
     
-    // Check for errors in stderr
-    if (stderr) {
-      // ts-node often outputs to stderr even on success, so check for actual errors
-      if (stderr.includes('ERROR:') || stderr.includes('Error:')) {
-        const errorMatch = stderr.match(/ERROR:\s*(.+)/i) || stderr.match(/Error:\s*(.+)/i);
-        throw new Error(errorMatch ? errorMatch[1] : stderr);
-      }
-    }
+    console.log(`[Trading] ⚡ Calling ${functionName} directly (no process spawn)`);
+    const startTime = Date.now();
     
-    // Extract JSON result from stdout
-    const resultMatch = stdout.match(/RESULT:(.+)/);
-    if (resultMatch) {
-      try {
-        return JSON.parse(resultMatch[1]);
-      } catch (e) {
-        // If parsing fails, return the raw output
-        return { success: true, message: 'Transaction sent', output: stdout };
-      }
-    }
+    const result = await fn(...args);
     
-    // If no RESULT found, check if there's an error in stdout
-    if (stdout.includes('ERROR:')) {
-      const errorMatch = stdout.match(/ERROR:\s*(.+)/i);
-      throw new Error(errorMatch ? errorMatch[1] : stdout);
-    }
+    const elapsed = Date.now() - startTime;
+    console.log(`[Trading] ✅ ${functionName} completed in ${elapsed}ms`);
     
-    return { success: true, message: 'Transaction sent', output: stdout };
+    return result;
   } catch (error) {
-    // Clean up temp file on error
-    try {
-      if (fs.existsSync(tempFile)) {
-        fs.unlinkSync(tempFile);
-      }
-    } catch (e) {
-      // Ignore cleanup errors
-    }
-    
-    // Extract error message
-    let errorMessage = error.message || 'Unknown error';
-    if (error.stderr) {
-      const errorMatch = error.stderr.match(/ERROR:\s*(.+)/i);
-      if (errorMatch) {
-        errorMessage = errorMatch[1];
-      } else if (error.stderr.includes('Error')) {
-        errorMessage = error.stderr;
-      }
-    }
-    
-    throw new Error(errorMessage);
+    console.error(`[Trading] ❌ ${functionName} failed:`, error.message);
+    throw error;
   }
 }
 
@@ -126,4 +74,3 @@ if (require.main === module) {
 }
 
 module.exports = { callTradingFunction };
-

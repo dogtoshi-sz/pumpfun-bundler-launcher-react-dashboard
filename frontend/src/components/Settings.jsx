@@ -11,6 +11,7 @@ import {
   BellIcon
 } from '@heroicons/react/24/outline';
 import apiService from '../services/api';
+import MarketingAccounts from './MarketingAccounts';
 
 export default function Settings() {
   const [settings, setSettings] = useState({});
@@ -152,6 +153,11 @@ export default function Settings() {
         { key: 'HOLDER_INTERMEDIARY_HOPS', label: 'Holder Intermediary Hops', type: 'number', description: 'Number of intermediary wallets to route through for holder wallets (0-5, default: 2). Higher = more privacy but slower.', inputProps: { min: '0', max: '5', step: '1' } },
       ],
     },
+    marketing: {
+      title: 'Marketing Accounts',
+      description: 'Manage Twitter and Telegram API accounts.',
+      component: MarketingAccounts, // Render custom component
+    },
     options: {
       title: 'Options',
       icon: Cog6ToothIcon,
@@ -259,14 +265,22 @@ export default function Settings() {
       <div className="mb-6">
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-3">
-            <SectionIcon className="w-6 h-6 text-blue-400" />
+            {SectionIcon && <SectionIcon className="w-6 h-6 text-blue-400" />}
             <h2 className="text-2xl font-bold text-white">{activeSectionData.title}</h2>
           </div>
         </div>
         <p className="text-sm text-gray-500">{activeSectionData.description}</p>
       </div>
 
+      {/* Custom Component (for Marketing Accounts) */}
+      {activeSectionData.component && (
+        <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-6 mb-6">
+          <activeSectionData.component />
+        </div>
+      )}
+
       {/* Settings Content */}
+      {activeSectionData.settings && (
       <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-6 mb-6">
         <div className="space-y-4">
           {activeSectionData.settings.map((setting) => {
@@ -340,8 +354,10 @@ export default function Settings() {
           })}
         </div>
       </div>
+      )}
 
-      {/* Action Buttons */}
+      {/* Action Buttons - Only show for settings sections (not custom components) */}
+      {activeSectionData.settings && (
       <div className="flex justify-end gap-3">
         <button
           onClick={loadSettings}
@@ -374,6 +390,7 @@ export default function Settings() {
           )}
         </button>
       </div>
+      )}
     </div>
   );
 }

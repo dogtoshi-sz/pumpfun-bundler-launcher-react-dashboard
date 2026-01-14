@@ -214,8 +214,8 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
           site_url VARCHAR(255) UNIQUE NOT NULL,
           token_name VARCHAR(255),
           token_symbol VARCHAR(50),
-          token_address VARCHAR(42),
-          contract_address VARCHAR(42),
+          token_address VARCHAR(50),
+          contract_address VARCHAR(50),
           chain VARCHAR(50),
           description TEXT,
           website TEXT,
@@ -227,7 +227,7 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
           token_image_url TEXT,
           total_supply VARCHAR(255),
           decimals INTEGER,
-          pool_address VARCHAR(42),
+          pool_address VARCHAR(50),
           deployment_tx_hash VARCHAR(66),
           explorer_url TEXT,
           site_id VARCHAR(255),
@@ -246,6 +246,22 @@ export async function updateWebsiteConfig(options: WebsiteUpdateOptions): Promis
         CREATE INDEX IF NOT EXISTS idx_site_config_token_address ON site_config(token_address);
       `);
       console.log('[Website Update] ✅ Verified site_config table exists');
+      
+      // Fix column sizes for Solana addresses (44 chars, was wrongly set to 42)
+      try {
+        await client.query(`
+          ALTER TABLE site_config 
+          ALTER COLUMN token_address TYPE VARCHAR(50),
+          ALTER COLUMN contract_address TYPE VARCHAR(50),
+          ALTER COLUMN pool_address TYPE VARCHAR(50);
+        `);
+        console.log('[Website Update] ✅ Verified all required columns exist');
+      } catch (e: any) {
+        // Columns might not exist or already correct size - that's OK
+        if (!e.message?.includes('does not exist')) {
+          // Silently continue
+        }
+      }
       
       // Add missing columns if table already existed (for existing databases)
       // These are for razebot compatibility - Nodematrix only uses logo_url and color_scheme

@@ -104,3 +104,19 @@ code {
 ::-webkit-scrollbar-thumb:hover {
   background: #2a2a2a;
 }
+
+/* Slide-up animation for toasts */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out forwards;
+}

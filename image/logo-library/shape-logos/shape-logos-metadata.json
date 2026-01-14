@@ -1,0 +1,4916 @@
+{
+  "generatedAt": "2026-01-11T07:49:39.926Z",
+  "totalLogos": 64,
+  "logos": {
+    "54AllinOneLogos_0000s_0001s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0001s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 104,
+        "height": 104,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 160,
+          "g": 160,
+          "b": 128,
+          "count": 147,
+          "hex": "#a0a080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 192,
+          "g": 128,
+          "b": 128,
+          "count": 80,
+          "hex": "#c08080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 224,
+          "g": 128,
+          "b": 96,
+          "count": 78,
+          "hex": "#e08060",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 160,
+            "g": 160,
+            "b": 128,
+            "count": 147,
+            "hex": "#a0a080",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 128,
+            "b": 128,
+            "count": 80,
+            "hex": "#c08080",
+            "name": "gray"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 96,
+            "count": 78,
+            "hex": "#e08060",
+            "name": "gray"
+          },
+          {
+            "r": 128,
+            "g": 160,
+            "b": 160,
+            "count": 65,
+            "hex": "#80a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 128,
+            "b": 96,
+            "count": 52,
+            "hex": "#c08060",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 166,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "50.8",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#a0a080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0002s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0002s_0000__Group_.png",
+      "dimensions": {
+        "width": 88,
+        "height": 102,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 110,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 106,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 64,
+          "b": 96,
+          "count": 76,
+          "hex": "#e04060",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 110,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 106,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 76,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 75,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 54,
+            "hex": "#c02060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 142,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "59.9",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e08040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0003s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0003s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 99,
+        "height": 83,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 128,
+          "g": 96,
+          "b": 128,
+          "count": 101,
+          "hex": "#806080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 128,
+          "b": 160,
+          "count": 89,
+          "hex": "#6080a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 160,
+          "g": 64,
+          "b": 128,
+          "count": 82,
+          "hex": "#a04080",
+          "name": "purple"
+        },
+        "all": [
+          {
+            "r": 128,
+            "g": 96,
+            "b": 128,
+            "count": 101,
+            "hex": "#806080",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 160,
+            "count": 89,
+            "hex": "#6080a0",
+            "name": "gray"
+          },
+          {
+            "r": 160,
+            "g": 64,
+            "b": 128,
+            "count": 82,
+            "hex": "#a04080",
+            "name": "purple"
+          },
+          {
+            "r": 160,
+            "g": 64,
+            "b": 96,
+            "count": 70,
+            "hex": "#a04060",
+            "name": "brown"
+          },
+          {
+            "r": 128,
+            "g": 96,
+            "b": 160,
+            "count": 66,
+            "hex": "#8060a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 124,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "44.2",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#806080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0004s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0004s_0000__Group_.png",
+      "dimensions": {
+        "width": 98,
+        "height": 111,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 96,
+          "g": 192,
+          "b": 160,
+          "count": 157,
+          "hex": "#60c0a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 192,
+          "b": 128,
+          "count": 129,
+          "hex": "#60c080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 64,
+          "g": 160,
+          "b": 160,
+          "count": 86,
+          "hex": "#40a0a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 96,
+            "g": 192,
+            "b": 160,
+            "count": 157,
+            "hex": "#60c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 128,
+            "count": 129,
+            "hex": "#60c080",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 160,
+            "count": 86,
+            "hex": "#40a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 192,
+            "b": 160,
+            "count": 54,
+            "hex": "#40c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 37,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 161,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.2",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#60c0a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0006s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0006s_0000__Group_.png",
+      "dimensions": {
+        "width": 130,
+        "height": 128,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 32,
+          "b": 32,
+          "count": 305,
+          "hex": "#e02020",
+          "name": "red"
+        },
+        "secondary": null,
+        "accent": null,
+        "all": [
+          {
+            "r": 224,
+            "g": 32,
+            "b": 32,
+            "count": 305,
+            "hex": "#e02020",
+            "name": "red"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 113,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "70.2",
+        "isTransparent": true
+      },
+      "primaryColor": "red",
+      "primaryHex": "#e02020",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0007s_0000s_0001__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0007s_0000s_0001__Group_.png",
+      "dimensions": {
+        "width": 43,
+        "height": 92,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 183,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 160,
+          "count": 156,
+          "hex": "#0080a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 0,
+          "g": 64,
+          "b": 160,
+          "count": 69,
+          "hex": "#0040a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 183,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 160,
+            "count": 156,
+            "hex": "#0080a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 160,
+            "count": 69,
+            "hex": "#0040a0",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 46,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 160,
+            "b": 192,
+            "count": 29,
+            "hex": "#00a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 99,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "62.7",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0007s_0000s_0002__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0007s_0000s_0002__Group_.png",
+      "dimensions": {
+        "width": 44,
+        "height": 92,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 130,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 160,
+          "count": 113,
+          "hex": "#0080a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 0,
+          "g": 64,
+          "b": 160,
+          "count": 53,
+          "hex": "#0040a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 130,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 160,
+            "count": 113,
+            "hex": "#0080a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 160,
+            "count": 53,
+            "hex": "#0040a0",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 35,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 160,
+            "b": 192,
+            "count": 21,
+            "hex": "#00a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 99,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "63.7",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0008s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0008s_0000__Group_.png",
+      "dimensions": {
+        "width": 86,
+        "height": 92,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 160,
+          "g": 160,
+          "b": 96,
+          "count": 89,
+          "hex": "#a0a060",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 128,
+          "b": 160,
+          "count": 87,
+          "hex": "#4080a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 128,
+          "g": 160,
+          "b": 128,
+          "count": 65,
+          "hex": "#80a080",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 160,
+            "g": 160,
+            "b": 96,
+            "count": 89,
+            "hex": "#a0a060",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 128,
+            "b": 160,
+            "count": 87,
+            "hex": "#4080a0",
+            "name": "gray"
+          },
+          {
+            "r": 128,
+            "g": 160,
+            "b": 128,
+            "count": 65,
+            "hex": "#80a080",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 160,
+            "b": 128,
+            "count": 30,
+            "hex": "#60a080",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 128,
+            "count": 25,
+            "hex": "#608080",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 152,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "65.0",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#a0a060",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0009s_0000__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0009s_0000__Path_.png",
+      "dimensions": {
+        "width": 74,
+        "height": 83,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 160,
+          "g": 96,
+          "b": 160,
+          "count": 88,
+          "hex": "#a060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 128,
+          "g": 96,
+          "b": 160,
+          "count": 86,
+          "hex": "#8060a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 96,
+          "g": 128,
+          "b": 160,
+          "count": 64,
+          "hex": "#6080a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 160,
+            "g": 96,
+            "b": 160,
+            "count": 88,
+            "hex": "#a060a0",
+            "name": "gray"
+          },
+          {
+            "r": 128,
+            "g": 96,
+            "b": 160,
+            "count": 86,
+            "hex": "#8060a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 160,
+            "count": 64,
+            "hex": "#6080a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 128,
+            "b": 192,
+            "count": 44,
+            "hex": "#4080c0",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 64,
+            "b": 128,
+            "count": 40,
+            "hex": "#c04080",
+            "name": "purple"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 133,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "58.7",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#a060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0010s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0010s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 96,
+        "height": 101,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 155,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 148,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "accent": {
+          "r": 224,
+          "g": 64,
+          "b": 96,
+          "count": 102,
+          "hex": "#e04060",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 155,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 148,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 102,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 76,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 30,
+            "hex": "#c02060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 143,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "50.0",
+        "isTransparent": true
+      },
+      "primaryColor": "brown",
+      "primaryHex": "#e06060",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0011s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0011s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 87,
+        "height": 101,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 96,
+          "b": 160,
+          "count": 191,
+          "hex": "#4060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 64,
+          "b": 160,
+          "count": 148,
+          "hex": "#6040a0",
+          "name": "purple"
+        },
+        "accent": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 110,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 191,
+            "hex": "#4060a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 64,
+            "b": 160,
+            "count": 148,
+            "hex": "#6040a0",
+            "name": "purple"
+          },
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 110,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 64,
+            "b": 160,
+            "count": 67,
+            "hex": "#4040a0",
+            "name": "purple"
+          },
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 5,
+            "hex": "#0060a0",
+            "name": "blue"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 101,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "52.1",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#4060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0012s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0012s_0000__Group_.png",
+      "dimensions": {
+        "width": 95,
+        "height": 113,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 90,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 192,
+          "count": 74,
+          "hex": "#0080c0",
+          "name": "cyan"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 34,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 90,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 74,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 34,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 34,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 31,
+            "hex": "#2080c0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 112,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "74.2",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0013s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0013s_0000__Group_.png",
+      "dimensions": {
+        "width": 87,
+        "height": 102,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 105,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 160,
+          "b": 224,
+          "count": 76,
+          "hex": "#20a0e0",
+          "name": "cyan"
+        },
+        "accent": {
+          "r": 0,
+          "g": 128,
+          "b": 192,
+          "count": 63,
+          "hex": "#0080c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 105,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 76,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 63,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 39,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 128,
+            "count": 34,
+            "hex": "#004080",
+            "name": "blue"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 111,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "68.0",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0014s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0014s_0000__Group_.png",
+      "dimensions": {
+        "width": 101,
+        "height": 103,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 113,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 160,
+          "count": 106,
+          "hex": "#0080a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 0,
+          "g": 64,
+          "b": 160,
+          "count": 94,
+          "hex": "#0040a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 113,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 160,
+            "count": 106,
+            "hex": "#0080a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 160,
+            "count": 94,
+            "hex": "#0040a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 160,
+            "b": 192,
+            "count": 49,
+            "hex": "#00a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 19,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 97,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "62.5",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0015s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0015s_0000__Group_.png",
+      "dimensions": {
+        "width": 90,
+        "height": 101,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 96,
+          "g": 192,
+          "b": 128,
+          "count": 139,
+          "hex": "#60c080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 192,
+          "b": 160,
+          "count": 117,
+          "hex": "#60c0a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 64,
+          "g": 160,
+          "b": 160,
+          "count": 87,
+          "hex": "#40a0a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 96,
+            "g": 192,
+            "b": 128,
+            "count": 139,
+            "hex": "#60c080",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 160,
+            "count": 117,
+            "hex": "#60c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 160,
+            "count": 87,
+            "hex": "#40a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 63,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 64,
+            "g": 192,
+            "b": 160,
+            "count": 26,
+            "hex": "#40c0a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 160,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "53.1",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#60c080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0016s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0016s_0000__Group_.png",
+      "dimensions": {
+        "width": 101,
+        "height": 101,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 128,
+          "g": 64,
+          "b": 128,
+          "count": 87,
+          "hex": "#804080",
+          "name": "purple"
+        },
+        "secondary": {
+          "r": 160,
+          "g": 64,
+          "b": 128,
+          "count": 67,
+          "hex": "#a04080",
+          "name": "purple"
+        },
+        "accent": {
+          "r": 192,
+          "g": 64,
+          "b": 128,
+          "count": 63,
+          "hex": "#c04080",
+          "name": "purple"
+        },
+        "all": [
+          {
+            "r": 128,
+            "g": 64,
+            "b": 128,
+            "count": 87,
+            "hex": "#804080",
+            "name": "purple"
+          },
+          {
+            "r": 160,
+            "g": 64,
+            "b": 128,
+            "count": 67,
+            "hex": "#a04080",
+            "name": "purple"
+          },
+          {
+            "r": 192,
+            "g": 64,
+            "b": 128,
+            "count": 63,
+            "hex": "#c04080",
+            "name": "purple"
+          },
+          {
+            "r": 224,
+            "g": 32,
+            "b": 96,
+            "count": 54,
+            "hex": "#e02060",
+            "name": "brown"
+          },
+          {
+            "r": 192,
+            "g": 64,
+            "b": 96,
+            "count": 49,
+            "hex": "#c04060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 113,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "61.8",
+        "isTransparent": true
+      },
+      "primaryColor": "purple",
+      "primaryHex": "#804080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0017s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0017s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 121,
+        "height": 113,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 160,
+          "b": 64,
+          "count": 91,
+          "hex": "#e0a040",
+          "name": "orange"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 86,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "accent": {
+          "r": 224,
+          "g": 96,
+          "b": 64,
+          "count": 76,
+          "hex": "#e06040",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 160,
+            "b": 64,
+            "count": 91,
+            "hex": "#e0a040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 86,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 76,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 64,
+            "count": 70,
+            "hex": "#e04040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 32,
+            "b": 64,
+            "count": 49,
+            "hex": "#e02040",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 155,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "58.3",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e0a040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0018s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0018s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 118,
+        "height": 98,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 160,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 64,
+          "b": 128,
+          "count": 105,
+          "hex": "#004080",
+          "name": "blue"
+        },
+        "accent": {
+          "r": 0,
+          "g": 128,
+          "b": 192,
+          "count": 90,
+          "hex": "#0080c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 160,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 128,
+            "count": 105,
+            "hex": "#004080",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 90,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 71,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 23,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 101,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "53.8",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0019s_0000__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0019s_0000__Path_.png",
+      "dimensions": {
+        "width": 113,
+        "height": 113,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 128,
+          "g": 160,
+          "b": 160,
+          "count": 77,
+          "hex": "#80a0a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 160,
+          "g": 160,
+          "b": 128,
+          "count": 70,
+          "hex": "#a0a080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 64,
+          "g": 192,
+          "b": 192,
+          "count": 63,
+          "hex": "#40c0c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 128,
+            "g": 160,
+            "b": 160,
+            "count": 77,
+            "hex": "#80a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 160,
+            "g": 160,
+            "b": 128,
+            "count": 70,
+            "hex": "#a0a080",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 192,
+            "b": 192,
+            "count": 63,
+            "hex": "#40c0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 96,
+            "count": 53,
+            "hex": "#e08060",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 128,
+            "b": 96,
+            "count": 37,
+            "hex": "#c08060",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 164,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "61.2",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#80a0a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0020s_0000s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0020s_0000s_0000__Group_.png",
+      "dimensions": {
+        "width": 97,
+        "height": 88,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 64,
+          "b": 96,
+          "count": 388,
+          "hex": "#204060",
+          "name": "black"
+        },
+        "secondary": null,
+        "accent": null,
+        "all": [
+          {
+            "r": 32,
+            "g": 64,
+            "b": 96,
+            "count": 388,
+            "hex": "#204060",
+            "name": "black"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 64,
+        "level": "dark"
+      },
+      "transparency": {
+        "transparencyPercent": "63.6",
+        "isTransparent": true
+      },
+      "primaryColor": "black",
+      "primaryHex": "#204060",
+      "brightnessLevel": "dark",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0020s_0000s_0001__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0020s_0000s_0001__Path_.png",
+      "dimensions": {
+        "width": 49,
+        "height": 48,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 160,
+          "b": 64,
+          "count": 885,
+          "hex": "#40a040",
+          "name": "gray"
+        },
+        "secondary": null,
+        "accent": null,
+        "all": [
+          {
+            "r": 64,
+            "g": 160,
+            "b": 64,
+            "count": 885,
+            "hex": "#40a040",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 130,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "24.5",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#40a040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0021s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0021s_0000__Group_.png",
+      "dimensions": {
+        "width": 111,
+        "height": 88,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 160,
+          "g": 160,
+          "b": 128,
+          "count": 98,
+          "hex": "#a0a080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 192,
+          "g": 128,
+          "b": 128,
+          "count": 75,
+          "hex": "#c08080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 128,
+          "g": 160,
+          "b": 160,
+          "count": 71,
+          "hex": "#80a0a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 160,
+            "g": 160,
+            "b": 128,
+            "count": 98,
+            "hex": "#a0a080",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 128,
+            "b": 128,
+            "count": 75,
+            "hex": "#c08080",
+            "name": "gray"
+          },
+          {
+            "r": 128,
+            "g": 160,
+            "b": 160,
+            "count": 71,
+            "hex": "#80a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 160,
+            "b": 160,
+            "count": 41,
+            "hex": "#60a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 128,
+            "b": 96,
+            "count": 35,
+            "hex": "#c08060",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 166,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "63.3",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#a0a080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0022s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0022s_0000__Group_.png",
+      "dimensions": {
+        "width": 113,
+        "height": 113,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 96,
+          "g": 192,
+          "b": 160,
+          "count": 105,
+          "hex": "#60c0a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 192,
+          "b": 128,
+          "count": 103,
+          "hex": "#60c080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 64,
+          "g": 160,
+          "b": 160,
+          "count": 85,
+          "hex": "#40a0a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 96,
+            "g": 192,
+            "b": 160,
+            "count": 105,
+            "hex": "#60c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 128,
+            "count": 103,
+            "hex": "#60c080",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 160,
+            "count": 85,
+            "hex": "#40a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 64,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 64,
+            "g": 192,
+            "b": 160,
+            "count": 58,
+            "hex": "#40c0a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 160,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "59.0",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#60c0a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0023s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0023s_0000__Group_.png",
+      "dimensions": {
+        "width": 110,
+        "height": 101,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 96,
+          "g": 192,
+          "b": 128,
+          "count": 134,
+          "hex": "#60c080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 160,
+          "b": 160,
+          "count": 85,
+          "hex": "#40a0a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 96,
+          "g": 192,
+          "b": 160,
+          "count": 78,
+          "hex": "#60c0a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 96,
+            "g": 192,
+            "b": 128,
+            "count": 134,
+            "hex": "#60c080",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 160,
+            "count": 85,
+            "hex": "#40a0a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 160,
+            "count": 78,
+            "hex": "#60c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 192,
+            "b": 160,
+            "count": 33,
+            "hex": "#40c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 30,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 161,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "62.5",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#60c080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0024s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0024s_0000__Group_.png",
+      "dimensions": {
+        "width": 132,
+        "height": 86,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 253,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 228,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 52,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 253,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 228,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 52,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 42,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 160,
+            "count": 25,
+            "hex": "#2080a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 113,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "38.8",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#2060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0025s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0025s_0000__Group_.png",
+      "dimensions": {
+        "width": 118,
+        "height": 92,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 96,
+          "g": 96,
+          "b": 160,
+          "count": 104,
+          "hex": "#6060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 128,
+          "g": 96,
+          "b": 128,
+          "count": 96,
+          "hex": "#806080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 160,
+          "g": 96,
+          "b": 96,
+          "count": 83,
+          "hex": "#a06060",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 96,
+            "g": 96,
+            "b": 160,
+            "count": 104,
+            "hex": "#6060a0",
+            "name": "gray"
+          },
+          {
+            "r": 128,
+            "g": 96,
+            "b": 128,
+            "count": 96,
+            "hex": "#806080",
+            "name": "gray"
+          },
+          {
+            "r": 160,
+            "g": 96,
+            "b": 96,
+            "count": 83,
+            "hex": "#a06060",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 63,
+            "hex": "#4060a0",
+            "name": "gray"
+          },
+          {
+            "r": 160,
+            "g": 96,
+            "b": 128,
+            "count": 28,
+            "hex": "#a06080",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 128,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "58.1",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#6060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0026s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0026s_0000__Group_.png",
+      "dimensions": {
+        "width": 105,
+        "height": 118,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 160,
+          "b": 192,
+          "count": 113,
+          "hex": "#40a0c0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 79,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 64,
+          "g": 128,
+          "b": 192,
+          "count": 69,
+          "hex": "#4080c0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 64,
+            "g": 160,
+            "b": 192,
+            "count": 113,
+            "hex": "#40a0c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 79,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 128,
+            "b": 192,
+            "count": 69,
+            "hex": "#4080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 68,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 160,
+            "b": 192,
+            "count": 41,
+            "hex": "#60a0c0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 136,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "58.9",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#40a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0027s_0000__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0027s_0000__Path_.png",
+      "dimensions": {
+        "width": 99,
+        "height": 74,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 174,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 134,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 78,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 174,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 134,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 78,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 40,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 25,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 112,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "53.9",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#2060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0028s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0028s_0000__Group_.png",
+      "dimensions": {
+        "width": 88,
+        "height": 96,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 160,
+          "b": 160,
+          "count": 180,
+          "hex": "#00a0a0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 192,
+          "b": 32,
+          "count": 115,
+          "hex": "#e0c020",
+          "name": "gold"
+        },
+        "accent": {
+          "r": 128,
+          "g": 192,
+          "b": 64,
+          "count": 112,
+          "hex": "#80c040",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 160,
+            "b": 160,
+            "count": 180,
+            "hex": "#00a0a0",
+            "name": "cyan"
+          },
+          {
+            "r": 224,
+            "g": 192,
+            "b": 32,
+            "count": 115,
+            "hex": "#e0c020",
+            "name": "gold"
+          },
+          {
+            "r": 128,
+            "g": 192,
+            "b": 64,
+            "count": 112,
+            "hex": "#80c040",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 160,
+            "b": 128,
+            "count": 7,
+            "hex": "#00a080",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 157,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "55.9",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#00a0a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0029s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0029s_0000__Group_.png",
+      "dimensions": {
+        "width": 132,
+        "height": 80,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 128,
+          "b": 32,
+          "count": 404,
+          "hex": "#e08020",
+          "name": "orange"
+        },
+        "secondary": null,
+        "accent": null,
+        "all": [
+          {
+            "r": 224,
+            "g": 128,
+            "b": 32,
+            "count": 404,
+            "hex": "#e08020",
+            "name": "orange"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 156,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "61.1",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e08020",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0030s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0030s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 110,
+        "height": 99,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 96,
+          "g": 64,
+          "b": 128,
+          "count": 123,
+          "hex": "#604080",
+          "name": "purple"
+        },
+        "secondary": {
+          "r": 128,
+          "g": 64,
+          "b": 128,
+          "count": 93,
+          "hex": "#804080",
+          "name": "purple"
+        },
+        "accent": {
+          "r": 160,
+          "g": 64,
+          "b": 128,
+          "count": 78,
+          "hex": "#a04080",
+          "name": "purple"
+        },
+        "all": [
+          {
+            "r": 96,
+            "g": 64,
+            "b": 128,
+            "count": 123,
+            "hex": "#604080",
+            "name": "purple"
+          },
+          {
+            "r": 128,
+            "g": 64,
+            "b": 128,
+            "count": 93,
+            "hex": "#804080",
+            "name": "purple"
+          },
+          {
+            "r": 160,
+            "g": 64,
+            "b": 128,
+            "count": 78,
+            "hex": "#a04080",
+            "name": "purple"
+          },
+          {
+            "r": 64,
+            "g": 64,
+            "b": 128,
+            "count": 57,
+            "hex": "#404080",
+            "name": "purple"
+          },
+          {
+            "r": 192,
+            "g": 64,
+            "b": 128,
+            "count": 36,
+            "hex": "#c04080",
+            "name": "purple"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 107,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.6",
+        "isTransparent": true
+      },
+      "primaryColor": "purple",
+      "primaryHex": "#604080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0031s_0000s_0001__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0031s_0000s_0001__Group_.png",
+      "dimensions": {
+        "width": 89,
+        "height": 88,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 203,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 144,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 96,
+          "b": 64,
+          "count": 110,
+          "hex": "#e06040",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 203,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 144,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 110,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 94,
+            "hex": "#e04060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 150,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "50.3",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e08040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0032s_0000__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0032s_0000__Path_.png",
+      "dimensions": {
+        "width": 134,
+        "height": 113,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 128,
+          "g": 160,
+          "b": 128,
+          "count": 93,
+          "hex": "#80a080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 160,
+          "g": 160,
+          "b": 96,
+          "count": 65,
+          "hex": "#a0a060",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 96,
+          "g": 160,
+          "b": 128,
+          "count": 47,
+          "hex": "#60a080",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 128,
+            "g": 160,
+            "b": 128,
+            "count": 93,
+            "hex": "#80a080",
+            "name": "gray"
+          },
+          {
+            "r": 160,
+            "g": 160,
+            "b": 96,
+            "count": 65,
+            "hex": "#a0a060",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 160,
+            "b": 128,
+            "count": 47,
+            "hex": "#60a080",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 128,
+            "count": 30,
+            "hex": "#608080",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 128,
+            "b": 160,
+            "count": 29,
+            "hex": "#4080a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 154,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "67.5",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#80a080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0033s_0000s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0033s_0000s_0000__Group_.png",
+      "dimensions": {
+        "width": 16,
+        "height": 16,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 192,
+          "g": 32,
+          "b": 32,
+          "count": 143,
+          "hex": "#c02020",
+          "name": "brown"
+        },
+        "secondary": {
+          "r": 192,
+          "g": 0,
+          "b": 32,
+          "count": 1,
+          "hex": "#c00020",
+          "name": "brown"
+        },
+        "accent": null,
+        "all": [
+          {
+            "r": 192,
+            "g": 32,
+            "b": 32,
+            "count": 143,
+            "hex": "#c02020",
+            "name": "brown"
+          },
+          {
+            "r": 192,
+            "g": 0,
+            "b": 32,
+            "count": 1,
+            "hex": "#c00020",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 84,
+        "level": "dark"
+      },
+      "transparency": {
+        "transparencyPercent": "43.8",
+        "isTransparent": true
+      },
+      "primaryColor": "brown",
+      "primaryHex": "#c02020",
+      "brightnessLevel": "dark",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0034s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0034s_0000__Group_.png",
+      "dimensions": {
+        "width": 91,
+        "height": 88,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 163,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 129,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 224,
+          "count": 25,
+          "hex": "#20a0e0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 163,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 129,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 25,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 23,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 160,
+            "count": 15,
+            "hex": "#2080a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 112,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "63.1",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#2060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0035s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0035s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 95,
+        "height": 102,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 114,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 92,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 96,
+          "b": 64,
+          "count": 90,
+          "hex": "#e06040",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 114,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 92,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 90,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 79,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 23,
+            "hex": "#c02060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 146,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "62.0",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e08040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0036s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0036s_0000__Group_.png",
+      "dimensions": {
+        "width": 125,
+        "height": 111,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 160,
+          "g": 192,
+          "b": 128,
+          "count": 99,
+          "hex": "#a0c080",
+          "name": "silver"
+        },
+        "secondary": {
+          "r": 128,
+          "g": 192,
+          "b": 128,
+          "count": 42,
+          "hex": "#80c080",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 192,
+          "g": 192,
+          "b": 96,
+          "count": 40,
+          "hex": "#c0c060",
+          "name": "silver"
+        },
+        "all": [
+          {
+            "r": 160,
+            "g": 192,
+            "b": 128,
+            "count": 99,
+            "hex": "#a0c080",
+            "name": "silver"
+          },
+          {
+            "r": 128,
+            "g": 192,
+            "b": 128,
+            "count": 42,
+            "hex": "#80c080",
+            "name": "gray"
+          },
+          {
+            "r": 192,
+            "g": 192,
+            "b": 96,
+            "count": 40,
+            "hex": "#c0c060",
+            "name": "silver"
+          },
+          {
+            "r": 160,
+            "g": 192,
+            "b": 96,
+            "count": 30,
+            "hex": "#a0c060",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 160,
+            "count": 22,
+            "hex": "#60c0a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 180,
+        "level": "bright"
+      },
+      "transparency": {
+        "transparencyPercent": "72.0",
+        "isTransparent": true
+      },
+      "primaryColor": "silver",
+      "primaryHex": "#a0c080",
+      "brightnessLevel": "bright",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0037s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0037s_0000__Group_.png",
+      "dimensions": {
+        "width": 102,
+        "height": 106,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 137,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 192,
+          "count": 121,
+          "hex": "#0080c0",
+          "name": "cyan"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 224,
+          "count": 107,
+          "hex": "#20a0e0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 137,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 121,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 107,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 128,
+            "count": 48,
+            "hex": "#004080",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 31,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 111,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.5",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0038s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0038s_0000__Group_.png",
+      "dimensions": {
+        "width": 91,
+        "height": 92,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 192,
+          "g": 32,
+          "b": 32,
+          "count": 541,
+          "hex": "#c02020",
+          "name": "brown"
+        },
+        "secondary": null,
+        "accent": null,
+        "all": [
+          {
+            "r": 192,
+            "g": 32,
+            "b": 32,
+            "count": 541,
+            "hex": "#c02020",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 94,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "48.3",
+        "isTransparent": true
+      },
+      "primaryColor": "brown",
+      "primaryHex": "#c02020",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0039s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0039s_0000__Group_.png",
+      "dimensions": {
+        "width": 104,
+        "height": 75,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 128,
+          "b": 192,
+          "count": 130,
+          "hex": "#4080c0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 160,
+          "b": 192,
+          "count": 113,
+          "hex": "#40a0c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 91,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 64,
+            "g": 128,
+            "b": 192,
+            "count": 130,
+            "hex": "#4080c0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 192,
+            "count": 113,
+            "hex": "#40a0c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 91,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 89,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 224,
+            "count": 42,
+            "hex": "#60c0e0",
+            "name": "silver"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 134,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "54.7",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#4080c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0040s_0000__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0040s_0000__Path_.png",
+      "dimensions": {
+        "width": 68,
+        "height": 95,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 284,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 96,
+          "b": 64,
+          "count": 97,
+          "hex": "#e06040",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 91,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 284,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 97,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 91,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 91,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 50,
+            "hex": "#c02060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 149,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "41.6",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e08040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0041s_0000__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0041s_0000__Path_.png",
+      "dimensions": {
+        "width": 85,
+        "height": 96,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 160,
+          "b": 224,
+          "count": 105,
+          "hex": "#20a0e0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 192,
+          "count": 92,
+          "hex": "#0080c0",
+          "name": "cyan"
+        },
+        "accent": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 82,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 105,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 92,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 82,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 128,
+            "count": 66,
+            "hex": "#004080",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 28,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 111,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "58.0",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#20a0e0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0042s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0042s_0000__Group_.png",
+      "dimensions": {
+        "width": 92,
+        "height": 110,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 61,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 128,
+          "b": 160,
+          "count": 57,
+          "hex": "#0080a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 0,
+          "g": 64,
+          "b": 160,
+          "count": 46,
+          "hex": "#0040a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 61,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 160,
+            "count": 57,
+            "hex": "#0080a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 160,
+            "count": 46,
+            "hex": "#0040a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 160,
+            "b": 192,
+            "count": 26,
+            "hex": "#00a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 23,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 128,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "67.9",
+        "isTransparent": true
+      },
+      "primaryColor": "blue",
+      "primaryHex": "#0060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0043s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0043s_0000__Group_.png",
+      "dimensions": {
+        "width": 92,
+        "height": 92,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 128,
+          "b": 160,
+          "count": 162,
+          "hex": "#0080a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 126,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 35,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 0,
+            "g": 128,
+            "b": 160,
+            "count": 162,
+            "hex": "#0080a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 126,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 35,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 160,
+            "b": 192,
+            "count": 26,
+            "hex": "#00a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 160,
+            "count": 18,
+            "hex": "#0040a0",
+            "name": "blue"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 105,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "64.8",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#0080a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0044s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0044s_0000__Group_.png",
+      "dimensions": {
+        "width": 101,
+        "height": 100,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 192,
+          "b": 160,
+          "count": 551,
+          "hex": "#40c0a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 160,
+          "b": 160,
+          "count": 34,
+          "hex": "#40a0a0",
+          "name": "gray"
+        },
+        "accent": null,
+        "all": [
+          {
+            "r": 64,
+            "g": 192,
+            "b": 160,
+            "count": 551,
+            "hex": "#40c0a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 160,
+            "count": 34,
+            "hex": "#40a0a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 156,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "42.2",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#40c0a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0045s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0045s_0000__Group_.png",
+      "dimensions": {
+        "width": 97,
+        "height": 92,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 192,
+          "g": 32,
+          "b": 96,
+          "count": 132,
+          "hex": "#c02060",
+          "name": "brown"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 119,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 64,
+          "b": 96,
+          "count": 114,
+          "hex": "#e04060",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 132,
+            "hex": "#c02060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 119,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 114,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 97,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 85,
+            "hex": "#e08040",
+            "name": "orange"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 135,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "48.9",
+        "isTransparent": true
+      },
+      "primaryColor": "brown",
+      "primaryHex": "#c02060",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0046s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0046s_0000__Group_.png",
+      "dimensions": {
+        "width": 104,
+        "height": 104,
+        "isSquare": true
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 65,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 64,
+          "b": 96,
+          "count": 47,
+          "hex": "#e04060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 33,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 65,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 47,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 33,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 160,
+            "count": 31,
+            "hex": "#0080a0",
+            "name": "gray"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 26,
+            "hex": "#e06040",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 135,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "64.9",
+        "isTransparent": true
+      },
+      "primaryColor": "orange",
+      "primaryHex": "#e08040",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0047s_0000s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0047s_0000s_0000__Group_.png",
+      "dimensions": {
+        "width": 50,
+        "height": 93,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 166,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 85,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 32,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 166,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 85,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 32,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 27,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 160,
+            "count": 13,
+            "hex": "#2080a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 118,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "72.3",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#2080c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0047s_0000s_0000s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0047s_0000s_0000s_0000__Group_.png",
+      "dimensions": {
+        "width": 49,
+        "height": 71,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 168,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 95,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 0,
+          "g": 96,
+          "b": 160,
+          "count": 34,
+          "hex": "#0060a0",
+          "name": "blue"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 168,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 95,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 96,
+            "b": 160,
+            "count": 34,
+            "hex": "#0060a0",
+            "name": "blue"
+          },
+          {
+            "r": 0,
+            "g": 64,
+            "b": 160,
+            "count": 34,
+            "hex": "#0040a0",
+            "name": "blue"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 160,
+            "count": 16,
+            "hex": "#2080a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 101,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "70.2",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#2060a0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0047s_0000s_0000s_0001__Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0047s_0000s_0000s_0001__Path_.png",
+      "dimensions": {
+        "width": 23,
+        "height": 22,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 160,
+          "b": 224,
+          "count": 123,
+          "hex": "#20a0e0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 117,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "accent": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 10,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 160,
+            "b": 224,
+            "count": 123,
+            "hex": "#20a0e0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 117,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 10,
+            "hex": "#2080c0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 141,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "50.6",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#20a0e0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0048s_0000s_0000s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0048s_0000s_0000s_0000__Group_.png",
+      "dimensions": {
+        "width": 58,
+        "height": 66,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 108,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 128,
+          "b": 192,
+          "count": 78,
+          "hex": "#6080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 96,
+          "g": 96,
+          "b": 160,
+          "count": 76,
+          "hex": "#6060a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 108,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 192,
+            "count": 78,
+            "hex": "#6080c0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 96,
+            "b": 160,
+            "count": 76,
+            "hex": "#6060a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 76,
+            "hex": "#4060a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 75,
+            "hex": "#0080c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 135,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.7",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#20a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0048s_0000s_0000s_0001__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0048s_0000s_0000s_0001__Group_.png",
+      "dimensions": {
+        "width": 58,
+        "height": 66,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 103,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 96,
+          "g": 128,
+          "b": 192,
+          "count": 78,
+          "hex": "#6080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 96,
+          "g": 96,
+          "b": 160,
+          "count": 77,
+          "hex": "#6060a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 103,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 192,
+            "count": 78,
+            "hex": "#6080c0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 96,
+            "b": 160,
+            "count": 77,
+            "hex": "#6060a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 77,
+            "hex": "#4060a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 76,
+            "hex": "#0080c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 135,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.6",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#20a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0048s_0000s_0001s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0048s_0000s_0001s_0000__Group_.png",
+      "dimensions": {
+        "width": 58,
+        "height": 66,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 106,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 96,
+          "b": 160,
+          "count": 77,
+          "hex": "#4060a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 96,
+          "g": 96,
+          "b": 160,
+          "count": 77,
+          "hex": "#6060a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 106,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 77,
+            "hex": "#4060a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 96,
+            "b": 160,
+            "count": 77,
+            "hex": "#6060a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 76,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 192,
+            "count": 76,
+            "hex": "#6080c0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 135,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.7",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#20a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0048s_0000s_0001s_0001__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0048s_0000s_0001s_0001__Group_.png",
+      "dimensions": {
+        "width": 58,
+        "height": 66,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 32,
+          "g": 160,
+          "b": 192,
+          "count": 109,
+          "hex": "#20a0c0",
+          "name": "cyan"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 96,
+          "b": 160,
+          "count": 78,
+          "hex": "#4060a0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 0,
+          "g": 128,
+          "b": 192,
+          "count": 77,
+          "hex": "#0080c0",
+          "name": "cyan"
+        },
+        "all": [
+          {
+            "r": 32,
+            "g": 160,
+            "b": 192,
+            "count": 109,
+            "hex": "#20a0c0",
+            "name": "cyan"
+          },
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 78,
+            "hex": "#4060a0",
+            "name": "gray"
+          },
+          {
+            "r": 0,
+            "g": 128,
+            "b": 192,
+            "count": 77,
+            "hex": "#0080c0",
+            "name": "cyan"
+          },
+          {
+            "r": 96,
+            "g": 128,
+            "b": 192,
+            "count": 77,
+            "hex": "#6080c0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 96,
+            "b": 160,
+            "count": 75,
+            "hex": "#6060a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 135,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "57.7",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#20a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0049s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0049s_0000__Group_.png",
+      "dimensions": {
+        "width": 110,
+        "height": 101,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 128,
+          "b": 192,
+          "count": 126,
+          "hex": "#4080c0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 160,
+          "b": 192,
+          "count": 66,
+          "hex": "#40a0c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 96,
+          "b": 160,
+          "count": 60,
+          "hex": "#2060a0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 64,
+            "g": 128,
+            "b": 192,
+            "count": 126,
+            "hex": "#4080c0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 160,
+            "b": 192,
+            "count": 66,
+            "hex": "#40a0c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 60,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 160,
+            "b": 192,
+            "count": 47,
+            "hex": "#60a0c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 23,
+            "hex": "#2080c0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 139,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "65.7",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#4080c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0050s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0050s_0000__Group_.png",
+      "dimensions": {
+        "width": 118,
+        "height": 73,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 128,
+          "g": 96,
+          "b": 128,
+          "count": 105,
+          "hex": "#806080",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 160,
+          "g": 96,
+          "b": 96,
+          "count": 92,
+          "hex": "#a06060",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 224,
+          "g": 96,
+          "b": 32,
+          "count": 91,
+          "hex": "#e06020",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 128,
+            "g": 96,
+            "b": 128,
+            "count": 105,
+            "hex": "#806080",
+            "name": "gray"
+          },
+          {
+            "r": 160,
+            "g": 96,
+            "b": 96,
+            "count": 92,
+            "hex": "#a06060",
+            "name": "gray"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 32,
+            "count": 91,
+            "hex": "#e06020",
+            "name": "brown"
+          },
+          {
+            "r": 96,
+            "g": 96,
+            "b": 160,
+            "count": 84,
+            "hex": "#6060a0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 96,
+            "b": 160,
+            "count": 77,
+            "hex": "#4060a0",
+            "name": "gray"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 131,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "44.6",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#806080",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0051s_0000__Group_.png": {
+      "filename": "54AllinOneLogos_0000s_0051s_0000__Group_.png",
+      "dimensions": {
+        "width": 133,
+        "height": 89,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 0,
+          "g": 160,
+          "b": 192,
+          "count": 328,
+          "hex": "#00a0c0",
+          "name": "cyan"
+        },
+        "secondary": null,
+        "accent": null,
+        "all": [
+          {
+            "r": 0,
+            "g": 160,
+            "b": 192,
+            "count": 328,
+            "hex": "#00a0c0",
+            "name": "cyan"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 122,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "69.0",
+        "isTransparent": true
+      },
+      "primaryColor": "cyan",
+      "primaryHex": "#00a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0052s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0052s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 108,
+        "height": 97,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 144,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 64,
+          "b": 96,
+          "count": 139,
+          "hex": "#e04060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 96,
+          "b": 64,
+          "count": 97,
+          "hex": "#e06040",
+          "name": "brown"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 144,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 139,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 97,
+            "hex": "#e06040",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 96,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 64,
+            "hex": "#c02060",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 139,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "45.8",
+        "isTransparent": true
+      },
+      "primaryColor": "brown",
+      "primaryHex": "#e06060",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0053s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0053s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 106,
+        "height": 91,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 64,
+          "g": 160,
+          "b": 192,
+          "count": 116,
+          "hex": "#40a0c0",
+          "name": "gray"
+        },
+        "secondary": {
+          "r": 64,
+          "g": 128,
+          "b": 192,
+          "count": 97,
+          "hex": "#4080c0",
+          "name": "gray"
+        },
+        "accent": {
+          "r": 32,
+          "g": 128,
+          "b": 192,
+          "count": 61,
+          "hex": "#2080c0",
+          "name": "gray"
+        },
+        "all": [
+          {
+            "r": 64,
+            "g": 160,
+            "b": 192,
+            "count": 116,
+            "hex": "#40a0c0",
+            "name": "gray"
+          },
+          {
+            "r": 64,
+            "g": 128,
+            "b": 192,
+            "count": 97,
+            "hex": "#4080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 128,
+            "b": 192,
+            "count": 61,
+            "hex": "#2080c0",
+            "name": "gray"
+          },
+          {
+            "r": 32,
+            "g": 96,
+            "b": 160,
+            "count": 45,
+            "hex": "#2060a0",
+            "name": "gray"
+          },
+          {
+            "r": 96,
+            "g": 192,
+            "b": 224,
+            "count": 35,
+            "hex": "#60c0e0",
+            "name": "silver"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 139,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "62.6",
+        "isTransparent": true
+      },
+      "primaryColor": "gray",
+      "primaryHex": "#40a0c0",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    },
+    "54AllinOneLogos_0000s_0054s_0000__Compound-Path_.png": {
+      "filename": "54AllinOneLogos_0000s_0054s_0000__Compound-Path_.png",
+      "dimensions": {
+        "width": 109,
+        "height": 79,
+        "isSquare": false
+      },
+      "colors": {
+        "primary": {
+          "r": 224,
+          "g": 64,
+          "b": 96,
+          "count": 167,
+          "hex": "#e04060",
+          "name": "brown"
+        },
+        "secondary": {
+          "r": 224,
+          "g": 96,
+          "b": 96,
+          "count": 103,
+          "hex": "#e06060",
+          "name": "brown"
+        },
+        "accent": {
+          "r": 224,
+          "g": 128,
+          "b": 64,
+          "count": 90,
+          "hex": "#e08040",
+          "name": "orange"
+        },
+        "all": [
+          {
+            "r": 224,
+            "g": 64,
+            "b": 96,
+            "count": 167,
+            "hex": "#e04060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 96,
+            "count": 103,
+            "hex": "#e06060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 128,
+            "b": 64,
+            "count": 90,
+            "hex": "#e08040",
+            "name": "orange"
+          },
+          {
+            "r": 192,
+            "g": 32,
+            "b": 96,
+            "count": 65,
+            "hex": "#c02060",
+            "name": "brown"
+          },
+          {
+            "r": 224,
+            "g": 96,
+            "b": 64,
+            "count": 63,
+            "hex": "#e06040",
+            "name": "brown"
+          }
+        ]
+      },
+      "brightness": {
+        "average": 137,
+        "level": "medium"
+      },
+      "transparency": {
+        "transparencyPercent": "52.5",
+        "isTransparent": true
+      },
+      "primaryColor": "brown",
+      "primaryHex": "#e04060",
+      "brightnessLevel": "medium",
+      "isTransparent": true
+    }
+  }
+}

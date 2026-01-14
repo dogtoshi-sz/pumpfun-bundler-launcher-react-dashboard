@@ -13,6 +13,7 @@ const WebSocket = require('ws');
 const liveTradesTracker = require('./live-trades-tracker');
 const quickNodeWebhook = require('./quicknode-webhook-handler');
 const pumpPortalTracker = require('./pumpportal-tracker');
+const { debugLogger } = require('./debug-logger');
 
 // Register ts-node for TypeScript support (for marketing modules)
 try {
@@ -137,6 +138,9 @@ app.use((req, res, next) => {
 });
 // ============================================================
 
+// Debug logging middleware (logs ALL requests/responses to file)
+app.use(debugLogger.middleware());
+
 // Increase JSON body size limit to handle base64 images (10MB)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -144,6 +148,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve static files from image directory
 const imageDir = path.join(__dirname, '..', 'image');
 app.use('/image', express.static(imageDir));
+
+// Ensure createdlogos directory exists
+const createdLogosDir = path.join(imageDir, 'createdlogos');
+if (!fs.existsSync(createdLogosDir)) {
+  fs.mkdirSync(createdLogosDir, { recursive: true });
+}
 
 // Serve PSD assets directory
 const psdAssetsDir = path.join(__dirname, '..', 'psd-assets');
@@ -155,6 +165,159 @@ if (fs.existsSync(psdAssetsDir)) {
 const psdLogoApi = require('./psd-logo-api');
 app.use('/api/psd', psdLogoApi);
 app.use('/api/logo', psdLogoApi);
+
+// ============================================================================
+// GEMINI AI IMAGE GENERATION (Nano Banana)
+// ============================================================================
+
+// Generate AI image for meme tokens using Gemini
+app.post('/api/ai/generate-image', async (req, res) => {
+  try {
+    const { prompt, style = 'meme', aspectRatio = '1:1' } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: 'Prompt is required' });
+    }
+    
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ success: false, error: 'GEMINI_API_KEY not configured in .env' });
+    }
+    
+    console.log(`[AI Image] Generating image with prompt: ${prompt.slice(0, 100)}...`);
+    
+    // Import Gemini SDK dynamically
+    const { GoogleGenAI } = require('@google/genai');
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    
+    // Build the enhanced prompt based on style
+    let enhancedPrompt = prompt;
+    if (style === 'meme') {
+      enhancedPrompt = `Create a high-quality, vibrant meme token logo/mascot for crypto: ${prompt}. 
+        Style: Fun, eye-catching, suitable for a crypto token. 
+        The image should be iconic, memorable, and work well as a small token icon.
+        Clean, bold design with good contrast. No text in the image.`;
+    } else if (style === 'professional') {
+      enhancedPrompt = `Create a professional, clean logo for a crypto project: ${prompt}. 
+        Style: Modern, sleek, trustworthy. Suitable for a serious DeFi or utility token.
+        The image should work well as a small icon. No text in the image.`;
+    } else if (style === 'cartoon') {
+      enhancedPrompt = `Create a cute, cartoon-style mascot for a crypto token: ${prompt}. 
+        Style: Kawaii, friendly, approachable. Perfect for a fun community token.
+        Bold outlines, vibrant colors. No text in the image.`;
+    } else if (style === 'abstract') {
+      enhancedPrompt = `Create an abstract, artistic logo for a crypto project: ${prompt}. 
+        Style: Geometric, gradient, modern art inspired. 
+        Suitable for a tech-forward DeFi token. No text in the image.`;
+    }
+    
+    // Generate image using Gemini 3 Pro Image (Nano Banana Pro) - best quality
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-image', // Nano Banana Pro - highest quality image generation
+      contents: enhancedPrompt,
+      config: {
+        responseModalities: ['TEXT', 'IMAGE'],
+      }
+    });
+    
+    // Extract image from response
+    let imageData = null;
+    let textResponse = null;
+    
+    if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.text) {
+          textResponse = part.text;
+        } else if (part.inlineData) {
+          imageData = part.inlineData.data;
+        }
+      }
+    }
+    
+    if (!imageData) {
+      // If no image generated, return error with text response
+      console.log(`[AI Image] No image generated. Text response: ${textResponse}`);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Failed to generate image', 
+        details: textResponse || 'No image in response'
+      });
+    }
+    
+    // Save the image
+    const timestamp = Date.now();
+    const outputDir = path.join(process.cwd(), 'image', 'ai-generated');
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    const outputPath = path.join(outputDir, `ai-logo-${timestamp}.png`);
+    const imageBuffer = Buffer.from(imageData, 'base64');
+    fs.writeFileSync(outputPath, imageBuffer);
+    
+    console.log(`[AI Image] ✅ Image generated and saved: ${outputPath}`);
+    
+    res.json({
+      success: true,
+      imagePath: outputPath,
+      imageUrl: `/image/ai-generated/ai-logo-${timestamp}.png`,
+      base64: imageData,
+      textResponse,
+    });
+    
+  } catch (error) {
+    console.error('[AI Image] Error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to generate image',
+      details: error.toString()
+    });
+  }
+});
+
+// Get AI image generation styles
+app.get('/api/ai/styles', (req, res) => {
+  res.json({
+    success: true,
+    styles: [
+      { id: 'meme', name: 'Meme/Fun', description: 'Vibrant, eye-catching meme token style' },
+      { id: 'professional', name: 'Professional', description: 'Clean, modern, trustworthy look' },
+      { id: 'cartoon', name: 'Cartoon/Kawaii', description: 'Cute, friendly cartoon mascot' },
+      { id: 'abstract', name: 'Abstract/Geometric', description: 'Modern art, gradients, geometric shapes' },
+      { id: 'custom', name: 'Custom Prompt', description: 'Full control with your own prompt' },
+    ]
+  });
+});
+
+// Check if AI generation is available
+app.get('/api/ai/status', (req, res) => {
+  const hasApiKey = !!process.env.GEMINI_API_KEY;
+  res.json({
+    success: true,
+    available: hasApiKey,
+    model: 'gemini-3-pro-image', // Nano Banana Pro
+    message: hasApiKey ? 'Gemini AI (Nano Banana Pro) ready for image generation' : 'GEMINI_API_KEY not configured'
+  });
+});
+
+// Global launch progress listeners for SSE
+if (!global.launchProgressListeners) {
+  global.launchProgressListeners = [];
+}
+
+// Function to broadcast progress to all SSE listeners (used by both launch-token and quick-launch-token)
+function broadcastProgress(type, data) {
+  if (!global.launchProgressListeners) return;
+  const message = JSON.stringify({ type, data, timestamp: Date.now() });
+  global.launchProgressListeners.forEach(listener => {
+    try {
+      listener.write(`data: ${message}\n\n`);
+    } catch (error) {
+      // Remove dead listeners
+      global.launchProgressListeners = global.launchProgressListeners.filter(l => l !== listener);
+    }
+  });
+}
 
 // Helper to get RPC connection
 const getConnection = () => {
@@ -1071,19 +1234,6 @@ app.post('/api/launch-token', async (req, res) => {
     console.log(`[Launch] Child process started with PID: ${childProcess.pid}`);
     console.log(`[Launch] Working directory: ${projectRoot}`);
     
-    // Function to broadcast progress to all SSE listeners
-    const broadcastProgress = (type, data) => {
-      const message = JSON.stringify({ type, data, timestamp: Date.now() });
-      global.launchProgressListeners.forEach(listener => {
-        try {
-          listener.write(`data: ${message}\n\n`);
-        } catch (error) {
-          // Remove dead listeners
-          global.launchProgressListeners = global.launchProgressListeners.filter(l => l !== listener);
-        }
-      });
-    };
-    
     // Stream stdout in real-time
     childProcess.stdout.on('data', (data) => {
       const output = data.toString();
@@ -1125,6 +1275,315 @@ app.post('/api/launch-token', async (req, res) => {
     
   } catch (error) {
     console.error('[Launch] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// RAPID LAUNCH - Direct launch with inline data (for Trend Detector)
+// Does NOT read from .env - all data passed directly
+app.post('/api/rapid-launch', async (req, res) => {
+  try {
+    const { 
+      name, 
+      symbol, 
+      description, 
+      twitter, 
+      telegram, 
+      website, 
+      imageUrl,
+      imagePath,
+      devBuyAmount = 0.5 
+    } = req.body;
+
+    if (!name || !symbol) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Name and symbol are required' 
+      });
+    }
+
+    const projectRoot = path.join(__dirname, '..');
+    const keysDir = path.join(projectRoot, 'keys');
+    
+    console.log(`[Rapid Launch] 🚀 Starting: ${name} ($${symbol})`);
+    console.log(`[Rapid Launch] Dev Buy: ${devBuyAmount} SOL`);
+
+    // Handle image - download from URL if provided
+    let finalImagePath = imagePath;
+    if (imageUrl && !imagePath) {
+      try {
+        console.log(`[Rapid Launch] Downloading image from: ${imageUrl}`);
+        const axios = require('axios');
+        const imageRes = await axios.get(imageUrl, { 
+          responseType: 'arraybuffer',
+          timeout: 10000 
+        });
+        const imageBuffer = Buffer.from(imageRes.data);
+        const ext = imageUrl.match(/\.(png|jpg|jpeg|gif|webp)/i)?.[1] || 'png';
+        const imageName = `rapid-launch-${Date.now()}.${ext}`;
+        finalImagePath = path.join(projectRoot, 'image', imageName);
+        fs.writeFileSync(finalImagePath, imageBuffer);
+        console.log(`[Rapid Launch] Image saved to: ${finalImagePath}`);
+      } catch (imgErr) {
+        console.warn(`[Rapid Launch] Failed to download image: ${imgErr.message}`);
+      }
+    }
+
+    // Read base .env to get RPC, PRIVATE_KEY, etc.
+    const envPath = path.join(projectRoot, '.env');
+    const baseEnv = {};
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf8');
+      envContent.split('\n').forEach(line => {
+        const match = line.match(/^([^=]+)=(.*)$/);
+        if (match) {
+          baseEnv[match[1].trim()] = match[2].trim().replace(/^["']|["']$/g, '');
+        }
+      });
+    }
+
+    // Override with our rapid launch data
+    const launchEnv = {
+      ...process.env,
+      ...baseEnv,
+      TOKEN_NAME: name,
+      TOKEN_SYMBOL: symbol,
+      DESCRIPTION: description || `${name} - Rapid Launch`,
+      TWITTER: twitter || '',
+      TELEGRAM: telegram || '',
+      WEBSITE: website || '',
+      FILE: finalImagePath || '',
+      BUYER_AMOUNT: String(devBuyAmount),
+      ENABLE_TWITTER_POSTING: 'false', // Disable for rapid launch
+      QUICK_LAUNCH_AUTO_CONFIRM: 'true',
+    };
+
+    console.log(`[Rapid Launch] Token: ${launchEnv.TOKEN_NAME} ($${launchEnv.TOKEN_SYMBOL})`);
+
+    // Execute quick-launch.ts with overridden environment
+    const { spawn } = require('child_process');
+    const childProcess = spawn('npx', ['ts-node', 'quick-launch.ts'], {
+      cwd: projectRoot,
+      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: launchEnv
+    });
+
+    let output = '';
+    let detectedMint = null;
+
+    // Auto-confirm the launch
+    setTimeout(() => {
+      childProcess.stdin.write('y\n');
+    }, 2000);
+
+    childProcess.stdout.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.log(`[Rapid Launch] ${text.trim()}`);
+      
+      // Detect mint address
+      const contractMatch = text.match(/Contract:\s*([A-Za-z0-9]{32,44}pump)/);
+      if (contractMatch) {
+        detectedMint = contractMatch[1];
+      }
+    });
+
+    childProcess.stderr.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.error(`[Rapid Launch] stderr: ${text.trim()}`);
+    });
+
+    // Wait for completion (max 2 minutes)
+    const exitCode = await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        childProcess.kill();
+        resolve(-1);
+      }, 120000);
+
+      childProcess.on('close', (code) => {
+        clearTimeout(timeout);
+        resolve(code);
+      });
+    });
+
+    if (exitCode === 0 || detectedMint) {
+      console.log(`[Rapid Launch] ✅ Success! Mint: ${detectedMint}`);
+      return res.json({ 
+        success: true, 
+        mintAddress: detectedMint,
+        message: `Launched ${name} ($${symbol})`,
+        output: output.slice(-2000) // Last 2000 chars
+      });
+    } else {
+      console.error(`[Rapid Launch] ❌ Failed with exit code: ${exitCode}`);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Launch failed',
+        exitCode,
+        output: output.slice(-2000)
+      });
+    }
+
+  } catch (error) {
+    console.error('[Rapid Launch] Error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// QUICK LAUNCH - Simple dev buy only, no Jito, no bundles
+// Uses quick-launch.ts which is a simplified launcher
+app.post('/api/quick-launch-token', async (req, res) => {
+  try {
+    const projectRoot = path.join(__dirname, '..');
+    const envPath = path.join(projectRoot, '.env');
+    const currentRunPath = path.join(projectRoot, 'keys', 'current-run.json');
+    
+    // Verify .env file exists
+    if (!fs.existsSync(envPath)) {
+      return res.status(500).json({ 
+        success: false, 
+        error: `.env file not found at ${envPath}` 
+      });
+    }
+    
+    console.log(`[Quick Launch] Starting quick token launch from: ${projectRoot}`);
+    
+    // Clear old current-run.json
+    const keysDir = path.join(projectRoot, 'keys');
+    if (!fs.existsSync(keysDir)) {
+      fs.mkdirSync(keysDir, { recursive: true });
+    }
+    
+    if (fs.existsSync(currentRunPath)) {
+      const backupPath = path.join(keysDir, `current-run-backup-${Date.now()}.json`);
+      fs.copyFileSync(currentRunPath, backupPath);
+      fs.unlinkSync(currentRunPath);
+      console.log(`[Quick Launch] Cleared previous current-run.json`);
+    }
+    
+    // Read the latest .env
+    const latestEnv = readEnvFile();
+    console.log(`[Quick Launch] Token: ${latestEnv.TOKEN_NAME} ($${latestEnv.TOKEN_SYMBOL})`);
+    console.log(`[Quick Launch] Dev Buy: ${latestEnv.BUYER_AMOUNT} SOL`);
+    
+    // Initialize launch progress listeners
+    if (!global.launchProgressListeners) {
+      global.launchProgressListeners = [];
+    }
+    
+    // Execute quick-launch.ts in background with auto-confirm
+    const { spawn } = require('child_process');
+    const childProcess = spawn('npx', ['ts-node', 'quick-launch.ts'], {
+      cwd: projectRoot,
+      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        FORCE_COLOR: '1',
+        QUICK_LAUNCH_AUTO_CONFIRM: 'true' // Auto-confirm for API calls
+      }
+    });
+    
+    // Auto-confirm the launch (send 'y' to stdin)
+    setTimeout(() => {
+      childProcess.stdin.write('y\n');
+    }, 2000);
+    
+    // Track detected mint address for instant subscription
+    let detectedMintAddress = null;
+    let hasSubscribed = false;
+    
+    // Stream stdout - with instant tracker subscription on token creation
+    childProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      console.log(`[Quick Launch] stdout: ${output.trim()}`);
+      broadcastProgress('stdout', output);
+      
+      // INSTANT TRACKING: Detect contract address from output
+      // Look for "Contract: <address>" or "TRACKING_SIGNAL: <address>" patterns
+      const contractMatch = output.match(/Contract:\s*([A-Za-z0-9]{32,44}pump)/);
+      const trackingSignalMatch = output.match(/TRACKING_SIGNAL:\s*([A-Za-z0-9]{32,44}pump)/);
+      
+      if (contractMatch && !detectedMintAddress) {
+        detectedMintAddress = contractMatch[1];
+        console.log(`[Quick Launch] 🎯 Detected mint address: ${detectedMintAddress}`);
+      }
+      if (trackingSignalMatch && !detectedMintAddress) {
+        detectedMintAddress = trackingSignalMatch[1];
+        console.log(`[Quick Launch] 🎯 Detected mint from TRACKING_SIGNAL: ${detectedMintAddress}`);
+      }
+      
+      // As soon as we see "Token created!" or "TRACKING_SIGNAL", immediately subscribe for real-time tracking
+      const shouldSubscribe = output.includes('Token created!') || output.includes('TRACKING_SIGNAL:');
+      if (shouldSubscribe && detectedMintAddress && !hasSubscribed) {
+        hasSubscribed = true;
+        console.log(`[Quick Launch] ⚡ INSTANT SUBSCRIBE to ${detectedMintAddress.slice(0, 12)}...`);
+        
+        // Immediately subscribe to the token via PumpPortal
+        try {
+          pumpPortalTracker.subscribeToToken(detectedMintAddress);
+          
+          // Also reload wallets from current-run.json (it might not be written yet, but try)
+          setTimeout(() => {
+            console.log(`[Quick Launch] 🔄 Reloading wallets for instant tracking...`);
+            pumpPortalTracker.reloadFromCurrentRun();
+          }, 500);
+          
+          // Broadcast that we're tracking
+          broadcastProgress('tracking_started', { 
+            mintAddress: detectedMintAddress,
+            message: 'Real-time tracking started'
+          });
+        } catch (e) {
+          console.error(`[Quick Launch] Error subscribing:`, e.message);
+        }
+      }
+      
+      // Also detect when dev buy is complete to inject it immediately
+      if (output.includes('Dev buy complete!') && detectedMintAddress) {
+        console.log(`[Quick Launch] 💉 Triggering immediate dev buy injection...`);
+        // Give it a moment for current-run.json to be written, then inject
+        setTimeout(() => {
+          pumpPortalTracker.reloadFromCurrentRun();
+        }, 200);
+      }
+    });
+    
+    // Stream stderr
+    childProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.error(`[Quick Launch] stderr: ${output.trim()}`);
+      broadcastProgress('stderr', output);
+    });
+    
+    childProcess.on('close', (code) => {
+      console.log(`[Quick Launch] Process exited with code ${code}`);
+      broadcastProgress('close', { code });
+      setTimeout(() => {
+        global.launchProgressListeners = [];
+      }, 5000);
+    });
+    
+    childProcess.on('error', (error) => {
+      console.error(`[Quick Launch] Process error:`, error);
+      broadcastProgress('error', { message: error.message });
+    });
+    
+    res.json({ 
+      success: true, 
+      message: 'Quick Launch started. Real-time progress available.',
+      mode: 'quick',
+      pid: childProcess.pid,
+      workingDirectory: projectRoot
+    });
+    
+  } catch (error) {
+    console.error('[Quick Launch] Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1696,6 +2155,26 @@ app.post('/api/holder-wallet/sell', async (req, res) => {
       // Invalidate cache after sell
       invalidateBalanceCache(resolvedWalletAddress, mintAddress);
       
+      // Inject Jupiter sell into PumpPortal tracker (since PumpPortal only tracks bonding curve trades)
+      // Note: Jupiter sells don't appear on PumpPortal WebSocket, so we need to inject them manually
+      if (result && result.signature) {
+        try {
+          pumpPortalTracker.injectTrade({
+            signature: result.signature,
+            mint: mintAddress,
+            traderPublicKey: resolvedWalletAddress,
+            txType: 'sell',
+            solAmount: result.solReceived || 0, // SOL received from Jupiter quote
+            tokenAmount: result.tokensSold || 0, // Tokens sold
+            timestamp: Date.now(),
+            source: 'jupiter',
+          });
+          console.log(`[Sell] 💉 Injected Jupiter sell into tracker: ${result.solReceived?.toFixed(4) || 0} SOL, ${result.tokensSold?.toFixed(2) || 0} tokens`);
+        } catch (e) {
+          console.warn(`[Sell] Could not inject sell to tracker: ${e.message}`);
+        }
+      }
+      
       res.json({ success: true, result });
     } catch (error) {
       console.error('[Sell] Error:', error);
@@ -1744,12 +2223,53 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
       commitment: 'confirmed'
     });
     
-    // Get all token accounts
-    const tokenAccounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
-      programId: TOKEN_PROGRAM_ID,
-    });
+    // Get all token accounts using PARSED format (much more reliable)
+    console.log(`[Sell All] Querying token accounts for ${walletKp.publicKey.toBase58()}...`);
     
-    console.log(`[Sell All] Found ${tokenAccounts.value.length} token account(s) for wallet ${walletAddress.substring(0, 8)}...`);
+    // Use 'confirmed' commitment to get latest state
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+      walletKp.publicKey, 
+      { programId: TOKEN_PROGRAM_ID },
+      { commitment: 'confirmed' }
+    );
+    
+    console.log(`[Sell All] RPC returned ${tokenAccounts.value.length} token account(s) for wallet ${walletAddress.substring(0, 8)}...`);
+    
+    // Also try Token-2022 program (some tokens use this)
+    try {
+      const token2022Accounts = await connection.getParsedTokenAccountsByOwner(
+        walletKp.publicKey,
+        { programId: new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb') },
+        { commitment: 'confirmed' }
+      );
+      if (token2022Accounts.value.length > 0) {
+        console.log(`[Sell All] Also found ${token2022Accounts.value.length} Token-2022 account(s)`);
+        tokenAccounts.value.push(...token2022Accounts.value);
+      }
+    } catch (e) {
+      // Token-2022 query failed, ignore
+    }
+    
+    // Debug: Log ALL token accounts (even zero balance) to see what wallet actually has
+    console.log(`[Sell All] ========== FULL WALLET INVENTORY ==========`);
+    let totalTokensFound = 0;
+    let tokensWithBalanceCount = 0;
+    for (let i = 0; i < tokenAccounts.value.length; i++) {
+      const { account } = tokenAccounts.value[i];
+      const parsedInfo = account.data.parsed?.info;
+      if (parsedInfo) {
+        const mint = parsedInfo.mint || '?';
+        const uiAmount = parsedInfo.tokenAmount?.uiAmount || 0;
+        const rawAmount = parsedInfo.tokenAmount?.amount || '0';
+        const decimals = parsedInfo.tokenAmount?.decimals || 0;
+        totalTokensFound++;
+        if (uiAmount > 0) {
+          tokensWithBalanceCount++;
+          console.log(`[Sell All] #${i}: ${mint.substring(0, 8)}... = ${uiAmount.toLocaleString()} tokens (raw=${rawAmount}, dec=${decimals})`);
+        }
+      }
+    }
+    console.log(`[Sell All] ========== SUMMARY: ${tokensWithBalanceCount} tokens with balance out of ${totalTokensFound} total accounts ==========`);
     
     if (tokenAccounts.value.length === 0) {
       return res.json({ success: true, message: 'No tokens found', results: [], summary: { successful: 0, failed: 0, total: 0 } });
@@ -1758,91 +2278,85 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
     const results = [];
     const tokensToSell = []; // Store tokens with balance for selling
     
-    // First, identify all tokens with balance (check raw amount to catch very small balances)
+    // First, identify all tokens with balance using parsed data
     for (let i = 0; i < tokenAccounts.value.length; i++) {
-      const { account } = tokenAccounts.value[i];
-      const accountData = account.data;
-      const mintPubkey = new PublicKey(accountData.slice(0, 32));
-      const mintAddress = mintPubkey.toBase58();
+      const { account, pubkey } = tokenAccounts.value[i];
       
       try {
-        // Get token balance (check both UI amount and raw amount)
-        const tokenBalance = await connection.getTokenAccountBalance(tokenAccounts.value[i].pubkey);
-        const uiAmount = tokenBalance.value?.uiAmount;
-        const rawAmount = tokenBalance.value?.amount; // Raw amount (not divided by decimals)
+        const parsedInfo = account.data.parsed?.info;
+        if (!parsedInfo) {
+          console.log(`[Sell All] Skipping account ${i} - no parsed info`);
+          continue;
+        }
         
-        // Check if token has any balance (using raw amount for accuracy - catches very small balances)
-        // Raw amount is a string, so check if it's not "0" or 0
-        const hasBalance = tokenBalance.value && rawAmount && rawAmount !== '0' && rawAmount !== 0 && rawAmount !== '0' && Number(rawAmount) > 0;
+        const mintAddress = parsedInfo.mint;
+        const uiAmount = parsedInfo.tokenAmount?.uiAmount || 0;
+        const rawAmount = parsedInfo.tokenAmount?.amount || '0';
+        const decimals = parsedInfo.tokenAmount?.decimals || 6;
+        
+        // Check if token has any balance
+        const hasBalance = uiAmount > 0 || (rawAmount && rawAmount !== '0' && Number(rawAmount) > 0);
         
         if (!hasBalance) {
-          console.log(`[Sell All] Skipping ${mintAddress.substring(0, 8)}... (zero balance - raw: ${rawAmount})`);
+          console.log(`[Sell All] Skipping ${mintAddress.substring(0, 8)}... (zero balance)`);
           continue; // Skip empty accounts
+        }
+        
+        // MINIMUM 10,000 tokens filter - skip microscopic amounts
+        const MIN_TOKENS_TO_SELL = 10000;
+        if (uiAmount < MIN_TOKENS_TO_SELL) {
+          console.log(`[Sell All] Skipping ${mintAddress.substring(0, 8)}... (only ${uiAmount.toLocaleString()} tokens, need 10,000+)`);
+          continue;
         }
         
         tokensToSell.push({
           mintAddress,
           uiAmount,
           rawAmount,
-          accountIndex: i
+          decimals,
+          pubkey: pubkey.toBase58()
         });
         
-        console.log(`[Sell All] Token ${tokensToSell.length}: ${mintAddress.substring(0, 8)}... (balance: ${uiAmount || 'N/A'}, raw: ${rawAmount})`);
+        console.log(`[Sell All] Token ${tokensToSell.length}: ${mintAddress.substring(0, 8)}... (balance: ${uiAmount.toLocaleString()} tokens)`);
       } catch (error) {
-        console.error(`[Sell All] Error checking balance for ${mintAddress.substring(0, 8)}...:`, error.message);
+        console.error(`[Sell All] Error parsing token account ${i}:`, error.message);
       }
     }
     
     const tokensWithBalance = tokensToSell.length;
     
-    console.log(`[Sell All] Found ${tokensWithBalance} token(s) with balance, proceeding to sell...`);
+    if (tokensWithBalance === 0) {
+      console.log(`[Sell All] No tokens with balance found in wallet ${walletAddress.substring(0, 8)}...`);
+      return res.json({ 
+        success: true, 
+        message: 'No tokens with balance found', 
+        results: [], 
+        summary: { successful: 0, skipped: 0, failed: 0, total: 0, tokensWithBalance: 0 } 
+      });
+    }
+    
+    console.log(`[Sell All] 🎯 Found ${tokensWithBalance} token(s) with balance, selling each one...`);
     
     // Now sell each token with balance
     for (let i = 0; i < tokensToSell.length; i++) {
-      const { mintAddress, uiAmount, rawAmount, accountIndex } = tokensToSell[i];
+      const { mintAddress, uiAmount, rawAmount, pubkey } = tokensToSell[i];
       
       try {
-        console.log(`[Sell All] [${i + 1}/${tokensWithBalance}] Selling ${mintAddress.substring(0, 8)}... (balance: ${uiAmount || 'N/A'}, raw: ${rawAmount})`);
+        console.log(`[Sell All] [${i + 1}/${tokensWithBalance}] Selling ${mintAddress.substring(0, 8)}... (balance: ${uiAmount})`);
         
-        // Re-check balance right before selling to ensure tokens are still there
-        // Wait a bit if tokens were just bought (they might not be fully settled)
-        let retries = 0;
-        let currentBalance = null;
-        while (retries < 5) {
-          const freshBalance = await connection.getTokenAccountBalance(tokenAccounts.value[accountIndex].pubkey);
-          const freshUiAmount = freshBalance.value?.uiAmount;
-          const freshRawAmount = freshBalance.value?.amount;
-          
-          if (freshUiAmount && freshUiAmount > 0 && freshRawAmount && Number(freshRawAmount) > 0) {
-            currentBalance = freshUiAmount;
-            console.log(`[Sell All] Confirmed balance: ${freshUiAmount} (raw: ${freshRawAmount})`);
-            break;
-          } else {
-            retries++;
-            if (retries < 5) {
-              console.log(`[Sell All] Waiting for tokens to settle... (attempt ${retries}/5)`);
-              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-            }
-          }
-        }
+        // Use the balance we already know - no need to re-check
+        let currentBalance = uiAmount;
         
-        if (!currentBalance || currentBalance === 0) {
-          console.log(`[Sell All] Token ${mintAddress.substring(0, 8)}... has no balance after retries, skipping`);
-          results.push({ mint: mintAddress, success: false, error: 'No balance found after retries' });
-          continue;
-        }
+        // Sell 99% to leave dust and avoid edge cases
+        const sellPercentage = 99;
         
-        // For very small amounts, sell 100% instead of 99.9% to avoid "too small" error
-        // If UI amount is less than 0.01 or very small, sell 100% to ensure we can sell it
-        const sellPercentage = (currentBalance && currentBalance < 0.01) ? 100 : 99.9;
+        console.log(`[Sell All] Selling 99% of ${mintAddress.substring(0, 8)}... (balance: ${uiAmount})`);
         
-        console.log(`[Sell All] Selling ${sellPercentage}% of ${mintAddress.substring(0, 8)}... (current balance: ${currentBalance})`);
-        
-        // Sell with lowest priority fee (same as holder wallets)
+        // Sell 99% with low priority fee
         try {
-          const result = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, sellPercentage, 'low');
+          const result = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 99, 'low');
           if (result && result.signature) {
-            results.push({ mint: mintAddress, success: true, result, sellPercentage });
+            results.push({ mint: mintAddress, success: true, result });
             console.log(`[Sell All] ✅ Successfully sold ${mintAddress.substring(0, 8)}... - Tx: ${result.signature}`);
           } else {
             throw new Error('No signature returned from sell transaction');
@@ -1860,22 +2374,27 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       } catch (error) {
-        console.error(`[Sell All] Failed to sell ${mintAddress.substring(0, 8)}...:`, error.message);
-        // If "too small" error or "No tokens" error, try selling 100% instead
-        if (error.message && (error.message.includes('too small') || error.message.includes('Amount to sell') || error.message.includes('No tokens'))) {
+        const errorMsg = error.message || 'Unknown error';
+        
+        // Check if it's a "no liquidity" error - these tokens are dead/rugged
+        if (errorMsg.includes('No Jupiter route') || errorMsg.includes('no route') || errorMsg.includes('Could not find')) {
+          console.log(`[Sell All] ⏭️ Skipping ${mintAddress.substring(0, 8)}... (no liquidity - token may be dead)`);
+          results.push({ mint: mintAddress, success: false, error: 'No liquidity (dead token)', skipped: true });
+        } else if (errorMsg.includes('too small') || errorMsg.includes('Amount to sell') || errorMsg.includes('No tokens')) {
+          // Try one more time with 100%
           try {
             console.log(`[Sell All] Retrying with 100% for ${mintAddress.substring(0, 8)}...`);
-            // Wait a bit before retry
             await new Promise(resolve => setTimeout(resolve, 1000));
             const retryResult = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 100, 'low');
-            results.push({ mint: mintAddress, success: true, result: retryResult, sellPercentage: 100, retried: true });
+            results.push({ mint: mintAddress, success: true, result: retryResult, retried: true });
             invalidateBalanceCache(walletAddress, mintAddress);
           } catch (retryError) {
-            console.error(`[Sell All] Retry also failed for ${mintAddress.substring(0, 8)}...:`, retryError.message);
+            console.error(`[Sell All] ❌ Retry failed for ${mintAddress.substring(0, 8)}...:`, retryError.message);
             results.push({ mint: mintAddress, success: false, error: retryError.message });
           }
         } else {
-          results.push({ mint: mintAddress, success: false, error: error.message });
+          console.error(`[Sell All] ❌ Failed to sell ${mintAddress.substring(0, 8)}...:`, errorMsg);
+          results.push({ mint: mintAddress, success: false, error: errorMsg });
         }
       }
     }
@@ -1890,13 +2409,16 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
     }
     
     const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
+    const skipped = results.filter(r => r.skipped).length;
+    const failed = results.filter(r => !r.success && !r.skipped).length;
+    
+    console.log(`[Sell All] Complete: ${successful} sold, ${skipped} skipped (no liquidity), ${failed} failed`);
     
     res.json({
       success: true,
-      message: `Sold ${successful} token(s) successfully${failed > 0 ? `, ${failed} failed` : ''}${tokensWithBalance > 0 ? ` out of ${tokensWithBalance} token(s) with balance` : ''}`,
+      message: `Sold ${successful} token(s)${skipped > 0 ? `, skipped ${skipped} (no liquidity)` : ''}${failed > 0 ? `, ${failed} failed` : ''}`,
       results,
-      summary: { successful, failed, total: results.length, tokensWithBalance }
+      summary: { successful, skipped, failed, total: results.length, tokensWithBalance }
     });
   } catch (error) {
     console.error('[Sell All Tokens] Error:', error);
@@ -2105,14 +2627,26 @@ app.get('/api/launch-wallet-info', async (req, res) => {
     const fundingBalance = await connection.getBalance(fundingWalletKp.publicKey);
     
     // Creator/DEV wallet info
+    // PRIORITY 0: USE_FUNDING_AS_BUYER=true → Use funding wallet as DEV (same wallet, no separate funding)
     // PRIORITY 1: Use BUYER_WALLET from .env if set (ALWAYS use this if present)
     // PRIORITY 2: Check current-run.json for creatorDevWalletKey (only if BUYER_WALLET not set)
     // PRIORITY 3: Will be auto-created (only if neither exists)
     let creatorDevWallet = null;
     let creatorDevPrivateKey = null;
+    const useFundingAsBuyer = env.USE_FUNDING_AS_BUYER === 'true';
     
-    // FIRST: Check if BUYER_WALLET is set in .env - if yes, ALWAYS use it
-    if (env.BUYER_WALLET && env.BUYER_WALLET.trim() !== '') {
+    // PRIORITY 0: Check if USE_FUNDING_AS_BUYER=true - funding wallet IS the DEV wallet
+    if (useFundingAsBuyer) {
+      creatorDevWallet = {
+        address: fundingWalletAddress,
+        source: 'Funding Wallet (USE_FUNDING_AS_BUYER=true)',
+        balance: fundingBalance / 1e9,
+        isAutoCreated: false,
+        isFundingWallet: true // Special flag - DEV wallet is the same as funding wallet
+      };
+      creatorDevPrivateKey = env.PRIVATE_KEY; // Will be shortened later
+    } else if (env.BUYER_WALLET && env.BUYER_WALLET.trim() !== '') {
+      // PRIORITY 1: Check if BUYER_WALLET is set in .env - if yes, use it
       const creatorKp = Keypair.fromSecretKey(base58.decode(env.BUYER_WALLET));
       const creatorBalance = await connection.getBalance(creatorKp.publicKey);
       creatorDevWallet = {
@@ -2269,7 +2803,12 @@ app.get('/api/launch-wallet-info', async (req, res) => {
     // Use warmed creator balance if provided, otherwise use existing creatorDevWallet balance
     const effectiveCreatorBalance = warmedCreatorAddress ? warmedCreatorBalance : creatorDevWallet.balance;
     
-    if (creatorDevWallet.isAutoCreated && !warmedCreatorAddress) {
+    // CRITICAL: If USE_FUNDING_AS_BUYER=true, NO separate DEV funding is needed
+    // The DEV wallet IS the funding wallet - no transfer needed, buy comes from same balance
+    if (useFundingAsBuyer || creatorDevWallet.isFundingWallet) {
+      // DEV wallet is funding wallet - no separate funding needed
+      creatorDevSolNeeded = 0;
+    } else if (creatorDevWallet.isAutoCreated && !warmedCreatorAddress) {
       // Auto-created wallet (no warmed wallet selected): need to fund it fully
       creatorDevSolNeeded = creatorRequiredAmount;
     } else {
@@ -2289,13 +2828,19 @@ app.get('/api/launch-wallet-info', async (req, res) => {
       creatorDevWallet.isAutoCreated = false;
     }
     
-    // IMPORTANT: Always account for the DEV buy amount in the total
-    // If wallet was funded (creatorDevSolNeeded > 0), the buyerAmount is already included
-    // If wallet has enough balance (creatorDevSolNeeded = 0), we still need to account for buyerAmount
-    // because it represents the cost that will be incurred (even if from DEV wallet's existing balance)
-    // Actually, wait - if DEV wallet has enough, the funding wallet doesn't pay for it
-    // But for TOTAL cost calculation, we should show it as a cost that will be incurred
-    const devBuyCost = creatorDevSolNeeded > 0 ? 0 : buyerAmount; // Only add separately if not already in funding
+    // IMPORTANT: Account for DEV buy amount in the total calculation
+    // 
+    // Case 1: USE_FUNDING_AS_BUYER=true → DEV wallet IS funding wallet
+    //   - devBuyCost = 0 (buy comes from funding wallet's existing balance, not additional funding)
+    //   - The "Total SOL Required" should reflect what we need to FUND, not what we already have
+    //
+    // Case 2: Separate DEV wallet needs funding (creatorDevSolNeeded > 0)
+    //   - devBuyCost = 0 (already included in creatorDevSolNeeded)
+    //
+    // Case 3: Separate DEV wallet has enough balance (creatorDevSolNeeded = 0)
+    //   - devBuyCost = 0 (no additional funding needed from master wallet)
+    //
+    const devBuyCost = 0; // DEV buy cost is already in funding wallet or creatorDevSolNeeded
     
     const jitoFee = parseFloat(env.JITO_FEE || '0.001');
     const lutFee = 0.002; // LUT creation rent (~0.001-0.002 SOL actual cost, using 0.002 as safe estimate)
@@ -2352,7 +2897,8 @@ app.get('/api/launch-wallet-info', async (req, res) => {
           total: totalSolNeeded,
           totalExistingBalance: bundleExistingBalance + holderExistingBalance + effectiveCreatorBalance
         },
-        buyerAmount: buyerAmount
+        buyerAmount: buyerAmount,
+        useFundingAsBuyer: useFundingAsBuyer // Flag indicating DEV wallet = Funding wallet
       }
     });
   } catch (error) {
@@ -3376,18 +3922,18 @@ app.post('/api/warm-wallets/start', async (req, res) => {
     // Import wallet warming manager
     const { warmWallets } = require('../src/wallet-warming-manager.ts');
     
-    // Default config with cheapest settings
+    // Default config with MINIMAL settings (cheapest that actually works with Jupiter)
     const warmConfig = {
       walletsPerBatch: config?.walletsPerBatch || 2,
-      tradesPerWallet: config?.tradesPerWallet || 10,
-      minBuyAmount: config?.minBuyAmount || 0.01, // Increased to reduce slippage (was 0.001)
-      maxBuyAmount: config?.maxBuyAmount || 0.02, // Increased to reduce slippage (was 0.005)
-      minIntervalSeconds: config?.minIntervalSeconds || 30,
-      maxIntervalSeconds: config?.maxIntervalSeconds || 300,
-      priorityFee: 'low', // ALWAYS cheapest
+      tradesPerWallet: config?.tradesPerWallet || 2, // Just 2 trades is enough to show activity
+      minBuyAmount: config?.minBuyAmount || 0.002, // 0.002 SOL ≈ $0.28 (minimum Jupiter accepts)
+      maxBuyAmount: config?.maxBuyAmount || 0.003, // 0.003 SOL ≈ $0.42 (small but works)
+      minIntervalSeconds: config?.minIntervalSeconds || 10,
+      maxIntervalSeconds: config?.maxIntervalSeconds || 60,
+      priorityFee: config?.priorityFee || 'none', // No priority fee for warming (saves ~0.003 SOL per round trip)
       useJupiter: true,
       useTrendingTokens: config?.useTrendingTokens !== false, // Default to true
-      fundingAmount: config?.fundingAmount || 0.05, // Lower default, configurable
+      fundingAmount: config?.fundingAmount || 0.015, // Enough for 2 trades + fees
       skipFunding: config?.skipFunding || false // Skip funding for wallets with existing balance
     };
     
@@ -3552,7 +4098,7 @@ app.post('/api/ai/generate', async (req, res) => {
         forceTemplate,
         existingName,
         generateImages: true,
-        uploadImages: uploadImages !== false, // Default to true
+        uploadImages: uploadImages === true, // Only upload if explicitly requested (not default)
       });
       return res.json(result);
     }
@@ -3594,7 +4140,7 @@ app.post('/api/ai/generate-variations', async (req, res) => {
         theme,
         forceTemplate,
         generateImages: true,
-        uploadImages: uploadImages !== false,
+        uploadImages: false, // Don't upload during generation - only when user accepts
       });
       return res.json(result);
     }
@@ -4219,6 +4765,151 @@ app.post('/api/marketing/twitter/post-single', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: sanitizedMessage || 'Unknown error',
+    });
+  }
+});
+
+// Twitter Profile Update Endpoint
+app.post('/api/twitter/update-profile', async (req, res) => {
+  try {
+    console.log('[Twitter] Profile update request received');
+    const { apiKey, apiSecret, accessToken, accessTokenSecret, name, description, location, url, profileImageUrl, generateBanner, tokenSymbol } = req.body;
+    
+    if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
+      return res.status(400).json({ success: false, error: 'Twitter API credentials required' });
+    }
+    
+    // Use twitter-api-v2 library
+    const { TwitterApi } = require('twitter-api-v2');
+    
+    const client = new TwitterApi({
+      appKey: apiKey,
+      appSecret: apiSecret,
+      accessToken: accessToken,
+      accessSecret: accessTokenSecret,
+    });
+    
+    let profileImageUpdated = false;
+    let bannerUpdated = false;
+    
+    // Update text profile fields
+    if (name || description || location || url) {
+      const updatePayload = {};
+      if (name) updatePayload.name = name;
+      if (description) updatePayload.description = description;
+      if (location) updatePayload.location = location;
+      if (url) updatePayload.url = url;
+      
+      await client.v1.updateAccountProfile(updatePayload);
+      console.log(`[Twitter] ✅ Profile text updated`);
+    }
+    
+    // Update profile image from URL
+    if (profileImageUrl) {
+      let imageBuffer = null;
+      try {
+        console.log(`[Twitter] Downloading profile image from: ${profileImageUrl}`);
+        const imageResponse = await fetch(profileImageUrl);
+        if (!imageResponse.ok) {
+          throw new Error(`Failed to download image: ${imageResponse.status}`);
+        }
+        imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+        console.log(`[Twitter] Image downloaded, size: ${imageBuffer.length} bytes`);
+        
+        // twitter-api-v2 expects the raw Buffer for updateAccountProfileImage
+        await client.v1.updateAccountProfileImage(imageBuffer);
+        
+        profileImageUpdated = true;
+        console.log(`[Twitter] ✅ Profile image updated successfully`);
+      } catch (imgError) {
+        console.error(`[Twitter] Failed to update profile image:`, imgError.message);
+        // Try alternative method with base64 if buffer was downloaded
+        if (imageBuffer) {
+          try {
+            console.log(`[Twitter] Trying alternative image upload method...`);
+            const base64Image = imageBuffer.toString('base64');
+            await client.v1.post('account/update_profile_image.json', { image: base64Image });
+            profileImageUpdated = true;
+            console.log(`[Twitter] ✅ Profile image updated via alternative method`);
+          } catch (altError) {
+            console.error(`[Twitter] Alternative method also failed:`, altError.message);
+          }
+        }
+      }
+    }
+    
+    // Generate and upload banner using AI
+    if (generateBanner && profileImageUrl) {
+      try {
+        console.log(`[Twitter] Generating AI banner...`);
+        const OpenAI = require('openai');
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        
+        if (!process.env.OPENAI_API_KEY) {
+          console.warn(`[Twitter] OPENAI_API_KEY not set, skipping banner generation`);
+        } else {
+          // Generate banner using DALL-E
+          const bannerPrompt = `Create a sleek, modern Twitter/X banner (1500x500) for a cryptocurrency token called "${name || tokenSymbol}". 
+            Style: Dark gradient background with subtle tech/crypto vibes, glowing accents, professional look.
+            The banner should be minimalist and professional, suitable for a crypto project.
+            Do NOT include any text or logos - just abstract shapes, gradients, and subtle crypto-themed elements.`;
+          
+          const imageResult = await openai.images.generate({
+            model: 'dall-e-3',
+            prompt: bannerPrompt,
+            n: 1,
+            size: '1792x1024', // Closest to Twitter banner ratio
+            quality: 'standard',
+          });
+          
+          if (imageResult.data?.[0]?.url) {
+            // Download the generated image
+            console.log(`[Twitter] Banner generated, downloading...`);
+            const bannerResponse = await fetch(imageResult.data[0].url);
+            const bannerBuffer = Buffer.from(await bannerResponse.arrayBuffer());
+            console.log(`[Twitter] Banner size: ${bannerBuffer.length} bytes`);
+            
+            // Upload to Twitter - try raw buffer first, then base64
+            try {
+              await client.v1.updateAccountProfileBanner(bannerBuffer);
+              bannerUpdated = true;
+              console.log(`[Twitter] ✅ AI-generated banner uploaded`);
+            } catch (bannerUploadError) {
+              console.log(`[Twitter] Trying base64 banner upload...`);
+              const base64Banner = bannerBuffer.toString('base64');
+              await client.v1.post('account/update_profile_banner.json', { banner: base64Banner });
+              bannerUpdated = true;
+              console.log(`[Twitter] ✅ Banner uploaded via base64 method`);
+            }
+          }
+        }
+      } catch (bannerError) {
+        console.error(`[Twitter] Failed to generate/upload banner:`, bannerError.message);
+        console.error(`[Twitter] Full banner error:`, JSON.stringify(bannerError.data || bannerError, null, 2));
+      }
+    }
+    
+    // Get updated profile
+    const me = await client.v2.me({ 'user.fields': ['profile_image_url', 'description', 'name'] });
+    
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      profileImageUpdated,
+      bannerUpdated,
+      account: {
+        id: me.data.id,
+        name: me.data.name,
+        username: me.data.username,
+        description: me.data.description,
+        profileImageUrl: me.data.profile_image_url?.replace('_normal', ''),
+      },
+    });
+  } catch (error) {
+    console.error('[Twitter] Profile update error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.data?.errors?.[0]?.message || error.message || 'Failed to update profile',
     });
   }
 });
@@ -4946,6 +5637,17 @@ let wss = null;
 
 try {
   wss = new WebSocket.Server({ port: WS_PORT });
+  
+  // Handle port-in-use errors gracefully
+  wss.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      console.log(`⚠️  WebSocket port ${WS_PORT} already in use. Balance WS disabled (using HTTP fallback).`);
+      wss = null;
+    } else {
+      console.error('[Balance WS] Server error:', error.message);
+    }
+  });
+  
   console.log(`📡 Balance WebSocket Server running on ws://localhost:${WS_PORT}`);
   
   wss.on('connection', (ws) => {
@@ -5753,8 +6455,2686 @@ app.get('/api/pumpportal/wallet-profits', (req, res) => {
 });
 
 // =====================================================
+// AUTOMATED SETUP ENDPOINTS (Domain + Branding + Deploy)
+// =====================================================
 
-app.listen(PORT, () => {
+// List Vercel projects
+app.get('/api/setup/vercel-projects', async (req, res) => {
+  try {
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
+      });
+    }
+    
+    const response = await fetch(`https://api.vercel.com/v9/projects?teamId=${teamId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Failed to fetch projects');
+    }
+    
+    const projects = (data.projects || []).map(p => ({
+      id: p.id,
+      name: p.name,
+      url: p.targets?.production?.url || `${p.name}.vercel.app`,
+      updatedAt: p.updatedAt,
+    }));
+    
+    res.json({ success: true, projects });
+  } catch (error) {
+    console.error('[Setup] Vercel projects error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Search for cheap domains
+app.post('/api/setup/search-domains', async (req, res) => {
+  try {
+    const { name, maxPrice = 5 } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Name is required' });
+    }
+    
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required' 
+      });
+    }
+    
+    // Generate domain variations
+    const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const variations = [
+      cleanName,
+      `${cleanName}ai`,
+      `${cleanName}app`,
+      `${cleanName}xyz`,
+      `${cleanName}fun`,
+      `${cleanName}io`,
+      `${cleanName}coin`,
+      `${cleanName}defi`,
+      `get${cleanName}`,
+      `the${cleanName}`,
+    ];
+    
+    const tlds = ['.xyz', '.fun', '.space', '.site', '.online', '.app', '.io', '.co'];
+    const domains = [];
+    
+    // Check each domain
+    for (const variation of variations) {
+      for (const tld of tlds) {
+        const domain = `${variation}${tld}`;
+        try {
+          // Check availability
+          const availRes = await fetch(
+            `https://api.vercel.com/v1/registrar/domains/${domain}/availability?teamId=${teamId}`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+          );
+          const availData = await availRes.json();
+          
+          if (availData.available && !availData.premium) {
+            // Get price
+            const priceRes = await fetch(
+              `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            const priceData = await priceRes.json();
+            
+            if (priceData.price && priceData.price < maxPrice) {
+              domains.push({
+                domain,
+                price: priceData.price,
+                priceFormatted: `$${priceData.price.toFixed(2)}`,
+              });
+            }
+          }
+          
+          // Rate limit protection
+          await new Promise(r => setTimeout(r, 200));
+          
+          // Stop if we have enough
+          if (domains.length >= 10) break;
+        } catch (e) {
+          // Skip errors, continue
+        }
+      }
+      if (domains.length >= 10) break;
+    }
+    
+    // Sort by price
+    domains.sort((a, b) => a.price - b.price);
+    
+    res.json({ success: true, domains });
+  } catch (error) {
+    console.error('[Setup] Domain search error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Purchase domain and connect to project
+app.post('/api/setup/purchase-domain', async (req, res) => {
+  try {
+    const { domain, price, projectId } = req.body;
+    
+    if (!domain || !price || !projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'domain, price, and projectId are required' 
+      });
+    }
+    
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    
+    // Contact info from env
+    const contactInfo = {
+      firstName: process.env.DOMAIN_CONTACT_FIRST_NAME || 'John',
+      lastName: process.env.DOMAIN_CONTACT_LAST_NAME || 'Doe',
+      email: process.env.DOMAIN_CONTACT_EMAIL || 'contact@example.com',
+      phone: process.env.DOMAIN_CONTACT_PHONE || '+1234567890',
+      address1: process.env.DOMAIN_CONTACT_ADDRESS || '123 Main St',
+      city: process.env.DOMAIN_CONTACT_CITY || 'New York',
+      state: process.env.DOMAIN_CONTACT_STATE || 'NY',
+      zip: process.env.DOMAIN_CONTACT_ZIP || '10001',
+      country: process.env.DOMAIN_CONTACT_COUNTRY || 'US',
+    };
+    
+    // 1. Purchase domain
+    console.log(`[Setup] Purchasing domain: ${domain} for $${price}`);
+    const buyRes = await fetch(
+      `https://api.vercel.com/v1/registrar/domains/${domain}/buy?teamId=${teamId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          autoRenew: false,
+          years: 1,
+          expectedPrice: price,
+          contactInformation: contactInfo,
+        }),
+      }
+    );
+    
+    const buyData = await buyRes.json();
+    
+    if (!buyRes.ok) {
+      throw new Error(buyData.error?.message || 'Failed to purchase domain');
+    }
+    
+    console.log(`[Setup] ✅ Domain purchased! Order: ${buyData.orderId}`);
+    
+    // 2. Connect to project
+    console.log(`[Setup] Connecting ${domain} to project ${projectId}...`);
+    const connectRes = await fetch(
+      `https://api.vercel.com/v10/projects/${projectId}/domains?teamId=${teamId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: domain }),
+      }
+    );
+    
+    const connectData = await connectRes.json();
+    
+    if (!connectRes.ok && !connectData.error?.message?.includes('already exists')) {
+      console.warn(`[Setup] Warning: ${connectData.error?.message || 'Failed to connect domain'}`);
+    } else {
+      console.log(`[Setup] ✅ Domain connected to project!`);
+    }
+    
+    // 3. Update .env with new website URL
+    const envPath = path.join(__dirname, '..', '.env');
+    let envContent = fs.readFileSync(envPath, 'utf8');
+    
+    if (envContent.includes('WEBSITE_URL=')) {
+      envContent = envContent.replace(/WEBSITE_URL=.*/g, `WEBSITE_URL=https://${domain}`);
+    } else {
+      envContent += `\nWEBSITE_URL=https://${domain}`;
+    }
+    
+    fs.writeFileSync(envPath, envContent);
+    console.log(`[Setup] ✅ Updated WEBSITE_URL in .env`);
+    
+    res.json({
+      success: true,
+      domain,
+      orderId: buyData.orderId,
+      projectId,
+      websiteUrl: `https://${domain}`,
+    });
+  } catch (error) {
+    console.error('[Setup] Purchase error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Full setup: search domains + generate branding
+app.post('/api/setup/full', async (req, res) => {
+  try {
+    const { name, projectId, colorScheme = 'cyber', maxPrice = 5 } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Name is required' });
+    }
+    
+    const result = {
+      name,
+      domains: [],
+      branding: null,
+      content: null,
+    };
+    
+    // 1. Search for domains
+    console.log(`[Setup] Searching domains for: ${name}`);
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    
+    if (token && teamId) {
+      const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const variations = [cleanName, `${cleanName}ai`, `${cleanName}app`, `${cleanName}xyz`, `${cleanName}io`];
+      const tlds = ['.xyz', '.fun', '.space', '.site', '.io', '.dev', '.app'];
+      
+      console.log(`[Setup] Checking domain variations: ${variations.join(', ')}`);
+      console.log(`[Setup] With TLDs: ${tlds.join(', ')}`);
+      console.log(`[Setup] Max price: $${maxPrice}`);
+      
+      let checked = 0;
+      let available = 0;
+      let tooExpensive = 0;
+      let premium = 0;
+      
+      for (const variation of variations) {
+        for (const tld of tlds) {
+          const domain = `${variation}${tld}`;
+          checked++;
+          try {
+            const availRes = await fetch(
+              `https://api.vercel.com/v1/registrar/domains/${domain}/availability?teamId=${teamId}`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            const availData = await availRes.json();
+            
+            if (availData.available) {
+              available++;
+              if (availData.premium) {
+                premium++;
+                console.log(`[Setup] ⚠️ ${domain} - Premium (skipped)`);
+              } else {
+                const priceRes = await fetch(
+                  `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
+                  { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+                const priceData = await priceRes.json();
+                
+                // Vercel API returns: { purchasePrice, renewalPrice, transferPrice, years }
+                const price = priceData.purchasePrice || priceData.price || null;
+                
+                if (price === null) {
+                  // Log the actual response to debug
+                  console.log(`[Setup] ❓ ${domain} - Price API returned: ${JSON.stringify(priceData).substring(0, 100)}`);
+                  // Try to add anyway if available (assume it's cheap)
+                  result.domains.push({
+                    domain,
+                    price: 0,
+                    priceFormatted: 'Check price',
+                    needsPriceCheck: true,
+                  });
+                } else if (price < maxPrice) {
+                  console.log(`[Setup] ✅ ${domain} - $${price.toFixed(2)} (ADDED)`);
+                  result.domains.push({
+                    domain,
+                    price: price,
+                    priceFormatted: `$${price.toFixed(2)}`,
+                  });
+                } else {
+                  tooExpensive++;
+                  console.log(`[Setup] 💰 ${domain} - $${price.toFixed(2)} (too expensive, max: $${maxPrice})`);
+                }
+              }
+            }
+            await new Promise(r => setTimeout(r, 150)); // Slightly faster
+            if (result.domains.length >= 5) break;
+          } catch (e) {
+            console.log(`[Setup] ❌ ${domain} - Error: ${e.message}`);
+          }
+        }
+        if (result.domains.length >= 5) break;
+      }
+      
+      console.log(`[Setup] Domain search complete: ${checked} checked, ${available} available, ${premium} premium, ${tooExpensive} too expensive, ${result.domains.length} added`);
+      result.domains.sort((a, b) => a.price - b.price);
+    } else {
+      console.log(`[Setup] ⚠️ VERCEL_TOKEN or VERCEL_TEAM_ID not set - skipping domain search`);
+    }
+    
+    // 2. Generate AI content + branding
+    if (generateContentWithBranding) {
+      console.log(`[Setup] Generating content and branding...`);
+      const contentResult = await generateContentWithBranding(
+        `Create a token called ${name}`,
+        {
+          theme: colorScheme,
+          generateImages: true,
+          uploadImages: false, // Don't upload until user confirms
+        }
+      );
+      
+      if (contentResult.success) {
+        result.content = contentResult.data;
+        result.branding = contentResult.branding;
+      }
+    }
+    
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[Setup] Full setup error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// VERCEL PROJECT & DOMAIN MANAGEMENT
+// =====================================================
+
+// List all Vercel projects (deployments)
+app.get('/api/vercel/projects', async (req, res) => {
+  try {
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
+      });
+    }
+    
+    const response = await fetch(
+      `https://api.vercel.com/v9/projects?teamId=${teamId}&limit=100`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      return res.status(response.status).json({ 
+        success: false, 
+        error: data.error?.message || 'Failed to list projects' 
+      });
+    }
+    
+    // Map to simplified format
+    const projects = (data.projects || []).map(p => ({
+      id: p.id,
+      name: p.name,
+      framework: p.framework || 'unknown',
+      updatedAt: p.updatedAt,
+      // Get production domain if available
+      productionDomain: p.targets?.production?.alias?.[0] || p.alias?.[0]?.domain || null,
+    }));
+    
+    // Sort by most recently updated
+    projects.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    
+    res.json({ 
+      success: true, 
+      projects,
+      defaultProjectId: process.env.VERCEL_PROJECT_ID || null,
+    });
+  } catch (error) {
+    console.error('[Vercel] List projects error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// List all domains OWNED by the team (from Vercel Registrar)
+app.get('/api/vercel/domains', async (req, res) => {
+  try {
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
+      });
+    }
+    
+    const response = await fetch(
+      `https://api.vercel.com/v5/domains?teamId=${teamId}&limit=100`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      return res.status(response.status).json({ 
+        success: false, 
+        error: data.error?.message || 'Failed to list domains' 
+      });
+    }
+    
+    // Map to simplified format
+    const domains = (data.domains || []).map(d => ({
+      name: d.name,
+      expiresAt: d.expiresAt,
+      renew: d.renew,
+      serviceType: d.serviceType, // 'zeit.world' for Vercel DNS
+      verified: d.verified,
+      // Check if connected to a project
+      projectId: d.projectId || null,
+    }));
+    
+    // Sort alphabetically
+    domains.sort((a, b) => a.name.localeCompare(b.name));
+    
+    res.json({ 
+      success: true, 
+      domains,
+      count: domains.length,
+    });
+  } catch (error) {
+    console.error('[Vercel] List owned domains error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Search for available domains to purchase
+app.get('/api/vercel/domains/search', async (req, res) => {
+  try {
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const { query, maxPrice = 20 } = req.query;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ success: false, error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required' });
+    }
+    
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'Query parameter required' });
+    }
+    
+    const cleanName = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const variations = [cleanName, `${cleanName}ai`, `${cleanName}app`, `${cleanName}io`, `get${cleanName}`];
+    const tlds = ['.xyz', '.fun', '.site', '.space', '.io', '.dev', '.app'];
+    
+    const domains = [];
+    
+    console.log(`[Domain Search] Searching for: ${cleanName}`);
+    
+    for (const variation of variations) {
+      if (domains.length >= 10) break;
+      
+      for (const tld of tlds) {
+        if (domains.length >= 10) break;
+        
+        const domain = `${variation}${tld}`;
+        
+        try {
+          // Check availability
+          const availRes = await fetch(
+            `https://api.vercel.com/v1/registrar/domains/${domain}/availability?teamId=${teamId}`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+          );
+          const availData = await availRes.json();
+          
+          if (availData.available && !availData.premium) {
+            // Get price
+            const priceRes = await fetch(
+              `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            const priceData = await priceRes.json();
+            const price = priceData.purchasePrice || priceData.price || 0;
+            
+            if (price > 0 && price <= parseFloat(maxPrice)) {
+              console.log(`[Domain Search] ✅ ${domain} - $${price.toFixed(2)}`);
+              domains.push({
+                domain,
+                price,
+                priceFormatted: `$${price.toFixed(2)}`,
+                renewalPrice: priceData.renewalPrice,
+              });
+            }
+          }
+          
+          await new Promise(r => setTimeout(r, 100)); // Rate limit
+        } catch (e) {
+          // Skip errors
+        }
+      }
+    }
+    
+    console.log(`[Domain Search] Found ${domains.length} available domains`);
+    domains.sort((a, b) => a.price - b.price);
+    
+    res.json({ success: true, domains, query: cleanName });
+    
+  } catch (error) {
+    console.error('[Domain Search] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Purchase a domain
+app.post('/api/vercel/domains/purchase', async (req, res) => {
+  try {
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const { domain } = req.body;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ success: false, error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required' });
+    }
+    
+    if (!domain) {
+      return res.status(400).json({ success: false, error: 'Domain required' });
+    }
+    
+    console.log(`[Domain Purchase] Attempting to purchase: ${domain}`);
+    
+    // Get the price first
+    const priceRes = await fetch(
+      `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const priceData = await priceRes.json();
+    const expectedPrice = priceData.purchasePrice || priceData.price || 0;
+    
+    console.log(`[Domain Purchase] Expected price: $${expectedPrice}`);
+    
+    // Contact info for domain registration
+    const contactInfo = {
+      firstName: process.env.DOMAIN_CONTACT_FIRST_NAME || 'John',
+      lastName: process.env.DOMAIN_CONTACT_LAST_NAME || 'Doe',
+      email: process.env.DOMAIN_CONTACT_EMAIL || 'contact@example.com',
+      phone: process.env.DOMAIN_CONTACT_PHONE || '+1234567890',
+      address1: process.env.DOMAIN_CONTACT_ADDRESS || '123 Main St',
+      city: process.env.DOMAIN_CONTACT_CITY || 'New York',
+      state: process.env.DOMAIN_CONTACT_STATE || 'NY',
+      zip: process.env.DOMAIN_CONTACT_ZIP || '10001',
+      country: process.env.DOMAIN_CONTACT_COUNTRY || 'US',
+    };
+    
+    // Use the correct Vercel API endpoint for domain purchase
+    const response = await fetch(
+      `https://api.vercel.com/v1/registrar/domains/${domain}/buy?teamId=${teamId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          autoRenew: false,
+          years: 1,
+          expectedPrice: expectedPrice,
+          contactInformation: contactInfo,
+        }),
+      }
+    );
+    
+    // Handle empty or non-JSON responses
+    const responseText = await response.text();
+    console.log(`[Domain Purchase] Response status: ${response.status}, body: ${responseText.substring(0, 500)}`);
+    
+    let data = {};
+    if (responseText) {
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.error(`[Domain Purchase] Failed to parse response: ${parseErr.message}`);
+        // If response is OK but body isn't JSON, treat as success
+        if (response.ok) {
+          data = { success: true };
+        } else {
+          return res.status(response.status).json({
+            success: false,
+            error: `API Error: ${responseText.substring(0, 200)}`,
+          });
+        }
+      }
+    }
+    
+    if (!response.ok) {
+      console.error(`[Domain Purchase] Failed: ${data.error?.message || JSON.stringify(data)}`);
+      return res.status(response.status).json({
+        success: false,
+        error: data.error?.message || 'Failed to purchase domain',
+      });
+    }
+    
+    console.log(`[Domain Purchase] ✅ Successfully purchased: ${domain}`);
+    
+    res.json({
+      success: true,
+      domain,
+      message: `Domain "${domain}" purchased successfully!`,
+      data,
+    });
+    
+  } catch (error) {
+    console.error('[Domain Purchase] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// List all domains connected to project
+app.get('/api/domains/list', async (req, res) => {
+  try {
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const projectId = req.query.projectId || process.env.VERCEL_PROJECT_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
+      });
+    }
+    
+    if (!projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'projectId required (query param or VERCEL_PROJECT_ID in .env)' 
+      });
+    }
+    
+    const response = await fetch(
+      `https://api.vercel.com/v9/projects/${projectId}/domains?teamId=${teamId}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      return res.status(response.status).json({ 
+        success: false, 
+        error: data.error?.message || 'Failed to list domains' 
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      projectId,
+      domains: data.domains || [],
+    });
+  } catch (error) {
+    console.error('[Domain] List error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Connect domain to project
+app.post('/api/domains/connect', async (req, res) => {
+  try {
+    const { domain, projectId: reqProjectId } = req.body;
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const projectId = reqProjectId || process.env.VERCEL_PROJECT_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
+      });
+    }
+    
+    if (!domain) {
+      return res.status(400).json({ success: false, error: 'domain is required' });
+    }
+    
+    if (!projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'projectId required (in body or VERCEL_PROJECT_ID in .env)' 
+      });
+    }
+    
+    console.log(`[Domain] Connecting ${domain} to project ${projectId}...`);
+    
+    const response = await fetch(
+      `https://api.vercel.com/v10/projects/${projectId}/domains?teamId=${teamId}`,
+      {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: domain }),
+      }
+    );
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      // Already exists is OK
+      if (data.error?.code === 'domain_already_exists') {
+        console.log(`[Domain] ${domain} already connected`);
+        return res.json({ success: true, domain, alreadyConnected: true });
+      }
+      return res.status(response.status).json({ 
+        success: false, 
+        error: data.error?.message || 'Failed to connect domain' 
+      });
+    }
+    
+    console.log(`[Domain] ✅ ${domain} connected to project!`);
+    res.json({ 
+      success: true, 
+      domain,
+      verified: data.verified,
+      configured: data.configured,
+    });
+  } catch (error) {
+    console.error('[Domain] Connect error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Disconnect domain from project (you still own it)
+app.post('/api/domains/disconnect', async (req, res) => {
+  try {
+    const { domain, projectId: reqProjectId } = req.body;
+    const token = process.env.VERCEL_TOKEN;
+    const teamId = process.env.VERCEL_TEAM_ID;
+    const projectId = reqProjectId || process.env.VERCEL_PROJECT_ID;
+    
+    if (!token || !teamId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
+      });
+    }
+    
+    if (!domain) {
+      return res.status(400).json({ success: false, error: 'domain is required' });
+    }
+    
+    if (!projectId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'projectId required (in body or VERCEL_PROJECT_ID in .env)' 
+      });
+    }
+    
+    console.log(`[Domain] Disconnecting ${domain} from project ${projectId}...`);
+    
+    const response = await fetch(
+      `https://api.vercel.com/v9/projects/${projectId}/domains/${domain}?teamId=${teamId}`,
+      {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      }
+    );
+    
+    // 204 No Content = success, 404 = already disconnected
+    if (response.status === 204 || response.status === 200) {
+      console.log(`[Domain] ✅ ${domain} disconnected from project!`);
+      return res.json({ success: true, domain, disconnected: true });
+    }
+    
+    if (response.status === 404) {
+      console.log(`[Domain] ${domain} was not connected to project`);
+      return res.json({ success: true, domain, alreadyDisconnected: true });
+    }
+    
+    const data = await response.json().catch(() => ({}));
+    return res.status(response.status).json({ 
+      success: false, 
+      error: data.error?.message || `HTTP ${response.status}` 
+    });
+  } catch (error) {
+    console.error('[Domain] Disconnect error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// DEBUG & LOGGING ENDPOINTS
+// =====================================================
+
+// List all debug log files
+app.get('/api/debug/logs', (req, res) => {
+  try {
+    const logFiles = debugLogger.getLogFiles();
+    res.json({ 
+      success: true, 
+      currentLog: debugLogger.getLogFilePath(),
+      logs: logFiles,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get current log file content (last N lines)
+app.get('/api/debug/logs/current', (req, res) => {
+  try {
+    const logPath = debugLogger.getLogFilePath();
+    const lines = parseInt(req.query.lines) || 500;
+    
+    if (!logPath || !fs.existsSync(logPath)) {
+      return res.json({ success: true, content: 'No log file yet', lines: 0 });
+    }
+    
+    const content = fs.readFileSync(logPath, 'utf8');
+    const allLines = content.split('\n');
+    const lastLines = allLines.slice(-lines).join('\n');
+    
+    res.json({ 
+      success: true, 
+      path: logPath,
+      totalLines: allLines.length,
+      content: lastLines,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Download a specific log file
+app.get('/api/debug/logs/:filename', (req, res) => {
+  try {
+    const logsDir = path.join(__dirname, '..', 'logs');
+    const logPath = path.join(logsDir, req.params.filename);
+    
+    // Security check - ensure path is within logs directory
+    if (!logPath.startsWith(logsDir)) {
+      return res.status(403).json({ success: false, error: 'Invalid path' });
+    }
+    
+    if (!fs.existsSync(logPath)) {
+      return res.status(404).json({ success: false, error: 'Log file not found' });
+    }
+    
+    res.download(logPath);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get debug summary (quick health check)
+app.get('/api/debug/summary', (req, res) => {
+  try {
+    const logsDir = path.join(__dirname, '..', 'logs');
+    const keysDir = path.join(__dirname, '..', 'keys');
+    const currentRunPath = path.join(keysDir, 'current-run.json');
+    
+    // Get current run info
+    let currentRun = null;
+    if (fs.existsSync(currentRunPath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+        currentRun = {
+          mintAddress: data.mintAddress?.slice(0, 12) + '...',
+          launchStatus: data.launchStatus,
+          walletsCount: (data.holderWalletKeys?.length || 0) + (data.bundleWalletKeys?.length || 0) + 1,
+        };
+      } catch (e) {}
+    }
+    
+    // Get tracker stats
+    const trackerStats = {
+      ourWalletsCount: pumpPortalTracker.ourWallets?.size || 0,
+      currentMint: pumpPortalTracker.currentMintAddress?.slice(0, 12) + '...',
+      externalNetVolume: pumpPortalTracker.externalNetVolume?.toFixed(3),
+      isConnected: pumpPortalTracker.isConnected,
+      tradesTracked: pumpPortalTracker.tradeCache?.get(pumpPortalTracker.currentMintAddress)?.length || 0,
+    };
+    
+    // Get wallet P&L summary (including fees)
+    const walletPnL = [];
+    if (pumpPortalTracker.walletProfits) {
+      for (const [addr, data] of pumpPortalTracker.walletProfits) {
+        walletPnL.push({
+          wallet: (pumpPortalTracker.walletLabels?.get(addr) || addr.slice(0, 8)),
+          buys: data.buys?.toFixed(3),
+          sells: data.sells?.toFixed(3),
+          fees: data.fees?.toFixed(4) || '0.0000',
+          profit: data.profit?.toFixed(3),
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      currentRun,
+      tracker: trackerStats,
+      walletPnL,
+      logFile: debugLogger.getLogFilePath(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Force P&L recalculation
+app.post('/api/debug/recalculate-pnl', (req, res) => {
+  try {
+    debugLogger.log('DEBUG', 'Manual P&L recalculation triggered');
+    pumpPortalTracker.recalculateProfitsFromCache();
+    
+    // Get updated stats
+    const walletPnL = [];
+    for (const [addr, data] of pumpPortalTracker.walletProfits) {
+      walletPnL.push({
+        wallet: (pumpPortalTracker.walletLabels?.get(addr) || addr.slice(0, 8)),
+        buys: data.buys?.toFixed(4),
+        sells: data.sells?.toFixed(4),
+        profit: data.profit?.toFixed(4),
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'P&L recalculated from cache',
+      externalNetVolume: pumpPortalTracker.externalNetVolume?.toFixed(4),
+      walletPnL,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Force wallet reload
+app.post('/api/debug/reload-wallets', (req, res) => {
+  try {
+    debugLogger.log('DEBUG', 'Manual wallet reload triggered');
+    pumpPortalTracker.reloadFromCurrentRun();
+    
+    res.json({
+      success: true,
+      message: 'Wallets reloaded',
+      walletsCount: pumpPortalTracker.ourWallets?.size || 0,
+      walletTypes: Object.fromEntries(pumpPortalTracker.walletTypes || new Map()),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// QUICK FUND WALLETS - Instant wallet funding without bundles/LUTs
+// =====================================================
+
+// Quick fund multiple wallets in parallel (for external buys after launch)
+app.post('/api/quick-fund', async (req, res) => {
+  try {
+    debugLogger.log('QUICK-FUND', 'Quick fund request received');
+    
+    const { wallets, amounts } = req.body;
+    // wallets: array of wallet addresses OR 'holder' | 'bundle' | 'all'
+    // amounts: single number OR array of numbers matching wallets
+    
+    if (!wallets) {
+      return res.status(400).json({ success: false, error: 'wallets parameter required' });
+    }
+    
+    const env = readEnvFile();
+    if (!env.PRIVATE_KEY) {
+      return res.status(400).json({ success: false, error: 'PRIVATE_KEY not set in .env' });
+    }
+    
+    const connection = new Connection(
+      env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com',
+      { commitment: 'confirmed' }
+    );
+    
+    const fundingWallet = Keypair.fromSecretKey(base58.decode(env.PRIVATE_KEY));
+    console.log(`[Quick Fund] Funding wallet: ${fundingWallet.publicKey.toBase58()}`);
+    
+    // Resolve wallet addresses
+    let targetWallets = [];
+    const keysDir = path.join(__dirname, '..', 'keys');
+    const currentRunPath = path.join(keysDir, 'current-run.json');
+    
+    if (typeof wallets === 'string') {
+      // Load from current-run.json
+      if (!fs.existsSync(currentRunPath)) {
+        return res.status(400).json({ success: false, error: 'No current run found' });
+      }
+      
+      const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+      
+      if (wallets === 'holder' || wallets === 'all') {
+        if (currentRun.holderWalletKeys) {
+          for (const key of currentRun.holderWalletKeys) {
+            const kp = Keypair.fromSecretKey(base58.decode(key));
+            targetWallets.push({ address: kp.publicKey.toBase58(), keypair: kp, type: 'holder' });
+          }
+        }
+      }
+      if (wallets === 'bundle' || wallets === 'all') {
+        if (currentRun.bundleWalletKeys) {
+          for (const key of currentRun.bundleWalletKeys) {
+            const kp = Keypair.fromSecretKey(base58.decode(key));
+            targetWallets.push({ address: kp.publicKey.toBase58(), keypair: kp, type: 'bundle' });
+          }
+        }
+      }
+    } else if (Array.isArray(wallets)) {
+      // Direct addresses or keys
+      for (const w of wallets) {
+        if (w.length > 50) {
+          // Assume it's a private key
+          const kp = Keypair.fromSecretKey(base58.decode(w));
+          targetWallets.push({ address: kp.publicKey.toBase58(), keypair: kp, type: 'custom' });
+        } else {
+          // Assume it's an address
+          targetWallets.push({ address: w, keypair: null, type: 'custom' });
+        }
+      }
+    }
+    
+    if (targetWallets.length === 0) {
+      return res.status(400).json({ success: false, error: 'No wallets found to fund' });
+    }
+    
+    // Resolve amounts
+    let fundingAmounts = [];
+    if (typeof amounts === 'number') {
+      fundingAmounts = Array(targetWallets.length).fill(amounts);
+    } else if (Array.isArray(amounts)) {
+      fundingAmounts = amounts;
+      while (fundingAmounts.length < targetWallets.length) {
+        fundingAmounts.push(amounts[0] || 0.1); // Default to 0.1 SOL
+      }
+    } else {
+      fundingAmounts = Array(targetWallets.length).fill(0.1); // Default 0.1 SOL each
+    }
+    
+    console.log(`[Quick Fund] Funding ${targetWallets.length} wallet(s) with amounts: ${fundingAmounts.join(', ')}`);
+    
+    // Check funding wallet balance
+    const fundingBalance = await connection.getBalance(fundingWallet.publicKey);
+    const totalNeeded = fundingAmounts.reduce((a, b) => a + b, 0) + (0.001 * targetWallets.length); // Add fee buffer
+    
+    if (fundingBalance / LAMPORTS_PER_SOL < totalNeeded) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Insufficient balance. Have ${(fundingBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL, need ${totalNeeded.toFixed(4)} SOL` 
+      });
+    }
+    
+    // Fund wallets in parallel batches
+    const batchSize = 5;
+    const results = [];
+    
+    for (let i = 0; i < targetWallets.length; i += batchSize) {
+      const batch = targetWallets.slice(i, i + batchSize);
+      const batchAmounts = fundingAmounts.slice(i, i + batchSize);
+      
+      const batchResults = await Promise.all(batch.map(async (wallet, idx) => {
+        try {
+          const amount = batchAmounts[idx];
+          const targetPubkey = new PublicKey(wallet.address);
+          
+          const latestBlockhash = await connection.getLatestBlockhash();
+          const transferMsg = new TransactionMessage({
+            payerKey: fundingWallet.publicKey,
+            recentBlockhash: latestBlockhash.blockhash,
+            instructions: [
+              SystemProgram.transfer({
+                fromPubkey: fundingWallet.publicKey,
+                toPubkey: targetPubkey,
+                lamports: Math.floor(amount * LAMPORTS_PER_SOL)
+              })
+            ]
+          }).compileToV0Message();
+          
+          const tx = new VersionedTransaction(transferMsg);
+          tx.sign([fundingWallet]);
+          
+          const sig = await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 });
+          await connection.confirmTransaction(sig, 'confirmed');
+          
+          const newBalance = await connection.getBalance(targetPubkey);
+          
+          debugLogger.log('QUICK-FUND', `✅ Funded ${wallet.address.slice(0, 8)}... with ${amount} SOL`);
+          
+          return {
+            address: wallet.address,
+            type: wallet.type,
+            amount,
+            success: true,
+            signature: sig,
+            newBalance: newBalance / LAMPORTS_PER_SOL
+          };
+        } catch (error) {
+          debugLogger.log('QUICK-FUND', `❌ Failed to fund ${wallet.address.slice(0, 8)}...: ${error.message}`);
+          return {
+            address: wallet.address,
+            type: wallet.type,
+            amount: batchAmounts[idx],
+            success: false,
+            error: error.message
+          };
+        }
+      }));
+      
+      results.push(...batchResults);
+      
+      // Small delay between batches
+      if (i + batchSize < targetWallets.length) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    
+    const successCount = results.filter(r => r.success).length;
+    const totalFunded = results.filter(r => r.success).reduce((sum, r) => sum + r.amount, 0);
+    
+    res.json({
+      success: true,
+      funded: successCount,
+      total: targetWallets.length,
+      totalSol: totalFunded,
+      results
+    });
+    
+  } catch (error) {
+    debugLogger.log('QUICK-FUND', `Error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get quick fund presets (holder/bundle wallet info for UI)
+app.get('/api/quick-fund/presets', async (req, res) => {
+  try {
+    const keysDir = path.join(__dirname, '..', 'keys');
+    const currentRunPath = path.join(keysDir, 'current-run.json');
+    
+    if (!fs.existsSync(currentRunPath)) {
+      return res.json({ success: true, presets: [] });
+    }
+    
+    const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+    const env = readEnvFile();
+    const connection = new Connection(
+      env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com',
+      { commitment: 'confirmed' }
+    );
+    
+    const presets = [];
+    
+    // Holder wallets
+    if (currentRun.holderWalletKeys && currentRun.holderWalletKeys.length > 0) {
+      const holderWallets = [];
+      for (let i = 0; i < currentRun.holderWalletKeys.length; i++) {
+        const kp = Keypair.fromSecretKey(base58.decode(currentRun.holderWalletKeys[i]));
+        const balance = await connection.getBalance(kp.publicKey);
+        holderWallets.push({
+          address: kp.publicKey.toBase58(),
+          balance: balance / LAMPORTS_PER_SOL
+        });
+      }
+      presets.push({
+        id: 'holder',
+        name: 'Holder Wallets',
+        wallets: holderWallets,
+        count: holderWallets.length
+      });
+    }
+    
+    // Bundle wallets
+    if (currentRun.bundleWalletKeys && currentRun.bundleWalletKeys.length > 0) {
+      const bundleWallets = [];
+      for (let i = 0; i < currentRun.bundleWalletKeys.length; i++) {
+        const kp = Keypair.fromSecretKey(base58.decode(currentRun.bundleWalletKeys[i]));
+        const balance = await connection.getBalance(kp.publicKey);
+        bundleWallets.push({
+          address: kp.publicKey.toBase58(),
+          balance: balance / LAMPORTS_PER_SOL
+        });
+      }
+      presets.push({
+        id: 'bundle',
+        name: 'Bundle Wallets',
+        wallets: bundleWallets,
+        count: bundleWallets.length
+      });
+    }
+    
+    res.json({ success: true, presets, mintAddress: currentRun.mintAddress });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// CROSS-CHAIN PRIVATE FUNDING (SOL → ETH → SOL)
+// =====================================================
+
+const EVM_WALLETS_PATH = path.join(__dirname, '..', 'keys', 'evm-intermediary-wallets.json');
+
+// Helper to load/save EVM intermediary wallets
+function loadEvmIntermediaryWallets() {
+  try {
+    if (fs.existsSync(EVM_WALLETS_PATH)) {
+      return JSON.parse(fs.readFileSync(EVM_WALLETS_PATH, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[Private Funding] Error loading EVM wallets:', e.message);
+  }
+  return { description: "EVM intermediary wallets for cross-chain private funding", wallets: [] };
+}
+
+function saveEvmIntermediaryWallets(data) {
+  fs.writeFileSync(EVM_WALLETS_PATH, JSON.stringify(data, null, 2));
+}
+
+// Get EVM intermediary wallets
+app.get('/api/private-funding/intermediary-wallets', (req, res) => {
+  try {
+    const data = loadEvmIntermediaryWallets();
+    res.json({ success: true, wallets: data.wallets });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create new EVM intermediary wallet
+app.post('/api/private-funding/create-intermediary', async (req, res) => {
+  try {
+    const { ethers } = require('ethers');
+    const wallet = ethers.Wallet.createRandom();
+    
+    const intermediaryWallet = {
+      id: `evm-${Date.now()}`,
+      address: wallet.address,
+      privateKey: wallet.privateKey,
+      createdAt: new Date().toISOString(),
+      chain: 'ethereum', // Default to Ethereum mainnet
+      status: 'empty',
+      solSource: null, // Will be set when SOL is bridged in
+      solDestinations: [], // Will be set when funding wallets
+    };
+    
+    const data = loadEvmIntermediaryWallets();
+    data.wallets.push(intermediaryWallet);
+    saveEvmIntermediaryWallets(data);
+    
+    console.log(`[Private Funding] Created EVM intermediary wallet: ${wallet.address}`);
+    
+    res.json({ 
+      success: true, 
+      wallet: {
+        id: intermediaryWallet.id,
+        address: intermediaryWallet.address,
+        createdAt: intermediaryWallet.createdAt,
+      }
+    });
+  } catch (error) {
+    console.error('[Private Funding] Error creating intermediary wallet:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Check EVM wallet balance
+app.post('/api/private-funding/check-balance', async (req, res) => {
+  try {
+    const { address, chain = 'ethereum' } = req.body;
+    const { ethers } = require('ethers');
+    
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.ethereum);
+    const balance = await provider.getBalance(address);
+    
+    res.json({
+      success: true,
+      address,
+      chain,
+      balance: ethers.formatEther(balance),
+      balanceWei: balance.toString(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Step 1: Bridge SOL to ETH (SOL → EVM intermediary)
+app.post('/api/private-funding/bridge-sol-to-eth', async (req, res) => {
+  try {
+    const { sourcePrivateKey, intermediaryAddress, amount, chain = 'base' } = req.body;
+    
+    if (!sourcePrivateKey || !intermediaryAddress || !amount) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+    
+    console.log(`[Private Funding] Starting SOL → ${chain.toUpperCase()} bridge...`);
+    console.log(`[Private Funding] Amount: ${amount} SOL → ${intermediaryAddress}`);
+    
+    // Use Connection, Keypair, LAMPORTS_PER_SOL already imported at top of file
+    // Use base58 already defined at top of file
+    
+    // Setup Solana connection
+    const solRpcUrl = process.env.SOL_RPC_URL || process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+    const connection = new Connection(solRpcUrl, 'confirmed');
+    
+    // Create keypair from private key (supports multiple formats)
+    let keypair;
+    try {
+      const trimmedKey = sourcePrivateKey.trim();
+      let secretKey;
+      
+      // Try JSON array format first (e.g., [1,2,3,...])
+      if (trimmedKey.startsWith('[')) {
+        try {
+          const jsonArray = JSON.parse(trimmedKey);
+          secretKey = new Uint8Array(jsonArray);
+        } catch {
+          throw new Error('Invalid JSON array format');
+        }
+      } 
+      // Try base58 format (e.g., from Phantom)
+      else {
+        try {
+          secretKey = base58.decode(trimmedKey);
+        } catch {
+          throw new Error('Invalid base58 format');
+        }
+      }
+      
+      // Validate key length (should be 64 bytes for full keypair or 32 for seed)
+      if (secretKey.length === 32) {
+        // It's a seed, need to derive keypair
+        keypair = Keypair.fromSeed(secretKey);
+      } else if (secretKey.length === 64) {
+        keypair = Keypair.fromSecretKey(secretKey);
+      } else {
+        throw new Error(`Invalid key length: ${secretKey.length} bytes (expected 32 or 64)`);
+      }
+    } catch (e) {
+      console.error('[Private Funding] Private key parse error:', e.message);
+      return res.status(400).json({ 
+        success: false, 
+        error: `Invalid Solana private key: ${e.message}. Use base58 (from Phantom) or JSON array format.` 
+      });
+    }
+    
+    // Check balance
+    const balance = await connection.getBalance(keypair.publicKey);
+    const amountLamports = Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL);
+    
+    if (balance < amountLamports + 10000) { // 10000 lamports for fees
+      return res.status(400).json({ 
+        success: false, 
+        error: `Insufficient balance. Have ${balance / LAMPORTS_PER_SOL} SOL, need ${amount} SOL + fees` 
+      });
+    }
+    
+    // Import Mayan SDK
+    let fetchQuote, swapFromSolana;
+    try {
+      const mayanSdk = require('@mayanfinance/swap-sdk');
+      fetchQuote = mayanSdk.fetchQuote;
+      swapFromSolana = mayanSdk.swapFromSolana;
+    } catch (e) {
+      return res.status(500).json({ success: false, error: 'Mayan SDK not installed' });
+    }
+    
+    // Chain mapping
+    const chainMap = { ethereum: 'ethereum', base: 'base', bsc: 'bsc' };
+    const toChain = chainMap[chain] || 'base';
+    
+    // Get quote
+    console.log(`[Private Funding] Fetching Mayan quote...`);
+    const quotes = await fetchQuote({
+      amountIn64: amountLamports.toString(),
+      fromToken: '0x0000000000000000000000000000000000000000', // Native SOL
+      toToken: '0x0000000000000000000000000000000000000000', // Native ETH
+      fromChain: 'solana',
+      toChain: toChain,
+      slippageBps: 100, // 1% slippage
+    });
+    
+    if (!quotes || quotes.length === 0) {
+      return res.status(400).json({ success: false, error: 'No quotes available from Mayan' });
+    }
+    
+    const quote = quotes[0];
+    console.log(`[Private Funding] Quote: ${amount} SOL → ~${quote.expectedAmountOut || quote.minAmountOut} ETH`);
+    
+    // Create a signTransaction function that the SDK expects
+    const signTransaction = async (transaction) => {
+      // Check if it's a VersionedTransaction (has version property)
+      if (transaction.version !== undefined) {
+        // VersionedTransaction - sign expects array of keypairs
+        transaction.sign([keypair]);
+      } else if (transaction.partialSign) {
+        // Legacy Transaction - use partialSign with single keypair
+        transaction.partialSign(keypair);
+      } else {
+        // Fallback
+        transaction.sign(keypair);
+      }
+      return transaction;
+    };
+    
+    // Execute swap
+    console.log(`[Private Funding] Executing swap...`);
+    const result = await swapFromSolana(
+      quote,
+      keypair.publicKey.toBase58(),
+      intermediaryAddress,
+      null, // referrer
+      signTransaction, // signing function
+      connection,
+      null // payload
+    );
+    
+    const signature = typeof result === 'string' ? result : result.signature;
+    console.log(`[Private Funding] ✅ SOL → ETH bridge initiated: ${signature}`);
+    
+    // Update intermediary wallet status
+    const data = loadEvmIntermediaryWallets();
+    const wallet = data.wallets.find(w => w.address.toLowerCase() === intermediaryAddress.toLowerCase());
+    if (wallet) {
+      wallet.status = 'pending_inbound';
+      wallet.solSource = keypair.publicKey.toBase58();
+      wallet.inboundTx = signature;
+      wallet.inboundAmount = amount;
+      wallet.inboundChain = chain;
+      wallet.lastUpdated = new Date().toISOString();
+      saveEvmIntermediaryWallets(data);
+    }
+    
+    res.json({
+      success: true,
+      signature,
+      expectedEth: quote.expectedAmountOut || quote.minAmountOut,
+      message: `SOL → ${chain.toUpperCase()} bridge initiated. Funds should arrive in 2-5 minutes.`,
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] SOL → ETH bridge error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Step 2: Bridge ETH to SOL (EVM intermediary → Solana wallets)
+app.post('/api/private-funding/bridge-eth-to-sol', async (req, res) => {
+  try {
+    let { intermediaryPrivateKey, intermediaryId, destinationAddresses, amountPerWallet, chain = 'base' } = req.body;
+    
+    // If intermediaryId provided, look up the private key
+    if (!intermediaryPrivateKey && intermediaryId) {
+      try {
+        const evmWalletsPath = path.join(__dirname, '..', 'keys', 'evm-intermediary-wallets.json');
+        if (fs.existsSync(evmWalletsPath)) {
+          const evmWallets = JSON.parse(fs.readFileSync(evmWalletsPath, 'utf-8'));
+          const wallet = evmWallets.find(w => w.id === intermediaryId);
+          if (wallet) {
+            intermediaryPrivateKey = wallet.privateKey;
+            console.log(`[Private Funding] Loaded intermediary wallet: ${wallet.address.slice(0, 10)}...`);
+          }
+        }
+      } catch (e) {
+        console.error('[Private Funding] Failed to load intermediary wallet:', e.message);
+      }
+    }
+    
+    if (!intermediaryPrivateKey || !destinationAddresses || destinationAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Missing required fields (intermediaryPrivateKey or intermediaryId, and destinationAddresses)' });
+    }
+    
+    console.log(`[Private Funding] Starting ${chain.toUpperCase()} → SOL bridge...`);
+    console.log(`[Private Funding] Destinations: ${destinationAddresses.length} wallets`);
+    
+    const { ethers } = require('ethers');
+    
+    // RPC setup
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+    const wallet = new ethers.Wallet(intermediaryPrivateKey, provider);
+    
+    // Check balance
+    const balance = await provider.getBalance(wallet.address);
+    console.log(`[Private Funding] Intermediary balance: ${ethers.formatEther(balance)} ETH`);
+    
+    // Import Mayan SDK
+    let fetchQuote, swapFromEvm;
+    try {
+      const mayanSdk = require('@mayanfinance/swap-sdk');
+      fetchQuote = mayanSdk.fetchQuote;
+      swapFromEvm = mayanSdk.swapFromEvm;
+    } catch (e) {
+      return res.status(500).json({ success: false, error: 'Mayan SDK not installed' });
+    }
+    
+    const results = [];
+    const totalDestinations = destinationAddresses.length;
+    
+    // Estimate actual gas cost for Base/Ethereum swaps
+    const feeData = await provider.getFeeData();
+    const estimatedGasPerTx = 150000n; // Typical gas for Mayan swap
+    const gasCostPerTx = (feeData.gasPrice || ethers.parseUnits('1', 'gwei')) * estimatedGasPerTx;
+    const totalGasCost = gasCostPerTx * BigInt(totalDestinations);
+    const safetyBuffer = ethers.parseEther('0.0001'); // Small buffer for price fluctuations
+    
+    console.log(`[Private Funding] Estimated gas per tx: ${ethers.formatEther(gasCostPerTx)} ETH`);
+    console.log(`[Private Funding] Total gas reserve: ${ethers.formatEther(totalGasCost + safetyBuffer)} ETH`);
+    
+    // Calculate amount per wallet (either specified or split evenly)
+    let amountWei;
+    if (amountPerWallet) {
+      amountWei = ethers.parseEther(amountPerWallet.toString());
+    } else {
+      // Reserve only actual gas needed and split rest evenly
+      const available = balance > (totalGasCost + safetyBuffer) ? balance - totalGasCost - safetyBuffer : 0n;
+      amountWei = available / BigInt(totalDestinations);
+    }
+    
+    console.log(`[Private Funding] Amount per wallet: ${ethers.formatEther(amountWei)} ETH`);
+    
+    for (const destAddress of destinationAddresses) {
+      try {
+        // Check remaining balance - use actual gas estimate
+        const currentBalance = await provider.getBalance(wallet.address);
+        
+        if (currentBalance < amountWei + gasCostPerTx) {
+          console.log(`[Private Funding] Insufficient balance for ${destAddress}, skipping`);
+          results.push({ destination: destAddress, success: false, error: 'Insufficient balance' });
+          continue;
+        }
+        
+        // Get quote
+        const quotes = await fetchQuote({
+          amountIn64: amountWei.toString(),
+          fromToken: '0x0000000000000000000000000000000000000000', // Native ETH
+          toToken: '0x0000000000000000000000000000000000000000', // Native SOL
+          fromChain: chain,
+          toChain: 'solana',
+          slippageBps: 100,
+        });
+        
+        if (!quotes || quotes.length === 0) {
+          results.push({ destination: destAddress, success: false, error: 'No quotes available' });
+          continue;
+        }
+        
+        const quote = quotes[0];
+        console.log(`[Private Funding] ${destAddress.slice(0, 8)}... → ~${quote.expectedAmountOut || quote.minAmountOut} SOL`);
+        
+        // Execute swap
+        const swapResult = await swapFromEvm(
+          quote,
+          wallet.address,
+          destAddress,
+          null, // referrer
+          wallet, // signer
+          null, // permit
+          null, // overrides
+          null // payload
+        );
+        
+        const txHash = typeof swapResult === 'string' ? swapResult : swapResult.hash;
+        console.log(`[Private Funding] ✅ Sent to ${destAddress.slice(0, 8)}...: ${txHash}`);
+        
+        results.push({
+          destination: destAddress,
+          success: true,
+          txHash,
+          expectedSol: quote.expectedAmountOut || quote.minAmountOut,
+        });
+        
+        // Wait a bit between transactions
+        await new Promise(r => setTimeout(r, 2000));
+        
+      } catch (error) {
+        console.error(`[Private Funding] Error bridging to ${destAddress}:`, error.message);
+        results.push({ destination: destAddress, success: false, error: error.message });
+      }
+    }
+    
+    // Update intermediary wallet status
+    const data = loadEvmIntermediaryWallets();
+    const intermediaryWallet = data.wallets.find(w => 
+      w.privateKey && w.privateKey.toLowerCase() === intermediaryPrivateKey.toLowerCase()
+    );
+    if (intermediaryWallet) {
+      intermediaryWallet.status = 'distributed';
+      intermediaryWallet.solDestinations = destinationAddresses;
+      intermediaryWallet.outboundResults = results;
+      intermediaryWallet.lastUpdated = new Date().toISOString();
+      saveEvmIntermediaryWallets(data);
+    }
+    
+    const successCount = results.filter(r => r.success).length;
+    
+    res.json({
+      success: successCount > 0,
+      message: `${successCount}/${totalDestinations} wallets funded via cross-chain bridge`,
+      results,
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] ETH → SOL bridge error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get available SOL wallets for private funding source
+app.get('/api/private-funding/sol-wallets', async (req, res) => {
+  console.log('[Private Funding] Fetching SOL wallets...');
+  try {
+    const solRpcUrl = process.env.SOL_RPC_URL || process.env.SOLANA_RPC_URL || process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    console.log('[Private Funding] Using RPC:', solRpcUrl);
+    const connection = new Connection(solRpcUrl, 'confirmed');
+    
+    const wallets = [];
+    
+    // Add main funding wallet from .env
+    const mainPrivateKey = process.env.PRIVATE_KEY;
+    if (mainPrivateKey) {
+      try {
+        const trimmedKey = mainPrivateKey.trim();
+        let secretKey;
+        
+        if (trimmedKey.startsWith('[')) {
+          secretKey = new Uint8Array(JSON.parse(trimmedKey));
+        } else {
+          // Use base58 which is already defined at the top of the file
+          secretKey = base58.decode(trimmedKey);
+        }
+        
+        let keypair;
+        if (secretKey.length === 32) {
+          keypair = Keypair.fromSeed(secretKey);
+        } else {
+          keypair = Keypair.fromSecretKey(secretKey);
+        }
+        
+        const balance = await connection.getBalance(keypair.publicKey);
+        wallets.push({
+          id: 'main',
+          label: '💰 Main Funding Wallet',
+          address: keypair.publicKey.toBase58(),
+          balance: (balance / LAMPORTS_PER_SOL).toFixed(4),
+          type: 'main',
+        });
+      } catch (e) {
+        console.error('[Private Funding] Error loading main wallet:', e.message);
+      }
+    }
+    
+    // Add warming wallets
+    const warmingWalletsPath = path.join(__dirname, '..', 'keys', 'warming-wallets.json');
+    if (fs.existsSync(warmingWalletsPath)) {
+      try {
+        const warmingData = JSON.parse(fs.readFileSync(warmingWalletsPath, 'utf8'));
+        const warmingWallets = warmingData.wallets || [];
+        
+        // Get balances for warming wallets (limit to first 20 with balance)
+        let count = 0;
+        for (const wallet of warmingWallets) {
+          if (count >= 20) break;
+          
+          try {
+            const { PublicKey } = require('@solana/web3.js');
+            const pubkey = new PublicKey(wallet.address);
+            const balance = await connection.getBalance(pubkey);
+            
+            if (balance > 0) {
+              wallets.push({
+                id: wallet.address,
+                label: `🔥 Warming: ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`,
+                address: wallet.address,
+                balance: (balance / LAMPORTS_PER_SOL).toFixed(4),
+                type: 'warming',
+                tags: wallet.tags || [],
+              });
+              count++;
+            }
+          } catch (e) {
+            // Skip invalid wallets
+          }
+        }
+      } catch (e) {
+        console.error('[Private Funding] Error loading warming wallets:', e.message);
+      }
+    }
+    
+    console.log(`[Private Funding] Found ${wallets.length} SOL wallets`);
+    res.json({ success: true, wallets });
+  } catch (error) {
+    console.error('[Private Funding] Error getting SOL wallets:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Bridge from wallet ID (uses stored private key)
+app.post('/api/private-funding/bridge-from-wallet', async (req, res) => {
+  try {
+    const { walletId, intermediaryAddress, amount, chain = 'base' } = req.body;
+    
+    if (!walletId || !intermediaryAddress || !amount) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+    
+    console.log(`[Private Funding] Bridge from wallet ${walletId} to ${intermediaryAddress}`);
+    
+    // Use Connection, Keypair, LAMPORTS_PER_SOL already imported at top of file
+    // Use base58 already defined at top of file
+    
+    let sourcePrivateKey;
+    
+    // Get private key based on wallet ID
+    if (walletId === 'main') {
+      sourcePrivateKey = process.env.PRIVATE_KEY;
+    } else {
+      // Find warming wallet
+      const warmingWalletsPath = path.join(__dirname, '..', 'keys', 'warming-wallets.json');
+      if (fs.existsSync(warmingWalletsPath)) {
+        const warmingData = JSON.parse(fs.readFileSync(warmingWalletsPath, 'utf8'));
+        const wallet = warmingData.wallets?.find(w => w.address === walletId);
+        if (wallet) {
+          sourcePrivateKey = wallet.privateKey;
+        }
+      }
+    }
+    
+    if (!sourcePrivateKey) {
+      return res.status(400).json({ success: false, error: 'Wallet not found' });
+    }
+    
+    // Setup Solana connection
+    const solRpcUrl = process.env.SOL_RPC_URL || process.env.SOLANA_RPC_URL || process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const connection = new Connection(solRpcUrl, 'confirmed');
+    
+    // Parse private key
+    let keypair;
+    try {
+      const trimmedKey = sourcePrivateKey.trim();
+      let secretKey;
+      
+      if (trimmedKey.startsWith('[')) {
+        secretKey = new Uint8Array(JSON.parse(trimmedKey));
+      } else {
+        // Use base58 which is already defined at top of file
+        secretKey = base58.decode(trimmedKey);
+      }
+      
+      if (secretKey.length === 32) {
+        keypair = Keypair.fromSeed(secretKey);
+      } else {
+        keypair = Keypair.fromSecretKey(secretKey);
+      }
+    } catch (e) {
+      return res.status(400).json({ success: false, error: 'Invalid wallet private key' });
+    }
+    
+    // Check balance
+    const balance = await connection.getBalance(keypair.publicKey);
+    const amountLamports = Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL);
+    
+    if (balance < amountLamports + 10000) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Insufficient balance. Have ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL, need ${amount} SOL + fees` 
+      });
+    }
+    
+    // Import Mayan SDK
+    let fetchQuote, swapFromSolana;
+    try {
+      const mayanSdk = require('@mayanfinance/swap-sdk');
+      fetchQuote = mayanSdk.fetchQuote;
+      swapFromSolana = mayanSdk.swapFromSolana;
+    } catch (e) {
+      return res.status(500).json({ success: false, error: 'Mayan SDK not installed' });
+    }
+    
+    // Chain mapping
+    const chainMap = { ethereum: 'ethereum', base: 'base', bsc: 'bsc' };
+    const toChain = chainMap[chain] || 'base';
+    
+    // Get quote
+    console.log(`[Private Funding] Fetching Mayan quote for ${amount} SOL → ${toChain}...`);
+    const quotes = await fetchQuote({
+      amountIn64: amountLamports.toString(),
+      fromToken: '0x0000000000000000000000000000000000000000', // Native SOL
+      toToken: '0x0000000000000000000000000000000000000000', // Native ETH
+      fromChain: 'solana',
+      toChain: toChain,
+      slippageBps: 100, // 1% slippage
+    });
+    
+    if (!quotes || quotes.length === 0) {
+      return res.status(400).json({ success: false, error: 'No quotes available from Mayan' });
+    }
+    
+    const quote = quotes[0];
+    console.log(`[Private Funding] Quote: ${amount} SOL → ~${quote.expectedAmountOut || quote.minAmountOut} ETH`);
+    
+    // Create a signTransaction function that the SDK expects
+    const signTransaction = async (transaction) => {
+      // Check if it's a VersionedTransaction (has version property)
+      if (transaction.version !== undefined) {
+        // VersionedTransaction - sign expects array of keypairs
+        transaction.sign([keypair]);
+      } else if (transaction.partialSign) {
+        // Legacy Transaction - use partialSign with single keypair
+        transaction.partialSign(keypair);
+      } else {
+        // Fallback
+        transaction.sign(keypair);
+      }
+      return transaction;
+    };
+    
+    // Execute swap
+    console.log(`[Private Funding] Executing swap...`);
+    const result = await swapFromSolana(
+      quote,
+      keypair.publicKey.toBase58(),
+      intermediaryAddress,
+      null, // referrer
+      signTransaction, // signing function
+      connection,
+      null // payload
+    );
+    
+    const signature = typeof result === 'string' ? result : result.signature;
+    console.log(`[Private Funding] ✅ SOL → ETH bridge initiated: ${signature}`);
+    
+    // Update intermediary wallet status
+    const data = loadEvmIntermediaryWallets();
+    const wallet = data.wallets.find(w => w.address.toLowerCase() === intermediaryAddress.toLowerCase());
+    if (wallet) {
+      wallet.status = 'pending_inbound';
+      wallet.solSource = keypair.publicKey.toBase58();
+      wallet.inboundTx = signature;
+      wallet.inboundAmount = amount;
+      wallet.inboundChain = chain;
+      wallet.lastUpdated = new Date().toISOString();
+      saveEvmIntermediaryWallets(data);
+    }
+    
+    res.json({
+      success: true,
+      signature,
+      expectedEth: quote.expectedAmountOut || quote.minAmountOut,
+      message: `SOL → ${chain.toUpperCase()} bridge initiated. Funds should arrive in 2-5 minutes.`,
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] Bridge from wallet error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get status of all intermediary wallets with balances
+app.get('/api/private-funding/status', async (req, res) => {
+  try {
+    const { ethers } = require('ethers');
+    const data = loadEvmIntermediaryWallets();
+    
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    
+    const walletsWithBalances = await Promise.all(
+      data.wallets.map(async (wallet) => {
+        try {
+          const chain = wallet.inboundChain || wallet.chain || 'base';
+          const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+          const balance = await provider.getBalance(wallet.address);
+          return {
+            ...wallet,
+            privateKey: undefined, // Don't expose private key
+            balance: ethers.formatEther(balance),
+            hasBalance: balance > 0n,
+          };
+        } catch (e) {
+          return { ...wallet, privateKey: undefined, balance: '?', error: e.message };
+        }
+      })
+    );
+    
+    res.json({ success: true, wallets: walletsWithBalances });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// CROSS-CHAIN BALANCE POLLING & AUTOMATED FLOWS
+// =====================================================
+
+// Poll and wait for ETH balance on intermediary wallet
+app.post('/api/private-funding/wait-for-eth-balance', async (req, res) => {
+  try {
+    const { intermediaryAddress, minBalance = 0.001, timeoutSeconds = 300, chain = 'base' } = req.body;
+    
+    if (!intermediaryAddress) {
+      return res.status(400).json({ success: false, error: 'Missing intermediary address' });
+    }
+    
+    const { ethers } = require('ethers');
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+    const minBalanceWei = ethers.parseEther(minBalance.toString());
+    
+    console.log(`[Private Funding] Waiting for ETH balance on ${intermediaryAddress}...`);
+    console.log(`[Private Funding] Min balance: ${minBalance} ETH, Timeout: ${timeoutSeconds}s`);
+    
+    const startTime = Date.now();
+    let attempts = 0;
+    
+    while (Date.now() - startTime < timeoutSeconds * 1000) {
+      attempts++;
+      const balance = await provider.getBalance(intermediaryAddress);
+      const balanceEth = parseFloat(ethers.formatEther(balance));
+      
+      console.log(`[Private Funding] Poll #${attempts}: ${balanceEth.toFixed(6)} ETH`);
+      
+      if (balance >= minBalanceWei) {
+        console.log(`[Private Funding] ✅ ETH balance received: ${balanceEth.toFixed(6)} ETH`);
+        return res.json({
+          success: true,
+          balance: balanceEth,
+          attempts,
+          elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
+        });
+      }
+      
+      // Wait 10 seconds between polls
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
+    
+    // Timeout
+    const finalBalance = await provider.getBalance(intermediaryAddress);
+    return res.json({
+      success: false,
+      error: 'Timeout waiting for ETH balance',
+      balance: parseFloat(ethers.formatEther(finalBalance)),
+      attempts,
+      elapsedSeconds: timeoutSeconds
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] Wait for ETH error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Poll and wait for SOL balance on destination wallet
+app.post('/api/private-funding/wait-for-sol-balance', async (req, res) => {
+  try {
+    const { walletAddress, minBalance = 0.01, timeoutSeconds = 300 } = req.body;
+    
+    if (!walletAddress) {
+      return res.status(400).json({ success: false, error: 'Missing wallet address' });
+    }
+    
+    const connection = getConnection();
+    const pubkey = new PublicKey(walletAddress);
+    const minBalanceLamports = minBalance * LAMPORTS_PER_SOL;
+    
+    console.log(`[Private Funding] Waiting for SOL balance on ${walletAddress}...`);
+    console.log(`[Private Funding] Min balance: ${minBalance} SOL, Timeout: ${timeoutSeconds}s`);
+    
+    const startTime = Date.now();
+    let attempts = 0;
+    
+    while (Date.now() - startTime < timeoutSeconds * 1000) {
+      attempts++;
+      const balance = await connection.getBalance(pubkey);
+      const balanceSol = balance / LAMPORTS_PER_SOL;
+      
+      console.log(`[Private Funding] Poll #${attempts}: ${balanceSol.toFixed(6)} SOL`);
+      
+      if (balance >= minBalanceLamports) {
+        console.log(`[Private Funding] ✅ SOL balance received: ${balanceSol.toFixed(6)} SOL`);
+        return res.json({
+          success: true,
+          balance: balanceSol,
+          attempts,
+          elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
+        });
+      }
+      
+      // Wait 10 seconds between polls
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
+    
+    // Timeout
+    const finalBalance = await connection.getBalance(pubkey);
+    return res.json({
+      success: false,
+      error: 'Timeout waiting for SOL balance',
+      balance: finalBalance / LAMPORTS_PER_SOL,
+      attempts,
+      elapsedSeconds: timeoutSeconds
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] Wait for SOL error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Automated full flow: SOL → ETH intermediary → Wait → SOL to warming wallets
+// This is a LONG-RUNNING request that executes the full flow without intervention
+app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
+  try {
+    const { 
+      sourceWalletId,  // 'main' or warming wallet ID
+      destinationAddresses, 
+      totalAmount, 
+      chain = 'base',
+      createNewIntermediary = true
+    } = req.body;
+    
+    if (!sourceWalletId || !destinationAddresses || destinationAddresses.length === 0 || !totalAmount) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Private Funding] 🚀 AUTOMATED CROSS-CHAIN FUNDING`);
+    console.log(`[Private Funding] Source: ${sourceWalletId}`);
+    console.log(`[Private Funding] Destinations: ${destinationAddresses.length} wallets`);
+    console.log(`[Private Funding] Amount: ${totalAmount} SOL total`);
+    console.log(`[Private Funding] Chain: ${chain}`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    const { ethers } = require('ethers');
+    
+    // ========== STEP 1: Get source wallet private key ==========
+    console.log(`[Private Funding] Step 1: Getting source wallet...`);
+    let sourcePrivateKey;
+    
+    if (sourceWalletId === 'main') {
+      sourcePrivateKey = process.env.PRIVATE_KEY;
+    } else {
+      // Look up in warming wallets
+      const warmingWalletsPath = path.join(__dirname, '..', 'keys', 'warmed-wallets.json');
+      if (fs.existsSync(warmingWalletsPath)) {
+        const warmingData = JSON.parse(fs.readFileSync(warmingWalletsPath, 'utf-8'));
+        const wallet = warmingData.wallets?.find(w => w.address === sourceWalletId);
+        if (wallet) {
+          sourcePrivateKey = wallet.privateKey;
+        }
+      }
+    }
+    
+    if (!sourcePrivateKey) {
+      return res.status(400).json({ success: false, error: `Source wallet not found: ${sourceWalletId}` });
+    }
+    
+    // ========== STEP 2: Create intermediary EVM wallet ==========
+    console.log(`[Private Funding] Step 2: Creating intermediary wallet...`);
+    const evmWallet = ethers.Wallet.createRandom();
+    const intermediaryWallet = {
+      id: `evm-${Date.now()}`,
+      address: evmWallet.address,
+      privateKey: evmWallet.privateKey,
+      createdAt: new Date().toISOString(),
+      chain: chain,
+      purpose: 'auto-fund',
+      status: 'created',
+    };
+    
+    const evmData = loadEvmIntermediaryWallets();
+    evmData.wallets.push(intermediaryWallet);
+    saveEvmIntermediaryWallets(evmData);
+    console.log(`[Private Funding] ✅ Created intermediary: ${evmWallet.address}`);
+    
+    // ========== STEP 3: Bridge SOL → ETH ==========
+    console.log(`[Private Funding] Step 3: Bridging SOL → ETH (${chain})...`);
+    
+    const solRpcUrl = process.env.RPC_ENDPOINT || process.env.SOL_RPC_URL || 'https://api.mainnet-beta.solana.com';
+    const connection = new Connection(solRpcUrl, 'confirmed');
+    
+    const keypair = Keypair.fromSecretKey(base58.decode(sourcePrivateKey));
+    const amountLamports = Math.floor(parseFloat(totalAmount) * LAMPORTS_PER_SOL);
+    
+    // Check balance
+    const balance = await connection.getBalance(keypair.publicKey);
+    if (balance < amountLamports + 100000) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Insufficient balance. Have ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL, need ${totalAmount} SOL + fees` 
+      });
+    }
+    
+    // Import Mayan SDK
+    const mayanSdk = require('@mayanfinance/swap-sdk');
+    const { fetchQuote, swapFromSolana } = mayanSdk;
+    
+    // Get quote
+    console.log(`[Private Funding] Fetching Mayan quote for ${totalAmount} SOL...`);
+    const quotes = await fetchQuote({
+      amountIn64: amountLamports.toString(),
+      fromToken: '0x0000000000000000000000000000000000000000',
+      toToken: '0x0000000000000000000000000000000000000000',
+      fromChain: 'solana',
+      toChain: chain,
+      slippageBps: 100,
+    });
+    
+    if (!quotes || quotes.length === 0) {
+      return res.status(400).json({ success: false, error: 'No quotes available from Mayan for SOL → ETH' });
+    }
+    
+    const quote1 = quotes[0];
+    console.log(`[Private Funding] Quote: ${totalAmount} SOL → ~${quote1.expectedAmountOut || quote1.minAmountOut} ETH`);
+    
+    // Sign and execute
+    const signTransaction = async (transaction) => {
+      if (transaction.version !== undefined) {
+        transaction.sign([keypair]);
+      } else if (transaction.partialSign) {
+        transaction.partialSign(keypair);
+      } else {
+        transaction.sign(keypair);
+      }
+      return transaction;
+    };
+    
+    console.log(`[Private Funding] Executing SOL → ETH swap...`);
+    const result1 = await swapFromSolana(
+      quote1,
+      keypair.publicKey.toBase58(),
+      evmWallet.address,
+      null,
+      signTransaction,
+      connection,
+      null
+    );
+    
+    const sig1 = typeof result1 === 'string' ? result1 : result1.signature;
+    console.log(`[Private Funding] ✅ SOL → ETH initiated: ${sig1}`);
+    
+    // ========== STEP 4: Wait for ETH to arrive ==========
+    console.log(`[Private Funding] Step 4: Waiting for ETH to arrive on ${chain}...`);
+    
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+    
+    const minEthBalance = 0.0001; // Minimum ETH to consider arrived
+    const maxWaitTime = 10 * 60 * 1000; // 10 minutes
+    const pollInterval = 10 * 1000; // 10 seconds
+    const startTime = Date.now();
+    
+    let ethBalance = 0;
+    while (Date.now() - startTime < maxWaitTime) {
+      const balanceWei = await provider.getBalance(evmWallet.address);
+      ethBalance = parseFloat(ethers.formatEther(balanceWei));
+      
+      if (ethBalance >= minEthBalance) {
+        console.log(`[Private Funding] ✅ ETH arrived: ${ethBalance.toFixed(6)} ETH`);
+        break;
+      }
+      
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      console.log(`[Private Funding] Waiting for ETH... (${elapsed}s elapsed, balance: ${ethBalance.toFixed(6)} ETH)`);
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+    
+    if (ethBalance < minEthBalance) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `ETH did not arrive within timeout. Intermediary: ${evmWallet.address}` 
+      });
+    }
+    
+    // ========== STEP 5: Bridge ETH → SOL to destination wallets ==========
+    console.log(`[Private Funding] Step 5: Bridging ETH → SOL to ${destinationAddresses.length} wallets...`);
+    
+    const amountPerWallet = ethBalance / destinationAddresses.length;
+    const amountPerWalletWei = ethers.parseEther((amountPerWallet * 0.98).toFixed(18)); // 98% to account for gas
+    
+    // Create signer
+    const evmSigner = new ethers.Wallet(evmWallet.privateKey, provider);
+    
+    // Bridge to each destination
+    const results = [];
+    for (const destAddr of destinationAddresses) {
+      try {
+        console.log(`[Private Funding] Bridging to ${destAddr.substring(0, 8)}...`);
+        
+        // Get quote for ETH → SOL
+        const quote2 = await fetchQuote({
+          amountIn64: amountPerWalletWei.toString(),
+          fromToken: '0x0000000000000000000000000000000000000000',
+          toToken: '0x0000000000000000000000000000000000000000',
+          fromChain: chain,
+          toChain: 'solana',
+          slippageBps: 100,
+        });
+        
+        if (!quote2 || quote2.length === 0) {
+          console.log(`[Private Funding] ⚠️ No quote for ${destAddr.substring(0, 8)}...`);
+          results.push({ address: destAddr, success: false, error: 'No quote' });
+          continue;
+        }
+        
+        // Execute swap from EVM
+        // swapFromEvm(quote, fromAddress, toAddress, referrer, signer, permit, overrides, payload)
+        const { swapFromEvm } = mayanSdk;
+        const result2 = await swapFromEvm(
+          quote2[0],
+          evmWallet.address, // FROM: EVM intermediary address
+          destAddr,          // TO: Solana destination
+          null,              // referrer
+          evmSigner,         // signer
+          null,              // permit
+          null,              // overrides
+          null               // payload
+        );
+        
+        const sig2 = typeof result2 === 'string' ? result2 : result2.hash || result2.signature;
+        console.log(`[Private Funding] ✅ ETH → SOL for ${destAddr.substring(0, 8)}...: ${sig2}`);
+        results.push({ address: destAddr, success: true, signature: sig2 });
+        
+      } catch (err) {
+        console.log(`[Private Funding] ❌ Failed for ${destAddr.substring(0, 8)}...: ${err.message}`);
+        results.push({ address: destAddr, success: false, error: err.message });
+      }
+    }
+    
+    // ========== DONE ==========
+    const successCount = results.filter(r => r.success).length;
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Private Funding] ✅ COMPLETED: ${successCount}/${destinationAddresses.length} wallets funded`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    res.json({
+      success: true,
+      message: `Private funding complete! ${successCount}/${destinationAddresses.length} wallets funded.`,
+      intermediary: evmWallet.address,
+      results,
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] Auto fund error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Automated withdrawal: Warming wallets → ETH intermediary → Wait → Main SOL wallet
+// This is a LONG-RUNNING request that executes the full flow without intervention
+app.post('/api/private-funding/auto-withdraw-wallets', async (req, res) => {
+  try {
+    const { 
+      sourceAddresses, // Array of warming wallet addresses to withdraw from
+      destinationWalletId = 'main', // Usually 'main' wallet
+      chain = 'base',
+    } = req.body;
+    
+    if (!sourceAddresses || sourceAddresses.length === 0) {
+      return res.status(400).json({ success: false, error: 'Missing source addresses' });
+    }
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Private Withdrawal] 📤 AUTOMATED CROSS-CHAIN WITHDRAWAL`);
+    console.log(`[Private Withdrawal] Sources: ${sourceAddresses.length} wallets`);
+    console.log(`[Private Withdrawal] Destination: ${destinationWalletId}`);
+    console.log(`[Private Withdrawal] Chain: ${chain}`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    const { ethers } = require('ethers');
+    const mayanSdk = require('@mayanfinance/swap-sdk');
+    const { fetchQuote, swapFromSolana, swapFromEvm } = mayanSdk;
+    
+    // ========== STEP 1: Get destination wallet address ==========
+    console.log(`[Private Withdrawal] Step 1: Getting destination wallet...`);
+    let destinationAddress;
+    if (destinationWalletId === 'main') {
+      const env = readEnvFile();
+      if (!env.PRIVATE_KEY) {
+        return res.status(400).json({ success: false, error: 'Main wallet PRIVATE_KEY not found' });
+      }
+      const mainKp = Keypair.fromSecretKey(base58.decode(env.PRIVATE_KEY));
+      destinationAddress = mainKp.publicKey.toBase58();
+    } else {
+      destinationAddress = destinationWalletId;
+    }
+    console.log(`[Private Withdrawal] Destination: ${destinationAddress.substring(0, 8)}...`);
+    
+    // ========== STEP 2: Create intermediary EVM wallet ==========
+    console.log(`[Private Withdrawal] Step 2: Creating intermediary wallet...`);
+    const evmWallet = ethers.Wallet.createRandom();
+    const intermediaryWallet = {
+      id: `evm-withdraw-${Date.now()}`,
+      address: evmWallet.address,
+      privateKey: evmWallet.privateKey,
+      createdAt: new Date().toISOString(),
+      chain: chain,
+      purpose: 'auto-withdraw',
+      status: 'created',
+    };
+    
+    const evmData = loadEvmIntermediaryWallets();
+    evmData.wallets.push(intermediaryWallet);
+    saveEvmIntermediaryWallets(evmData);
+    console.log(`[Private Withdrawal] ✅ Created intermediary: ${evmWallet.address}`);
+    
+    // ========== STEP 3: Get source wallet private keys & bridge SOL → ETH ==========
+    console.log(`[Private Withdrawal] Step 3: Bridging SOL → ETH from ${sourceAddresses.length} wallets...`);
+    
+    const warmingWalletsPath = path.join(__dirname, '..', 'keys', 'warmed-wallets.json');
+    let warmingWallets = [];
+    if (fs.existsSync(warmingWalletsPath)) {
+      const warmingData = JSON.parse(fs.readFileSync(warmingWalletsPath, 'utf-8'));
+      warmingWallets = warmingData.wallets || [];
+    }
+    
+    const solRpcUrl = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const connection = new Connection(solRpcUrl, 'confirmed');
+    
+    let totalBridged = 0;
+    const bridgeResults = [];
+    
+    for (const srcAddr of sourceAddresses) {
+      try {
+        const srcWallet = warmingWallets.find(w => w.address === srcAddr);
+        if (!srcWallet) {
+          console.log(`[Private Withdrawal] ⚠️ Wallet not found: ${srcAddr.substring(0, 8)}...`);
+          bridgeResults.push({ address: srcAddr, success: false, error: 'Wallet not found' });
+          continue;
+        }
+        
+        const keypair = Keypair.fromSecretKey(base58.decode(srcWallet.privateKey));
+        const balance = await connection.getBalance(keypair.publicKey);
+        const balanceSol = balance / LAMPORTS_PER_SOL;
+        
+        if (balanceSol < 0.01) {
+          console.log(`[Private Withdrawal] ⚠️ Insufficient balance: ${srcAddr.substring(0, 8)}... (${balanceSol.toFixed(4)} SOL)`);
+          bridgeResults.push({ address: srcAddr, success: false, error: 'Insufficient balance' });
+          continue;
+        }
+        
+        // Bridge 95% (keep some for rent)
+        const amountToWithdraw = balanceSol * 0.95;
+        const amountLamports = Math.floor(amountToWithdraw * LAMPORTS_PER_SOL);
+        
+        console.log(`[Private Withdrawal] Bridging ${amountToWithdraw.toFixed(4)} SOL from ${srcAddr.substring(0, 8)}...`);
+        
+        // Get quote
+        const quotes = await fetchQuote({
+          amountIn64: amountLamports.toString(),
+          fromToken: '0x0000000000000000000000000000000000000000',
+          toToken: '0x0000000000000000000000000000000000000000',
+          fromChain: 'solana',
+          toChain: chain,
+          slippageBps: 100,
+        });
+        
+        if (!quotes || quotes.length === 0) {
+          console.log(`[Private Withdrawal] ⚠️ No quote for ${srcAddr.substring(0, 8)}...`);
+          bridgeResults.push({ address: srcAddr, success: false, error: 'No quote' });
+          continue;
+        }
+        
+        const signTransaction = async (tx) => {
+          if (tx.version !== undefined) tx.sign([keypair]);
+          else if (tx.partialSign) tx.partialSign(keypair);
+          else tx.sign(keypair);
+          return tx;
+        };
+        
+        const result = await swapFromSolana(
+          quotes[0],
+          keypair.publicKey.toBase58(),
+          evmWallet.address,
+          null,
+          signTransaction,
+          connection,
+          null
+        );
+        
+        const sig = typeof result === 'string' ? result : result.signature;
+        console.log(`[Private Withdrawal] ✅ Bridged from ${srcAddr.substring(0, 8)}...: ${sig}`);
+        totalBridged += amountToWithdraw;
+        bridgeResults.push({ address: srcAddr, success: true, amount: amountToWithdraw, signature: sig });
+        
+      } catch (err) {
+        console.log(`[Private Withdrawal] ❌ Failed for ${srcAddr.substring(0, 8)}...: ${err.message}`);
+        bridgeResults.push({ address: srcAddr, success: false, error: err.message });
+      }
+    }
+    
+    if (totalBridged < 0.01) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No funds were bridged from source wallets',
+        results: bridgeResults
+      });
+    }
+    
+    // ========== STEP 4: Wait for ETH to arrive ==========
+    console.log(`[Private Withdrawal] Step 4: Waiting for ETH to arrive (bridged ~${totalBridged.toFixed(4)} SOL)...`);
+    
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+    
+    const minEthBalance = 0.0001;
+    const maxWaitTime = 10 * 60 * 1000;
+    const pollInterval = 10 * 1000;
+    const startTime = Date.now();
+    
+    let ethBalance = 0;
+    while (Date.now() - startTime < maxWaitTime) {
+      const balanceWei = await provider.getBalance(evmWallet.address);
+      ethBalance = parseFloat(ethers.formatEther(balanceWei));
+      
+      if (ethBalance >= minEthBalance) {
+        console.log(`[Private Withdrawal] ✅ ETH arrived: ${ethBalance.toFixed(6)} ETH`);
+        break;
+      }
+      
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      console.log(`[Private Withdrawal] Waiting for ETH... (${elapsed}s elapsed, balance: ${ethBalance.toFixed(6)} ETH)`);
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+    
+    if (ethBalance < minEthBalance) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `ETH did not arrive within timeout. Intermediary: ${evmWallet.address}`,
+        bridgeResults
+      });
+    }
+    
+    // ========== STEP 5: Bridge ETH → SOL to destination ==========
+    console.log(`[Private Withdrawal] Step 5: Bridging ${ethBalance.toFixed(6)} ETH → SOL to main wallet...`);
+    
+    const evmSigner = new ethers.Wallet(evmWallet.privateKey, provider);
+    const amountToSend = ethBalance * 0.98; // 98% to account for gas
+    const amountWei = ethers.parseEther(amountToSend.toFixed(18));
+    
+    try {
+      const quote2 = await fetchQuote({
+        amountIn64: amountWei.toString(),
+        fromToken: '0x0000000000000000000000000000000000000000',
+        toToken: '0x0000000000000000000000000000000000000000',
+        fromChain: chain,
+        toChain: 'solana',
+        slippageBps: 100,
+      });
+      
+      if (!quote2 || quote2.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'No quote for ETH → SOL',
+          bridgeResults
+        });
+      }
+      
+      // swapFromEvm(quote, fromAddress, toAddress, referrer, signer, permit, overrides, payload)
+      const result2 = await swapFromEvm(
+        quote2[0],
+        evmWallet.address, // FROM: EVM intermediary address
+        destinationAddress, // TO: Solana main wallet
+        null,              // referrer
+        evmSigner,         // signer
+        null,              // permit
+        null,              // overrides
+        null               // payload
+      );
+      
+      const sig2 = typeof result2 === 'string' ? result2 : result2.hash || result2.signature;
+      console.log(`[Private Withdrawal] ✅ ETH → SOL initiated: ${sig2}`);
+      
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`[Private Withdrawal] ✅ COMPLETED`);
+      console.log(`[Private Withdrawal] Withdrew from ${bridgeResults.filter(r => r.success).length} wallets`);
+      console.log(`[Private Withdrawal] Total bridged: ~${totalBridged.toFixed(4)} SOL`);
+      console.log(`${'='.repeat(60)}\n`);
+      
+      res.json({
+        success: true,
+        message: `Private withdrawal complete! Funds are being bridged to main wallet.`,
+        intermediary: evmWallet.address,
+        totalBridged,
+        finalBridgeTx: sig2,
+        bridgeResults,
+      });
+      
+    } catch (err) {
+      return res.status(500).json({ 
+        success: false, 
+        error: `ETH → SOL bridge failed: ${err.message}`,
+        bridgeResults
+      });
+    }
+    
+  } catch (error) {
+    console.error('[Private Funding] Auto withdraw error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get intermediary wallet with private key (for withdrawal flow)
+app.get('/api/private-funding/intermediary/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = loadEvmIntermediaryWallets();
+    const wallet = data.wallets.find(w => w.id === id);
+
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Intermediary wallet not found' });
+    }
+
+    res.json({ success: true, wallet });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// RECOVERY: Bridge stuck ETH from intermediary back to SOL
+app.post('/api/private-funding/recover-intermediary', async (req, res) => {
+  try {
+    const { intermediaryAddress, destinationSolAddress, chain = 'base' } = req.body;
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Recovery] 🔧 RECOVERING STUCK ETH`);
+    console.log(`[Recovery] From: ${intermediaryAddress}`);
+    console.log(`[Recovery] To: ${destinationSolAddress}`);
+    console.log(`[Recovery] Chain: ${chain}`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    // Find the intermediary wallet
+    const data = loadEvmIntermediaryWallets();
+    const wallet = data.wallets.find(w => w.address.toLowerCase() === intermediaryAddress.toLowerCase());
+    
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Intermediary wallet not found in storage' });
+    }
+    
+    const { ethers } = require('ethers');
+    const mayanSdk = require('@mayanfinance/swap-sdk');
+    const { fetchQuote, swapFromEvm } = mayanSdk;
+    
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    };
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+    
+    // Check balance
+    const balanceWei = await provider.getBalance(wallet.address);
+    const ethBalance = parseFloat(ethers.formatEther(balanceWei));
+    
+    console.log(`[Recovery] Balance: ${ethBalance.toFixed(6)} ETH`);
+    
+    if (ethBalance < 0.0001) {
+      return res.status(400).json({ success: false, error: `Insufficient ETH balance: ${ethBalance} ETH` });
+    }
+    
+    // Create signer
+    const evmSigner = new ethers.Wallet(wallet.privateKey, provider);
+    
+    // Use 98% of balance for gas
+    const amountToSend = ethBalance * 0.98;
+    const amountWei = ethers.parseEther(amountToSend.toFixed(18));
+    
+    // Get quote
+    console.log(`[Recovery] Getting quote for ${amountToSend.toFixed(6)} ETH → SOL...`);
+    const quotes = await fetchQuote({
+      amountIn64: amountWei.toString(),
+      fromToken: '0x0000000000000000000000000000000000000000',
+      toToken: '0x0000000000000000000000000000000000000000',
+      fromChain: chain,
+      toChain: 'solana',
+      slippageBps: 100,
+    });
+    
+    if (!quotes || quotes.length === 0) {
+      return res.status(400).json({ success: false, error: 'No quote available for ETH → SOL' });
+    }
+    
+    const quote = quotes[0];
+    console.log(`[Recovery] Quote: ${amountToSend.toFixed(6)} ETH → ~${quote.expectedAmountOut || quote.minAmountOut} SOL`);
+    
+    // Execute swap
+    console.log(`[Recovery] Executing swap...`);
+    const result = await swapFromEvm(
+      quote,
+      wallet.address,       // FROM: EVM intermediary
+      destinationSolAddress, // TO: Solana wallet
+      null,                 // referrer
+      evmSigner,            // signer
+      null,                 // permit
+      null,                 // overrides
+      null                  // payload
+    );
+    
+    const txHash = typeof result === 'string' ? result : result.hash || result.signature;
+    console.log(`[Recovery] ✅ SUCCESS! Tx: ${txHash}`);
+    
+    // Update wallet status
+    wallet.status = 'recovered';
+    wallet.recoveryTx = txHash;
+    wallet.recoveredTo = destinationSolAddress;
+    wallet.recoveredAt = new Date().toISOString();
+    saveEvmIntermediaryWallets(data);
+    
+    res.json({
+      success: true,
+      message: `Recovery initiated! ~${quote.expectedAmountOut || quote.minAmountOut} SOL will arrive in 2-5 minutes.`,
+      txHash,
+      expectedSol: quote.expectedAmountOut || quote.minAmountOut,
+    });
+    
+  } catch (error) {
+    console.error('[Recovery] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// TREND DETECTOR - MOVED TO SEPARATE SERVICE
+// =====================================================
+// The Trend Detector is now a standalone service to reduce bundler overhead.
+// Run it separately with: cd trend-detector && npm run dev
+// It runs on http://localhost:3003
+// The frontend connects directly to that service when enabled.
+// =====================================================
+
+const server = app.listen(PORT, () => {
   console.log(`🚀 Control Panel API Server running on http://localhost:${PORT}`);
   console.log(`📁 Working directory: ${process.cwd()}`);
   console.log(`📁 API server directory: ${__dirname}`);
@@ -5771,3 +9151,29 @@ app.listen(PORT, () => {
   }
 });
 
+// Graceful shutdown handler - properly close all connections before exit
+const gracefulShutdown = (signal) => {
+  console.log(`\n[Shutdown] Received ${signal}, closing connections...`);
+  
+  // Close WebSocket server first
+  if (wss) {
+    wss.close(() => {
+      console.log('[Shutdown] WebSocket server closed');
+    });
+  }
+  
+  // Close HTTP server
+  server.close(() => {
+    console.log('[Shutdown] HTTP server closed');
+    process.exit(0);
+  });
+  
+  // Force exit after 3 seconds if graceful shutdown fails
+  setTimeout(() => {
+    console.log('[Shutdown] Forcing exit...');
+    process.exit(1);
+  }, 3000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

@@ -5,11 +5,72 @@ import {
   Connection,
   VersionedTransaction,
   TransactionMessage,
-  ComputeBudgetProgram
+  ComputeBudgetProgram,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+  AddressLookupTableAccount
 } from '@solana/web3.js';
 import { PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW } from '../constants/constants';
 
 const SLIPPAGE = 9900 // 99% slippage - maximum to avoid error 6001 when multiple wallets sell simultaneously
+
+// Jito tip accounts for Helius Sender (required for dual routing)
+// https://www.helius.dev/docs/sending-transactions/sender
+const JITO_TIP_ACCOUNTS = [
+  "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE",
+  "D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ",
+  "9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta",
+  "5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn",
+  "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD"
+]
+
+// Minimum Jito tip for Helius Sender (0.0002 SOL)
+const JITO_TIP_LAMPORTS = 200_000 // 0.0002 SOL
+
+// Get RPC connection for ALT lookups
+const getRpcEndpoint = () => process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com'
+
+// Add Jito tip to a Jupiter transaction (required for Helius Sender)
+const addJitoTipToTransaction = async (
+  transaction: VersionedTransaction,
+  wallet: Keypair
+): Promise<VersionedTransaction> => {
+  try {
+    const connection = new Connection(getRpcEndpoint(), 'confirmed')
+    
+    // Get Address Lookup Tables from the transaction
+    const altAccounts: AddressLookupTableAccount[] = []
+    for (const lookup of transaction.message.addressTableLookups) {
+      const result = await connection.getAddressLookupTable(lookup.accountKey)
+      if (result.value) {
+        altAccounts.push(result.value)
+      }
+    }
+    
+    // Decompile the transaction message
+    const decompiledMessage = TransactionMessage.decompile(transaction.message, {
+      addressLookupTableAccounts: altAccounts,
+    })
+    
+    // Add Jito tip instruction
+    const tipAccount = new PublicKey(JITO_TIP_ACCOUNTS[Math.floor(Math.random() * JITO_TIP_ACCOUNTS.length)])
+    const tipIx = SystemProgram.transfer({
+      fromPubkey: wallet.publicKey,
+      toPubkey: tipAccount,
+      lamports: JITO_TIP_LAMPORTS,
+    })
+    decompiledMessage.instructions.push(tipIx)
+    
+    // Recompile and sign
+    const newTx = new VersionedTransaction(decompiledMessage.compileToV0Message(altAccounts))
+    newTx.sign([wallet])
+    
+    return newTx
+  } catch (error: any) {
+    console.warn(`[Jupiter] Failed to add Jito tip, using original tx: ${error.message}`)
+    return transaction
+  }
+}
 
 // Helper function to fetch with timeout and retry
 // Enhanced with better error handling and diagnostics
@@ -82,7 +143,7 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
   throw lastError || new Error('Fetch failed after retries');
 };
 
-export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultra') => {
+export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra') => {
   // Use provided priority fee or add random variation to avoid looking botted
   // If no fee provided, use base fee + random variation (0-50,000 lamports)
   // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
@@ -113,89 +174,54 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
   try {
     const publicKey = btoa(wallet.secretKey.toString())
     // Use new Jupiter API endpoint (old quote-api.jup.ag was deprecated)
-    const quoteResponse = await (
-      await fetch(
-        `https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${baseMint.toBase58()}&amount=${amount}&slippageBps=${SLIPPAGE}`
-      )
-    ).json();
-
-    // get serialized transactions for the swap
-    const { swapTransaction } = await (
-      await fetch("https://lite-api.jup.ag/swap/v1/swap", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          quoteResponse,
-          userPublicKey: wallet.publicKey.toString(),
-          wrapAndUnwrapSol: true,
-          dynamicComputeUnitLimit: true,
-          prioritizationFeeLamports: feeToUse // Use provided priority fee or default to LOW
-        }),
-      })
-    ).json();
-
-    // deserialize the transaction
-    const swapTransactionBuf = Buffer.from(swapTransaction, "base64");
-    var transaction = VersionedTransaction.deserialize(swapTransactionBuf);
-
-    // Override Jupiter's compute budget instructions with our varied fee to avoid looking botted
-    // Jupiter defaults to ~800k lamports (0.0008 SOL), so we override with varied fees
-    try {
-      const message = transaction.message;
-      const decompiledMessage = TransactionMessage.decompile(message);
-      
-      // Remove existing compute budget instructions
-      decompiledMessage.instructions = decompiledMessage.instructions.filter(
-        (ix) => !(ix.programId.equals(ComputeBudgetProgram.programId))
-      );
-      
-      // Add our own compute budget instructions with variation based on priority level
-      // Convert priority fee to compute unit price: priorityFee / computeUnits = microLamports per unit
-      // Use 200k compute units (Jupiter's default)
-      let computeUnitPrice: number
-      if (originalFeeLevel === 'high') {
-        // HIGH: 5M lamports / 200k units = 25 microLamports per unit
-        // Add variation: 20-30 microLamports (equivalent to 4-6M lamports total priority fee)
-        computeUnitPrice = 20 + Math.floor(Math.random() * 11) // 20-30 microLamports
-        console.log(`[Jupiter Buy] HIGH priority: ${computeUnitPrice} microLamports/unit = ${(200_000 * computeUnitPrice / 1e9).toFixed(6)} SOL priority fee`)
-      } else if (originalFeeLevel === 'medium') {
-        // MEDIUM: 500k lamports / 200k units = 2.5 microLamports per unit
-        // Add variation: 2-4 microLamports (equivalent to 400k-800k lamports total priority fee)
-        computeUnitPrice = 2 + Math.floor(Math.random() * 3) // 2-4 microLamports
-        console.log(`[Jupiter Buy] MEDIUM priority: ${computeUnitPrice} microLamports/unit = ${(200_000 * computeUnitPrice / 1e9).toFixed(6)} SOL priority fee`)
-      } else {
-        // LOW: Minimal or no priority fee
-        // Add variation: 0-5 microLamports (equivalent to 0-1M lamports total, but usually much lower)
-        computeUnitPrice = Math.floor(Math.random() * 6) // 0-5 microLamports
-        console.log(`[Jupiter Buy] LOW priority: ${computeUnitPrice} microLamports/unit = ${(200_000 * computeUnitPrice / 1e9).toFixed(6)} SOL priority fee`)
-      }
-      decompiledMessage.instructions.unshift(
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPrice })
-      );
-      
-      // Rebuild transaction with modified instructions
-      const modifiedMessage = new TransactionMessage(decompiledMessage).compileToV0Message();
-      transaction = new VersionedTransaction(modifiedMessage);
-      
-      console.log(`[Jupiter Buy] Overrode compute budget: ${computeUnitPrice} microLamports/unit (${(200_000 * computeUnitPrice / 1e9).toFixed(9)} SOL total)`)
-    } catch (error: any) {
-      console.warn(`[Jupiter Buy] Failed to override compute budget (using Jupiter's default): ${error.message}`)
-      // Continue with Jupiter's transaction if override fails
+    const quoteUrl = `https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${baseMint.toBase58()}&amount=${amount}&slippageBps=${SLIPPAGE}`
+    
+    const quoteRes = await fetch(quoteUrl)
+    const quoteResponse = await quoteRes.json();
+    
+    // Check for quote errors
+    if (quoteResponse.error || !quoteResponse.outAmount) {
+      console.log(`[Jupiter] Quote failed for ${baseMint.toBase58().substring(0, 8)}...: ${quoteResponse.error || 'No route found'}`)
+      return null
     }
 
-    transaction.sign([wallet]);
+    // get serialized transactions for the swap
+    const swapRes = await fetch("https://lite-api.jup.ag/swap/v1/swap", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        quoteResponse,
+        userPublicKey: wallet.publicKey.toString(),
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        prioritizationFeeLamports: feeToUse // Use provided priority fee or default to LOW
+      }),
+    })
+    const swapData = await swapRes.json()
+    
+    if (!swapData.swapTransaction) {
+      console.log(`[Jupiter] Swap failed for ${baseMint.toBase58().substring(0, 8)}...: ${swapData.error || 'No swap transaction returned'}`)
+      return null
+    }
+
+    // deserialize the transaction
+    const swapTransactionBuf = Buffer.from(swapData.swapTransaction, "base64");
+    var transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+
+    // Add Jito tip for Helius Sender (required for dual routing to validators + Jito)
+    transaction = await addJitoTipToTransaction(transaction, wallet)
+
     return transaction
-  } catch (error) {
-    console.log("Failed to get buy transaction")
+  } catch (error: any) {
+    console.log(`[Jupiter] Buy error: ${error.message}`)
     return null
   }
 };
 
 
-export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'high' | 'ultra') => {
+export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra') => {
   try {
     // Use provided priority fee or add random variation to avoid looking botted
     // If no fee provided, use base fee + random variation (0-50,000 lamports)
@@ -226,118 +252,48 @@ export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey,
       feeToUse = baseFee + variation
     }
     
-    // Get quote from Jupiter with timeout and retry (increased retries for network resilience)
-    // Using new Jupiter API endpoint (old quote-api.jup.ag was deprecated)
-    const quoteUrl = `https://lite-api.jup.ag/swap/v1/quote?inputMint=${baseMint.toBase58()}&outputMint=So11111111111111111111111111111111111111112&amount=${amount}&slippageBps=${SLIPPAGE}`
-    const quoteResponseData = await fetchWithTimeout(quoteUrl, {}, 30000, 10);
-    const quoteResponse = await quoteResponseData.json();
+    // Get quote from Jupiter (fast, no retry wrapper - same as buy)
+    const quoteResponse = await (
+      await fetch(
+        `https://lite-api.jup.ag/swap/v1/quote?inputMint=${baseMint.toBase58()}&outputMint=So11111111111111111111111111111111111111112&amount=${amount}&slippageBps=${SLIPPAGE}`
+      )
+    ).json();
     
     // Check for quote errors
-    if (quoteResponse.error) {
-      console.log(`[Jupiter Sell] Quote error for ${baseMint.toBase58()}: ${JSON.stringify(quoteResponse.error)}`)
-      console.log(`[Jupiter Sell] Amount requested: ${amount}`)
+    if (quoteResponse.error || !quoteResponse.outAmount) {
+      console.log(`[Jupiter Sell] No route for ${baseMint.toBase58().substring(0, 8)}...`)
       return null
     }
-    
-    if (!quoteResponse || !quoteResponse.outAmount) {
-      console.log(`[Jupiter Sell] No quote available for ${baseMint.toBase58()}, amount: ${amount}`)
-      console.log(`[Jupiter Sell] Quote response:`, JSON.stringify(quoteResponse).substring(0, 500))
-      return null
-    }
-    
-    console.log(`[Jupiter Sell] Got quote for ${baseMint.toBase58()}: ${quoteResponse.outAmount} SOL (amount: ${amount})`)
 
-    // get serialized transactions for the swap with timeout and retry (increased retries for network resilience)
-    console.log(`[Jupiter Sell] Requesting swap transaction for ${baseMint.toBase58()}...`)
-    const swapResponse = await fetchWithTimeout("https://lite-api.jup.ag/swap/v1/swap", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        quoteResponse,
-        userPublicKey: wallet.publicKey.toString(),
-        wrapAndUnwrapSol: true,
-        dynamicComputeUnitLimit: true,
-        prioritizationFeeLamports: feeToUse // Use provided fee with variation to avoid looking botted
-      }),
-    }, 20000, 5);
+    // Get swap transaction (fast, no retry wrapper - same as buy)
+    const { swapTransaction } = await (
+      await fetch("https://lite-api.jup.ag/swap/v1/swap", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          quoteResponse,
+          userPublicKey: wallet.publicKey.toString(),
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+          prioritizationFeeLamports: feeToUse
+        }),
+      })
+    ).json();
     
-    if (!swapResponse.ok) {
-      const errorText = await swapResponse.text().catch(() => 'No error details');
-      console.error(`[Jupiter Sell] HTTP error ${swapResponse.status} for ${baseMint.toBase58()}: ${errorText.substring(0, 500)}`)
+    if (!swapTransaction) {
+      console.log(`[Jupiter Sell] No swap transaction for ${baseMint.toBase58().substring(0, 8)}...`)
       return null
     }
-    
-    const swapData = await swapResponse.json();
-    
-    // Check for swap errors
-    if (swapData.error) {
-      console.error(`[Jupiter Sell] Swap error for ${baseMint.toBase58()}: ${JSON.stringify(swapData.error)}`)
-      console.error(`[Jupiter Sell] Amount: ${amount}, Quote outAmount: ${quoteResponse.outAmount}`)
-      return null
-    }
-    
-    if (!swapData.swapTransaction) {
-      console.error(`[Jupiter Sell] No swap transaction returned from Jupiter for ${baseMint.toBase58()}`)
-      console.error(`[Jupiter Sell] Swap response keys:`, Object.keys(swapData))
-      console.error(`[Jupiter Sell] Swap response:`, JSON.stringify(swapData).substring(0, 1000))
-      return null
-    }
-    
-    console.log(`[Jupiter Sell] ✅ Got swap transaction for ${baseMint.toBase58()}`)
 
     // deserialize the transaction
-    const swapTransactionBuf = Buffer.from(swapData.swapTransaction, "base64");
+    const swapTransactionBuf = Buffer.from(swapTransaction, "base64");
     var transaction = VersionedTransaction.deserialize(swapTransactionBuf);
 
-    // Override Jupiter's compute budget instructions with our varied fee to avoid looking botted
-    // Jupiter defaults to ~800k lamports (0.0008 SOL), so we override with varied fees
-    try {
-      const message = transaction.message;
-      const decompiledMessage = TransactionMessage.decompile(message);
-      
-      // Remove existing compute budget instructions
-      decompiledMessage.instructions = decompiledMessage.instructions.filter(
-        (ix) => !(ix.programId.equals(ComputeBudgetProgram.programId))
-      );
-      
-      // Add our own compute budget instructions with variation based on priority level
-      // Convert priority fee to compute unit price: priorityFee / computeUnits = microLamports per unit
-      // Use 200k compute units (Jupiter's default)
-      let computeUnitPrice: number
-      if (originalFeeLevel === 'high') {
-        // HIGH: 5M lamports / 200k units = 25 microLamports per unit
-        // Add variation: 20-30 microLamports (equivalent to 4-6M lamports total priority fee)
-        computeUnitPrice = 20 + Math.floor(Math.random() * 11) // 20-30 microLamports
-        console.log(`[Jupiter Sell] HIGH priority: ${computeUnitPrice} microLamports/unit = ${(200_000 * computeUnitPrice / 1e9).toFixed(6)} SOL priority fee`)
-      } else if (originalFeeLevel === 'medium') {
-        // MEDIUM: 500k lamports / 200k units = 2.5 microLamports per unit
-        // Add variation: 2-4 microLamports (equivalent to 400k-800k lamports total priority fee)
-        computeUnitPrice = 2 + Math.floor(Math.random() * 3) // 2-4 microLamports
-        console.log(`[Jupiter Sell] MEDIUM priority: ${computeUnitPrice} microLamports/unit = ${(200_000 * computeUnitPrice / 1e9).toFixed(6)} SOL priority fee`)
-      } else {
-        // LOW: Minimal or no priority fee
-        // Add variation: 0-5 microLamports (equivalent to 0-1M lamports total, but usually much lower)
-        computeUnitPrice = Math.floor(Math.random() * 6) // 0-5 microLamports
-        console.log(`[Jupiter Sell] LOW priority: ${computeUnitPrice} microLamports/unit = ${(200_000 * computeUnitPrice / 1e9).toFixed(6)} SOL priority fee`)
-      }
-      decompiledMessage.instructions.unshift(
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPrice })
-      );
-      
-      // Rebuild transaction with modified instructions
-      const modifiedMessage = new TransactionMessage(decompiledMessage).compileToV0Message();
-      transaction = new VersionedTransaction(modifiedMessage);
-      
-      console.log(`[Jupiter Sell] Overrode compute budget: ${computeUnitPrice} microLamports/unit (${(200_000 * computeUnitPrice / 1e9).toFixed(9)} SOL total)`)
-    } catch (error: any) {
-      console.warn(`[Jupiter Sell] Failed to override compute budget (using Jupiter's default): ${error.message}`)
-      // Continue with Jupiter's transaction if override fails
-    }
+    // Add Jito tip for Helius Sender (required for dual routing to validators + Jito)
+    transaction = await addJitoTipToTransaction(transaction, wallet)
 
-    transaction.sign([wallet]);
     return transaction
   } catch (error: any) {
     const errorMsg = error.message || String(error);
