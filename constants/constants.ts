@@ -91,6 +91,18 @@ export const AUTO_HOLDER_WALLET_BUY = (process.env.AUTO_HOLDER_WALLET_BUY || 'fa
 // If not set, defaults to sequential buys with 1-2 second random delays
 export const HOLDER_WALLET_AUTO_BUY_DELAYS = process.env.HOLDER_WALLET_AUTO_BUY_DELAYS || ''
 
+// Front-run protection for holder auto-buy wallets
+// If external net buys exceed this threshold (in SOL), skip the auto-buy
+// This protects against MEV bots/snipers buying before your holder wallets
+// Set to 0 to disable (always buy regardless of external volume)
+// Example: 0.2 = skip buy if external buys > 0.2 SOL before your wallet can execute
+export const AUTO_BUY_FRONT_RUN_THRESHOLD = Number(process.env.AUTO_BUY_FRONT_RUN_THRESHOLD || '0')
+
+// Front-run protection: How long (seconds) to wait before checking volume
+// This gives time for external buys to be detected on-chain
+// Default: 0.5 seconds - fast enough to still snipe, but allows detection of front-runners
+export const AUTO_BUY_FRONT_RUN_CHECK_DELAY = Number(process.env.AUTO_BUY_FRONT_RUN_CHECK_DELAY || '0.5')
+
 // Support for variable amounts per wallet (comma-separated, e.g., "0.1,0.2,0.15")
 // If not set, uses SWAP_AMOUNT for all wallets
 export const SWAP_AMOUNTS_STRING = process.env.SWAP_AMOUNTS || ''

@@ -131,23 +131,19 @@ router.post('/generate', async (req, res) => {
         const base64 = await generateSimpleLogoAsBase64(options);
         res.json({ success: true, logo: base64 });
       } else {
-        const generatedDir = path.join(ASSETS_DIR, 'generated');
-        if (!fs.existsSync(generatedDir)) {
-          fs.mkdirSync(generatedDir, { recursive: true });
+        // Save to image/createdlogos directory
+        const logosDir = path.join(__dirname, '..', 'image', 'createdlogos');
+        if (!fs.existsSync(logosDir)) {
+          fs.mkdirSync(logosDir, { recursive: true });
         }
-        const outputPath = path.join(generatedDir, `logo-${Date.now()}.png`);
+        const imageFilename = `logo-${Date.now()}.png`;
+        const outputPath = path.join(logosDir, imageFilename);
         await generateAndSaveSimpleLogo(options, outputPath);
-        
-        // Copy to image directory for easy access
-        const imageDir = path.join(__dirname, '..', 'image');
-        const imageFilename = `generated-logo-${Date.now()}.png`;
-        const imagePath = path.join(imageDir, imageFilename);
-        fs.copyFileSync(outputPath, imagePath);
         
         res.json({ 
           success: true, 
           logoPath: outputPath, 
-          logoUrl: `/image/${imageFilename}`,
+          logoUrl: `/image/createdlogos/${imageFilename}`,
           message: 'Logo generated successfully'
         });
       }
@@ -167,6 +163,99 @@ router.post('/generate', async (req, res) => {
   } catch (error) {
     console.error('[Logo API] Generate error:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to generate logo' });
+  }
+});
+
+/**
+ * List available alphabet logos
+ * GET /api/logo/alphabet
+ */
+router.get('/alphabet', (req, res) => {
+  try {
+    const { listAlphabetLogos } = require('../src/launch-logo-generator.ts');
+    const logos = listAlphabetLogos();
+    
+    res.json({
+      success: true,
+      logos: logos,
+      count: logos.length,
+      note: 'Use these letters in alphabetLogo parameter when generating logos'
+    });
+  } catch (error) {
+    console.error('[Logo API] List alphabet error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to list alphabet logos' });
+  }
+});
+
+/**
+ * Generate all launch logos (token, website, twitter)
+ * POST /api/logo/generate-launch
+ */
+router.post('/generate-launch', async (req, res) => {
+  try {
+    const {
+      tokenName,
+      tokenSymbol,
+      baseLogo,
+      alphabetLogo,
+      fontPath,
+      fontFamily,
+      primaryColor,
+      secondaryColor,
+      backgroundColor
+    } = req.body;
+
+    if (!tokenName && !tokenSymbol) {
+      return res.status(400).json({ success: false, error: 'Token name or symbol required' });
+    }
+
+    console.log(`[Logo API] Generating launch logos for: ${tokenName || tokenSymbol}`);
+    
+    try {
+      const { generateLaunchLogos } = require('../src/launch-logo-generator.ts');
+      
+      const logos = await generateLaunchLogos({
+        tokenName: tokenName || '',
+        tokenSymbol: tokenSymbol || '',
+        baseLogoPath: baseLogo,
+        alphabetLogo: alphabetLogo,
+        fontPath: fontPath,
+        fontFamily: fontFamily,
+        primaryColor: primaryColor,
+        secondaryColor: secondaryColor,
+        backgroundColor: backgroundColor
+      });
+      
+      res.json({
+        success: true,
+        logos: {
+          tokenLogo: logos.tokenLogo,
+          websiteLogo: logos.websiteLogo,
+          twitterBanner: logos.twitterBanner
+        },
+        urls: {
+          tokenLogo: `/image/createdlogos/${path.basename(logos.tokenLogo)}`,
+          websiteLogo: `/image/createdlogos/${path.basename(logos.websiteLogo)}`,
+          twitterBanner: `/image/createdlogos/${path.basename(logos.twitterBanner)}`
+        },
+        message: 'All launch logos generated successfully'
+      });
+    } catch (error) {
+      console.error('[Logo API] Generation error:', error);
+      if (error.message && error.message.includes('Canvas package not installed')) {
+        res.status(500).json({ 
+          success: false, 
+          error: 'Canvas package not installed',
+          instructions: 'Run: npm install canvas'
+        });
+      } else {
+        res.status(500).json({ success: false, error: error.message || 'Failed to generate logos' });
+      }
+    }
+    
+  } catch (error) {
+    console.error('[Logo API] Generate launch error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to generate launch logos' });
   }
 });
 

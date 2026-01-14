@@ -314,20 +314,63 @@ export async function warmWallet(
       break
     }
     
-    const randomToken = tokenList[Math.floor(Math.random() * tokenList.length)]
     const buyAmount = config.minBuyAmount + Math.random() * (config.maxBuyAmount - config.minBuyAmount)
     
+    // Try up to 20 different tokens if Jupiter fails (token might be dead/rugged)
+    // Jupiter CAN trade pump.fun tokens via bonding curve - issue is dead/no-volume tokens
+    let buySuccess = false
+    let randomToken = ''
+    const maxTokenRetries = 20
+    
+    // Use all tokens - the fetch already filtered for volume/liquidity
+    const tokensToTry = tokenList
+    
+    for (let tokenAttempt = 0; tokenAttempt < maxTokenRetries && !buySuccess; tokenAttempt++) {
+      randomToken = tokensToTry[Math.floor(Math.random() * tokensToTry.length)]
+      
+      try {
+        // Buy
+        console.log(`   [${i + 1}/${config.tradesPerWallet}] Buying ${buyAmount.toFixed(4)} SOL of ${randomToken.substring(0, 8)}...${tokenAttempt > 0 ? ` (token retry ${tokenAttempt + 1})` : ''}`)
+        await buyTokenSimple(
+          wallet.privateKey,
+          randomToken,
+          buyAmount,
+          undefined,
+          config.useJupiter,
+          config.priorityFee
+        )
+        buySuccess = true
+      } catch (buyError: any) {
+        const errMsg = buyError.message?.toLowerCase() || ''
+        // If Jupiter failed (no route/no liquidity), try a different token
+        const isNoRouteError = errMsg.includes('failed to get buy transaction') || 
+                               errMsg.includes('no route') ||
+                               errMsg.includes('quote failed') ||
+                               errMsg.includes('no swap transaction') ||
+                               errMsg.includes('not tradable')
+        
+        if (isNoRouteError) {
+          console.log(`   ⚠️  Token ${randomToken.substring(0, 8)}... failed (${buyError.message.substring(0, 50)}), trying another...`)
+          if (tokenAttempt < maxTokenRetries - 1) {
+            continue
+          }
+        }
+        // Only throw for non-route errors (like network issues)
+        if (!isNoRouteError) {
+          throw buyError
+        }
+      }
+    }
+    
+    // DON'T crash if no tradable token found - just skip this trade and continue
+    if (!buySuccess) {
+      console.log(`   ⚠️  Skipping trade ${i + 1} - no tradable token found after ${maxTokenRetries} attempts`)
+      failedCount++
+      continue // Continue to next trade instead of crashing
+    }
+    
     try {
-      // Buy
-      console.log(`   [${i + 1}/${config.tradesPerWallet}] Buying ${buyAmount.toFixed(4)} SOL of ${randomToken.substring(0, 8)}...`)
-      await buyTokenSimple(
-        wallet.privateKey,
-        randomToken,
-        buyAmount,
-        undefined,
-        config.useJupiter,
-        config.priorityFee
-      )
+      // Buy succeeded, continue with the rest of the trade logic
       
       updateWalletStats(address, i === 0 && isFirstTransaction)
       if (onProgress) {
@@ -336,27 +379,30 @@ export async function warmWallet(
       }
       
       // Wait for tokens to settle before selling
+      // Give RPC a moment to index the new token account after confirmation
       console.log(`   ⏳ Waiting for tokens to settle...`)
+      await sleep(2000) // Initial 2s delay for RPC indexing
+      
       let tokensReady = false
       let retries = 0
-      const maxRetries = 20 // Wait up to 10 seconds (20 * 500ms)
+      const maxRetries = 40 // Wait up to 20 seconds (40 * 500ms) after initial delay
       
       while (!tokensReady && retries < maxRetries) {
-        await sleep(500)
         const tokenBalance = await getWalletTokenBalance(wallet.privateKey, randomToken)
         if (tokenBalance.hasTokens && tokenBalance.balance > 0) {
           tokensReady = true
           console.log(`   ✅ Tokens received: ${tokenBalance.balance.toFixed(6)}`)
         } else {
           retries++
-          if (retries % 4 === 0) {
-            console.log(`   ⏳ Still waiting for tokens... (${retries * 0.5}s)`)
+          if (retries % 6 === 0) {
+            console.log(`   ⏳ Still waiting for tokens... (${2 + retries * 0.5}s)`)
           }
+          await sleep(500)
         }
       }
       
       if (!tokensReady) {
-        throw new Error(`Tokens did not settle after ${maxRetries * 0.5} seconds`)
+        throw new Error(`Tokens did not settle after ${2 + maxRetries * 0.5} seconds`)
       }
       
       // Sell 99.9% to maximize SOL recovery while keeping tiny token dust

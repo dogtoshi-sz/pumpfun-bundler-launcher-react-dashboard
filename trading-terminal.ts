@@ -9,10 +9,43 @@ import path from "path"
 const getRpcEndpoint = () => process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com'
 const getRpcWebSocketEndpoint = () => process.env.RPC_WEBSOCKET_ENDPOINT || 'wss://api.mainnet-beta.solana.com'
 
+// Helius Sender endpoint for ultra-low latency transaction submission
+// Sends to BOTH validators AND Jito simultaneously for maximum inclusion speed
+const HELIUS_SENDER_ENDPOINT = 'https://sender.helius-rpc.com/fast'
+
 const getConnection = () => new Connection(getRpcEndpoint(), {
   wsEndpoint: getRpcWebSocketEndpoint(),
   commitment: "confirmed"
 })
+
+// Send transaction via Helius Sender for ultra-low latency
+// https://www.helius.dev/docs/sending-transactions/sender
+const sendViaHeliusSender = async (transaction: VersionedTransaction): Promise<string> => {
+  const response = await fetch(HELIUS_SENDER_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: Date.now().toString(),
+      method: 'sendTransaction',
+      params: [
+        Buffer.from(transaction.serialize()).toString('base64'),
+        {
+          encoding: 'base64',
+          skipPreflight: true, // Required for Sender
+          maxRetries: 0
+        }
+      ]
+    })
+  })
+
+  const json = await response.json()
+  if (json.error) {
+    throw new Error(`Helius Sender error: ${json.error.message}`)
+  }
+
+  return json.result
+}
 
 // Fast confirmation helper - waits for "confirmed" status (usually ~400ms) for faster GMGN indexing
 const waitForConfirmation = async (connection: Connection, signature: string, timeout: number = 3000): Promise<boolean> => {
@@ -136,7 +169,7 @@ export const buyTokenSimple = async (
   solAmount: number,
   referrerPrivateKey?: string, // Optional: if provided, use this as referrer (must be token creator for pump.fun)
   useJupiter: boolean = false, // If true, use Jupiter swap instead of pump.fun SDK (works with any token)
-  priorityFee: 'none' | 'low' | 'medium' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low' (0.0001 SOL), 'medium' (0.0005 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
+  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low'/'normal' (random 0.000025-0.0001 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
 ): Promise<{ signature: string; txUrl: string }> => {
   try {
     const connection = getConnection()
@@ -153,19 +186,16 @@ export const buyTokenSimple = async (
         priorityFeeLamports = PRIORITY_FEE_LAMPORTS_ULTRA
       } else if (priorityFee === 'high') {
         priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
-      } else if (priorityFee === 'medium') {
-        priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
-      } else if (priorityFee === 'low') {
-        // LOW fee: Use base fee with random variation to avoid looking botted
-        // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
-        const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 100000
-        const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-        priorityFeeLamports = baseFee + variation
-        console.log(`[Buy] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
+      } else if (priorityFee === 'normal' || priorityFee === 'low' || priorityFee === 'medium') {
+        // NORMAL: Random variance between LOW and MEDIUM for natural-looking trades
+        const lowFee = PRIORITY_FEE_LAMPORTS_LOW || 25000
+        const medFee = PRIORITY_FEE_LAMPORTS_MEDIUM || 100000
+        priorityFeeLamports = lowFee + Math.floor(Math.random() * (medFee - lowFee))
+        console.log(`[Buy] Using NORMAL priority fee (random): ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(6)} SOL)`)
       } else {
-        // NONE fee: No priority fee (base transaction fee only)
+        // NONE fee: No priority fee (Jito tip only)
         priorityFeeLamports = PRIORITY_FEE_LAMPORTS_NONE || 0
-        console.log(`[Buy] Using NONE priority fee: ${priorityFeeLamports} lamports (base fee only)`)
+        console.log(`[Buy] Using NONE priority fee: Jito tip only`)
       }
       const tx = await getBuyTxWithJupiter(walletKp, mintPubkey, buyAmountLamports, priorityFeeLamports, priorityFee)
       
@@ -173,23 +203,39 @@ export const buyTokenSimple = async (
         throw new Error('Failed to get buy transaction from Jupiter')
       }
       
-      // Send instantly (GMGN-style - skip preflight)
-      const signature = await connection.sendTransaction(tx, {
-        skipPreflight: true, // Skip preflight for instant execution (like GMGN)
-        maxRetries: 3
-      })
+      // Send via Helius Sender for ultra-low latency (dual routing: validators + Jito)
+      const signature = await sendViaHeliusSender(tx)
+
+      console.log(`[Buy] ⚡ Sent via Helius Sender: ${signature}`)
       
-      console.log(`Jupiter buy sent instantly: ${signature}`)
-      
-      // Wait for fast confirmation (~400ms) for GMGN indexing
-      // This ensures transaction is included in a block before returning
-      // GMGN indexes faster when transaction is already confirmed
-      console.log(`[Buy] Waiting for fast confirmation for GMGN indexing...`)
+      // Wait for confirmation and VERIFY transaction succeeded
+      console.log(`[Buy] Waiting for confirmation...`)
       const confirmed = await waitForConfirmation(connection, signature)
+      
       if (confirmed) {
-        console.log(`[Buy] ✅ Transaction confirmed! GMGN should index within 1-2 seconds.`)
+        // Double-check the transaction actually succeeded (not just confirmed)
+        const txStatus = await connection.getSignatureStatus(signature)
+        if (txStatus.value?.err) {
+          const errMsg = JSON.stringify(txStatus.value.err)
+          console.log(`[Buy] ❌ Transaction FAILED on-chain: ${errMsg}`)
+          throw new Error(`Buy transaction failed: ${errMsg}`)
+        }
+        console.log(`[Buy] ✅ Transaction confirmed and successful!`)
       } else {
-        console.log(`[Buy] ⚠️ Confirmation check timeout (transaction likely still processing)`)
+        // Even if timeout, check if it landed
+        console.log(`[Buy] ⏳ Confirmation timeout, checking status...`)
+        await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2 more seconds
+        const txStatus = await connection.getSignatureStatus(signature)
+        if (txStatus.value?.err) {
+          const errMsg = JSON.stringify(txStatus.value.err)
+          console.log(`[Buy] ❌ Transaction FAILED on-chain: ${errMsg}`)
+          throw new Error(`Buy transaction failed: ${errMsg}`)
+        }
+        if (!txStatus.value) {
+          console.log(`[Buy] ⚠️ Transaction not found - may still be processing`)
+        } else {
+          console.log(`[Buy] ✅ Transaction landed successfully!`)
+        }
       }
       
       return {
@@ -281,14 +327,11 @@ export const buyTokenSimple = async (
         
         const tx = new VersionedTransaction(msg)
         tx.sign([walletKp])
-        
-        // Send transaction
-        signature = await connection.sendTransaction(tx, {
-          skipPreflight: true, // Skip preflight for instant execution (like GMGN)
-          maxRetries: 1 // Only 1 retry per attempt
-        })
-        
-        console.log(`[Buy] Trade sent (attempt ${attempt}/${maxRetries}): ${signature}`)
+
+        // Send via Helius Sender for ultra-low latency
+        signature = await sendViaHeliusSender(tx)
+
+        console.log(`[Buy] ⚡ Sent via Helius Sender (attempt ${attempt}/${maxRetries}): ${signature}`)
         
         // Wait for confirmation and check if it succeeded
         console.log(`[Buy] Waiting for confirmation...`)
@@ -399,7 +442,7 @@ export const sellTokenSimple = async (
   walletPrivateKey: string,
   mintAddress: string,
   percentage: number = 100, // Percentage of tokens to sell (default 100%)
-  priorityFee: 'none' | 'low' | 'medium' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low' (0.0001 SOL), 'medium' (0.0005 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
+  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low'/'normal' (random 0.000025-0.0001 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
 ): Promise<{ signature: string; txUrl: string }> => {
   try {
     const connection = getConnection()
@@ -465,26 +508,23 @@ export const sellTokenSimple = async (
       throw new Error(`Raw amount is 0 after conversion (UI amount: ${amountToSell}, decimals: ${decimals}). Token amount is too small to sell.`)
     }
     
-    // Get priority fee lamports based on selection (with slight variation for low fee to avoid exact same fee)
+    // Get priority fee lamports based on selection
     const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('./constants/constants')
     let priorityFeeLamports: number
     if (priorityFee === 'ultra') {
       priorityFeeLamports = PRIORITY_FEE_LAMPORTS_ULTRA
     } else if (priorityFee === 'high') {
       priorityFeeLamports = PRIORITY_FEE_LAMPORTS_HIGH
-    } else if (priorityFee === 'medium') {
-      priorityFeeLamports = PRIORITY_FEE_LAMPORTS_MEDIUM
-    } else if (priorityFee === 'low') {
-      // LOW fee: Use base fee with random variation to avoid looking botted
-      // Variation: 0-50,000 lamports (0 to 0.00005 SOL) - adds natural variation
-      const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 100000
-      const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-      priorityFeeLamports = baseFee + variation
-      console.log(`[Sell] Using LOW priority fee with variation: ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(9)} SOL)`)
+    } else if (priorityFee === 'normal' || priorityFee === 'low' || priorityFee === 'medium') {
+      // NORMAL: Random variance between LOW and MEDIUM for natural-looking trades
+      const lowFee = PRIORITY_FEE_LAMPORTS_LOW || 25000
+      const medFee = PRIORITY_FEE_LAMPORTS_MEDIUM || 100000
+      priorityFeeLamports = lowFee + Math.floor(Math.random() * (medFee - lowFee))
+      console.log(`[Sell] Using NORMAL priority fee (random): ${priorityFeeLamports} lamports (${(priorityFeeLamports / 1e9).toFixed(6)} SOL)`)
     } else {
-      // NONE fee: No priority fee (base transaction fee only)
+      // NONE fee: No priority fee (Jito tip only)
       priorityFeeLamports = PRIORITY_FEE_LAMPORTS_NONE || 0
-      console.log(`[Sell] Using NONE priority fee: ${priorityFeeLamports} lamports (base fee only)`)
+      console.log(`[Sell] Using NONE priority fee: Jito tip only`)
     }
     
     // Get sell transaction from Jupiter with selected priority fee
@@ -499,13 +539,10 @@ export const sellTokenSimple = async (
     
     console.log(`[Sell] ✅ Got sell transaction from Jupiter for ${mintAddress.substring(0, 8)}...`)
     
-    // Send transaction instantly (GMGN-style - skip preflight)
-    const signature = await connection.sendTransaction(sellTx, {
-      skipPreflight: true, // Skip preflight for instant execution (like GMGN)
-      maxRetries: 3
-    })
+    // Send via Helius Sender for ultra-low latency (dual routing: validators + Jito)
+    const signature = await sendViaHeliusSender(sellTx)
     
-    console.log(`Sell sent instantly: ${signature}`);
+    console.log(`[Sell] ⚡ Sent via Helius Sender: ${signature}`);
     
     // Wait for fast confirmation (~400ms) for GMGN indexing
     // This ensures transaction is included in a block before returning
@@ -541,41 +578,74 @@ export const getWalletTokenBalance = async (
     // First try: Use associated token address (more reliable)
     try {
       const ata = await getAssociatedTokenAddress(mintPubkey, walletKp.publicKey, true)
-      const accountInfo = await connection.getParsedAccountInfo(ata)
+      console.log(`[TokenBalance] Checking ATA ${ata.toBase58().substring(0, 8)}... for mint ${mintAddress.substring(0, 8)}...`)
+      
+      // Use confirmed commitment explicitly for freshest data after tx confirmation
+      const accountInfo = await connection.getParsedAccountInfo(ata, 'confirmed')
       
       if (accountInfo.value && accountInfo.value.data) {
         const data = accountInfo.value.data
         // Type guard: check if data is ParsedAccountData (has 'parsed' property)
         if ('parsed' in data && data.parsed) {
           const balance = (data.parsed as any).info?.tokenAmount?.uiAmount || 0
+          console.log(`[TokenBalance] ATA exists with balance: ${balance}`)
+          if (balance > 0) {
+            console.log(`[TokenBalance] ✅ Found ${balance} tokens via ATA for ${mintAddress.substring(0, 8)}...`)
+          }
           return { balance, hasTokens: balance > 0 }
+        } else {
+          console.log(`[TokenBalance] ATA exists but data not parsed`)
         }
+      } else {
+        console.log(`[TokenBalance] ATA does not exist yet`)
       }
-    } catch (ataError) {
+    } catch (ataError: any) {
       // ATA doesn't exist yet or error - fall back to scanning all token accounts
-      console.log("ATA check failed, scanning all token accounts...")
+      console.log(`[TokenBalance] ATA check error: ${ataError.message}`)
     }
     
-    // Fallback: Scan all token accounts
-    const tokenAccounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
-      programId: TOKEN_PROGRAM_ID,
-    })
+    // Fallback: Scan all token accounts with confirmed commitment
+    // Also try Token-2022 program in case the token uses that
+    const { TOKEN_2022_PROGRAM_ID } = require("@solana/spl-token")
     
-    for (const account of tokenAccounts.value) {
+    for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
       try {
-        const parsed = (account.account.data as any).parsed?.info
-        if (parsed?.mint === mintAddress) {
-          const balance = parsed.tokenAmount?.uiAmount || 0
-          return { balance, hasTokens: balance > 0 }
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+          walletKp.publicKey,
+          { programId },
+          'confirmed'
+        )
+        
+        if (tokenAccounts.value.length > 0) {
+          // Log first few mints we find to debug
+          const mints = tokenAccounts.value.slice(0, 3).map(a => 
+            (a.account.data as any).parsed?.info?.mint?.substring(0, 8) || 'unknown'
+          )
+          console.log(`[TokenBalance] Found ${tokenAccounts.value.length} accounts. Sample mints: ${mints.join(', ')}`)
         }
-      } catch {
-        // Skip if data is not in parsed format
+        
+        for (const account of tokenAccounts.value) {
+          try {
+            const parsed = (account.account.data as any).parsed?.info
+            const accountMint = parsed?.mint
+            if (accountMint === mintAddress) {
+              const balance = parsed.tokenAmount?.uiAmount || 0
+              console.log(`[TokenBalance] ✅ MATCH! Found ${balance} tokens for ${mintAddress.substring(0, 8)}...`)
+              return { balance, hasTokens: balance > 0 }
+            }
+          } catch {
+            // Skip if data is not in parsed format
+          }
+        }
+      } catch (scanError: any) {
+        console.log(`[TokenBalance] Scan failed for program: ${scanError.message}`)
       }
     }
     
+    console.log(`[TokenBalance] ❌ No tokens found for ${mintAddress.substring(0, 8)}...`)
     return { balance: 0, hasTokens: false }
   } catch (error: any) {
-    console.error(`Error getting token balance: ${error.message}`)
+    console.error(`[TokenBalance] Error: ${error.message}`)
     return { balance: 0, hasTokens: false }
   }
 }

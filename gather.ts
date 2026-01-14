@@ -7,7 +7,8 @@ import { TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, cr
 import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk";
 import { getSellTxWithJupiter } from "./utils/swapOnlyAmm";
 import { execute } from "./executor/legacy";
-import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT } from "./constants";
+import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "./constants";
+import { completeRunTracking, getLatestRecord } from "./lib/profit-loss-tracker";
 
 export const solanaConnection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT, commitment: "processed"
@@ -21,9 +22,46 @@ const mainKp = Keypair.fromSecretKey(base58.decode(mainKpStr))
 const main = async () => {
   const walletsData = readJson()
   
+  // Check for --new-only flag (skip warmed wallets, only gather from auto-created wallets)
+  const newOnlyMode = process.argv.includes('--new-only') || process.argv.includes('--skip-warmed')
+  
+  if (newOnlyMode) {
+    console.log(`\n🔥 NEW-ONLY MODE: Will SKIP warmed wallets, only gather from auto-created wallets`)
+    console.log(`   This preserves your warmed wallets for future launches!\n`)
+  }
+  
   // Read current run info to know which wallets to gather from
   const currentRunPath = path.join(process.cwd(), 'keys', 'current-run.json')
   let walletsToProcess: Keypair[] = []
+  
+  // Load warmed wallet addresses to skip (if in new-only mode)
+  let warmedWalletAddresses: Set<string> = new Set()
+  if (newOnlyMode) {
+    const warmedWalletsPath = path.join(process.cwd(), 'keys', 'warmed-wallets-for-launch.json')
+    if (fs.existsSync(warmedWalletsPath)) {
+      try {
+        const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
+        
+        // Collect all warmed wallet addresses
+        if (warmedData.creatorWalletAddress) {
+          warmedWalletAddresses.add(warmedData.creatorWalletAddress.toLowerCase())
+        }
+        if (warmedData.bundleWalletAddresses && Array.isArray(warmedData.bundleWalletAddresses)) {
+          warmedData.bundleWalletAddresses.forEach((addr: string) => warmedWalletAddresses.add(addr.toLowerCase()))
+        }
+        if (warmedData.holderWalletAddresses && Array.isArray(warmedData.holderWalletAddresses)) {
+          warmedData.holderWalletAddresses.forEach((addr: string) => warmedWalletAddresses.add(addr.toLowerCase()))
+        }
+        
+        console.log(`   📋 Found ${warmedWalletAddresses.size} warmed wallets to SKIP:`)
+        warmedWalletAddresses.forEach(addr => console.log(`      - ${addr.slice(0, 8)}...${addr.slice(-4)}`))
+      } catch (error) {
+        console.log(`   ⚠️  Could not read warmed-wallets-for-launch.json: ${error}`)
+      }
+    } else {
+      console.log(`   ⚠️  No warmed-wallets-for-launch.json found - will gather from ALL wallets`)
+    }
+  }
   
   if (fs.existsSync(currentRunPath)) {
     try {
@@ -131,11 +169,14 @@ const main = async () => {
   // Add DEV buy wallet (FALLBACK: only if not already included from current-run.json)
   // PRIORITY: creatorDevWalletKey from current-run.json (already added above if exists)
   // FALLBACK: BUYER_WALLET from .env (for cases where current-run.json doesn't have creatorDevWalletKey)
+  let buyerKp: Keypair | null = null;
+  let devWalletAlreadyIncluded = false;
+  
   if (BUYER_WALLET && BUYER_WALLET.trim() !== '') {
     try {
-      const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET));
+      buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET));
       // Check if DEV wallet is already in the list (by public key)
-      const devWalletAlreadyIncluded = walletsToProcess.some(kp => kp.publicKey.equals(buyerKp.publicKey));
+      devWalletAlreadyIncluded = walletsToProcess.some(kp => kp.publicKey.equals(buyerKp!.publicKey));
       
       if (!devWalletAlreadyIncluded) {
         walletsToProcess.push(buyerKp);
@@ -164,14 +205,36 @@ const main = async () => {
     }
   }
 
+  // Filter out warmed wallets if in new-only mode
+  if (newOnlyMode && warmedWalletAddresses.size > 0) {
+    const originalCount = walletsToProcess.length
+    walletsToProcess = walletsToProcess.filter(kp => {
+      const addr = kp.publicKey.toBase58().toLowerCase()
+      const isWarmed = warmedWalletAddresses.has(addr)
+      if (isWarmed) {
+        console.log(`   🔥 SKIPPING warmed wallet: ${addr.slice(0, 8)}...${addr.slice(-4)}`)
+      }
+      return !isWarmed
+    })
+    const filteredCount = originalCount - walletsToProcess.length
+    if (filteredCount > 0) {
+      console.log(`\n   ✅ Filtered out ${filteredCount} warmed wallet(s) - they will keep their SOL/tokens!`)
+    } else {
+      console.log(`\n   ℹ️  No warmed wallets were in the gather list`)
+    }
+  }
+
   const bundlerWalletCount = walletsToProcess.length - (devWalletAlreadyIncluded ? 0 : 1)
   console.log(`\n📊 GATHERING SUMMARY:`)
+  if (newOnlyMode) {
+    console.log(`   🔥 MODE: NEW WALLETS ONLY (warmed wallets preserved)`)
+  }
   if (shouldSkipKeptWallets) {
     console.log(`   - Bundler wallets to gather from: ${bundlerWalletCount} (kept wallets excluded)`)
   } else {
-    console.log(`   - Bundler wallets from current run: ${bundlerWalletCount}`)
+    console.log(`   - Auto-created wallets to gather from: ${bundlerWalletCount}`)
   }
-  console.log(`   - DEV buy wallet: 1`)
+  console.log(`   - DEV buy wallet: ${buyerKp ? '1' : '0 (uses auto-created)'}`)
   console.log(`   - Total wallets to process: ${walletsToProcess.length}`)
   
   // Check funding wallet balance (PRIVATE_KEY - this is where all SOL/tokens will be gathered to)
@@ -187,7 +250,7 @@ const main = async () => {
 
   // Process a single wallet
   const processWallet = async (kp: Keypair, index: number, total: number) => {
-    const isDevWallet = kp.publicKey.equals(buyerKp.publicKey)
+    const isDevWallet = buyerKp ? kp.publicKey.equals(buyerKp.publicKey) : false
     
     // Determine wallet type for better labeling
     let walletType = "Unknown"
@@ -465,6 +528,17 @@ const main = async () => {
   }
   
   console.log(`${'='.repeat(80)}\n`)
+  
+  // Complete profit/loss tracking if there's an in-progress run
+  try {
+    const latestRecord = getLatestRecord();
+    if (latestRecord && latestRecord.status === 'in_progress') {
+      const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY));
+      await completeRunTracking(connection, mainKp.publicKey, latestRecord.id, 'completed', 'Gather completed manually');
+    }
+  } catch (error: any) {
+    console.warn(`[ProfitLoss] Failed to complete tracking after gather: ${error.message}`);
+  }
 }
 
 // Export main function so it can be called programmatically

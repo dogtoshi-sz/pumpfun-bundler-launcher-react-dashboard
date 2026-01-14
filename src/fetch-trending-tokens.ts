@@ -52,23 +52,20 @@ async function fetchMoralisTokens(endpoint: string, type: 'new' | 'bonding' | 'g
 }
 
 export async function fetchTrendingPumpFunTokens(limit: number = 100): Promise<TrendingToken[]> {
-  console.log(`[Trending Tokens] Fetching pump.fun tokens (NEW, BONDING, GRADUATED) - target: ${limit} tokens...`)
+  console.log(`[Trending Tokens] Fetching ALL pump.fun tokens (new, bonding, graduated)...`)
   
-  // Fetch MORE tokens per type for better variety
-  // Each type gets limit/3, but we'll fetch even more to ensure we have enough after filtering
-  const tokensPerType = Math.ceil(limit / 3) * 2 // Fetch 2x to ensure we have enough after filtering
-  
-  // Fetch all three types in parallel
+  // Fetch ALL types - Jupiter CAN trade pump.fun tokens via their bonding curve integration
+  // The key is filtering for tokens with VOLUME (not dead/rugged)
   const [newTokens, bondingTokens, graduatedTokens] = await Promise.all([
-    fetchMoralisTokens('new', 'new', tokensPerType),
-    fetchMoralisTokens('bonding', 'bonding', tokensPerType),
-    fetchMoralisTokens('graduated', 'graduated', tokensPerType)
+    fetchMoralisTokens('new', 'new', 100),
+    fetchMoralisTokens('bonding', 'bonding', 200),
+    fetchMoralisTokens('graduated', 'graduated', 200)
   ])
   
   console.log(`[Trending Tokens] Fetched: ${newTokens.length} NEW, ${bondingTokens.length} BONDING, ${graduatedTokens.length} GRADUATED`)
   
-  // Combine all tokens and shuffle randomly
-  const allTokens = [...newTokens, ...bondingTokens, ...graduatedTokens]
+  // Combine all tokens - prioritize graduated (guaranteed liquidity), then bonding, then new
+  const allTokens = [...graduatedTokens, ...bondingTokens, ...newTokens]
   
   // Remove duplicates by mint address
   const uniqueTokens = new Map<string, TrendingToken>()
@@ -81,23 +78,43 @@ export async function fetchTrendingPumpFunTokens(limit: number = 100): Promise<T
   const deduplicated = Array.from(uniqueTokens.values())
   console.log(`[Trending Tokens] After deduplication: ${deduplicated.length} unique tokens`)
   
-  // Shuffle array randomly
-  for (let i = deduplicated.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deduplicated[i], deduplicated[j]] = [deduplicated[j], deduplicated[i]]
+  // CRITICAL: Filter for tokens with ACTUAL VOLUME - dead tokens have $0 volume
+  // This is the key difference - your token works because it has activity, dead tokens don't
+  const MIN_VOLUME_24H = 100 // At least $100 volume in 24h = someone is trading it
+  const MIN_LIQUIDITY = 50   // At least $50 liquidity = not completely rugged
+  
+  const tradableTokens = deduplicated.filter(t => {
+    // Must have some volume OR liquidity to be tradable
+    const hasVolume = t.volume24h >= MIN_VOLUME_24H
+    const hasLiquidity = t.liquidity >= MIN_LIQUIDITY
+    return hasVolume || hasLiquidity
+  })
+  
+  console.log(`[Trending Tokens] After volume/liquidity filter: ${tradableTokens.length} tradable tokens (min $${MIN_VOLUME_24H} vol or $${MIN_LIQUIDITY} liq)`)
+  
+  // If we filtered too aggressively, fall back to all tokens but sort by volume
+  let tokensToUse = tradableTokens.length >= 20 ? tradableTokens : deduplicated
+  
+  // Sort by volume (highest first) so we try active tokens first
+  tokensToUse.sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0))
+  
+  // Take top by volume, then shuffle for variety
+  const topByVolume = tokensToUse.slice(0, Math.min(200, tokensToUse.length))
+  
+  // Shuffle array for variety
+  const shuffleArray = (arr: TrendingToken[]) => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]]
+    }
+    return arr
   }
   
-  // Return up to limit tokens (or all if we have less)
-  const result = deduplicated.slice(0, limit)
+  const result = shuffleArray(topByVolume).slice(0, limit)
   
   if (result.length > 0) {
-    console.log(`[Trending Tokens] ✅ Returning ${result.length} tokens (randomly mixed from all types)`)
-    const typeCounts = {
-      new: result.filter(t => t.type === 'new').length,
-      bonding: result.filter(t => t.type === 'bonding').length,
-      graduated: result.filter(t => t.type === 'graduated').length
-    }
-    console.log(`[Trending Tokens] Breakdown: ${typeCounts.new} new, ${typeCounts.bonding} bonding, ${typeCounts.graduated} graduated`)
+    const avgVolume = result.reduce((sum, t) => sum + (t.volume24h || 0), 0) / result.length
+    console.log(`[Trending Tokens] ✅ Returning ${result.length} tokens (avg 24h vol: $${avgVolume.toFixed(0)})`)
   } else {
     console.warn(`[Trending Tokens] ❌ No tokens fetched from any endpoint`)
   }

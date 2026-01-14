@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   RocketLaunchIcon, 
   UserGroupIcon, 
@@ -11,7 +11,11 @@ import {
   Squares2X2Icon,
   UserIcon,
   ChatBubbleLeftRightIcon,
-  XMarkIcon
+  XMarkIcon,
+  MegaphoneIcon,
+  SparklesIcon,
+  ChartBarIcon,
+  ArrowTrendingUpIcon
 } from '@heroicons/react/24/outline';
 import { 
   RocketLaunchIcon as RocketLaunchIconSolid,
@@ -20,18 +24,34 @@ import {
   Cog6ToothIcon as Cog6ToothIconSolid,
   LockClosedIcon as LockClosedIconSolid,
   CubeIcon as CubeIconSolid,
-  CpuChipIcon as CpuChipIconSolid
+  CpuChipIcon as CpuChipIconSolid,
+  MegaphoneIcon as MegaphoneIconSolid,
+  ArrowTrendingUpIcon as ArrowTrendingUpIconSolid
 } from '@heroicons/react/24/solid';
 import TokenLaunch from './components/TokenLaunch';
 import HolderWallets from './components/HolderWallets';
 import Settings from './components/Settings';
 import WalletTester from './components/WalletTester';
 import WalletWarming from './components/WalletWarming';
+import MarketingWidget from './components/MarketingWidget';
+import DuneDataWidget from './components/DuneDataWidget';
+import PumpPortalTest from './components/PumpPortalTest';
+import QuickSetup from './components/QuickSetup';
+import { TrendDetector } from './components/trend-detector';
+import { useLaunchScore } from './hooks/useLaunchScore';
 
 function App() {
   const [activeTab, setActiveTab] = useState('launch');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [activeSettingsSection, setActiveSettingsSection] = useState('wallets');
+  const [flashMarketing, setFlashMarketing] = useState(false);
+  const [trendSuggestion, setTrendSuggestion] = useState(null);
+
+  // Handle copying trend token to launcher
+  const handleCopyToLauncher = useCallback((suggestion) => {
+    setTrendSuggestion(suggestion);
+    setActiveTab('launch');
+  }, []);
   const [marketData, setMarketData] = useState({
     sol: { price: 0, change24h: 0 },
     eth: { price: 0, change24h: 0 },
@@ -41,6 +61,21 @@ function App() {
     altcoinMarketCap: 0
   });
   const [loadingMarketData, setLoadingMarketData] = useState(true);
+  
+  // Launch score for the Data button
+  const { score: launchScore } = useLaunchScore();
+
+  // Flash marketing button when navigating to Terminal page
+  useEffect(() => {
+    if (activeTab === 'holders') {
+      setFlashMarketing(true);
+      // Flash for 5 seconds then stop
+      const timer = setTimeout(() => {
+        setFlashMarketing(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     // Listen for navigation events from Settings
@@ -128,9 +163,12 @@ function App() {
 
   const tabs = [
     { id: 'launch', name: 'Launch', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, component: TokenLaunch },
+    { id: 'trends', name: 'Trends', icon: ArrowTrendingUpIcon, iconSolid: ArrowTrendingUpIconSolid, component: TrendDetector },
     { id: 'holders', name: 'Terminal', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
     { id: 'warming', name: 'Warming', icon: CpuChipIcon, iconSolid: CpuChipIconSolid, component: WalletWarming },
     { id: 'pnl', name: 'PnL', icon: null, iconSolid: null, component: null, isExternal: true, url: 'http://localhost:3001/profit-loss' },
+    { id: 'setup', name: '⚡ Setup', icon: SparklesIcon, iconSolid: SparklesIcon, component: QuickSetup },
+    { id: 'pptest', name: '🧪 Test', icon: BeakerIcon, iconSolid: BeakerIconSolid, component: PumpPortalTest },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid, component: Settings },
   ];
 
@@ -138,6 +176,7 @@ function App() {
     { id: 'wallets', name: 'Wallets', icon: LockClosedIcon, iconSolid: LockClosedIconSolid },
     { id: 'bundle', name: 'Bundle', icon: CubeIcon, iconSolid: CubeIconSolid },
     { id: 'holders', name: 'Holders', icon: UserGroupIcon, iconSolid: UserGroupIconSolid },
+    { id: 'marketing', name: 'Marketing', icon: MegaphoneIcon, iconSolid: MegaphoneIconSolid },
     { id: 'options', name: 'Options', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid },
     { id: 'auto', name: 'Auto Actions', icon: CpuChipIcon, iconSolid: CpuChipIconSolid },
   ];
@@ -291,14 +330,29 @@ function App() {
           <main className={`flex-1 overflow-y-auto ${isSettingsPage ? 'p-6' : (activeTab === 'holders' ? 'p-4' : 'p-8')}`}>
             <div className={isSettingsPage ? '' : (activeTab === 'holders' ? 'w-full h-full' : 'max-w-7xl mx-auto')}>
               {ActiveComponent && (
-                <ActiveComponent 
-                  onLaunch={() => {
-                    setActiveTab('holders');
-                    setTimeout(() => {
-                      window.dispatchEvent(new Event('refresh-wallets'));
-                    }, 3000);
-                  }}
-                />
+                activeTab === 'trends' ? (
+                  <TrendDetector onCopyToLauncher={handleCopyToLauncher} />
+                ) : activeTab === 'launch' ? (
+                  <TokenLaunch 
+                    onLaunch={() => {
+                      setActiveTab('holders');
+                      setTimeout(() => {
+                        window.dispatchEvent(new Event('refresh-wallets'));
+                      }, 3000);
+                    }}
+                    trendSuggestion={trendSuggestion}
+                    onTrendSuggestionUsed={() => setTrendSuggestion(null)}
+                  />
+                ) : (
+                  <ActiveComponent 
+                    onLaunch={() => {
+                      setActiveTab('holders');
+                      setTimeout(() => {
+                        window.dispatchEvent(new Event('refresh-wallets'));
+                      }, 3000);
+                    }}
+                  />
+                )
               )}
             </div>
           </main>
@@ -374,20 +428,48 @@ function App() {
                 {loadingMarketData && (
                   <span className="text-xs text-gray-400">Loading market data...</span>
                 )}
-                <button className="text-gray-400 hover:text-white transition-colors flex-shrink-0">
-                  <ChatBubbleLeftRightIcon className="w-5 h-5" />
+                <button 
+                  onClick={() => window.dispatchEvent(new Event('open-dune-widget'))}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium transition-all bg-gray-800/50 hover:bg-gray-700/50 border border-gray-700/50"
+                  title="Launch Analytics - Best time to launch based on Pump.fun volume"
+                >
+                  <ChartBarIcon className="w-3.5 h-3.5 text-gray-400" />
+                  {launchScore !== null ? (
+                    <span className={`font-bold ${
+                      launchScore >= 70 ? 'text-emerald-400' : 
+                      launchScore >= 50 ? 'text-amber-400' : 
+                      launchScore >= 30 ? 'text-orange-400' : 'text-red-400'
+                    }`}>
+                      {launchScore}
+                    </span>
+                  ) : (
+                    <span className="text-gray-500">--</span>
+                  )}
                 </button>
-                <button className="text-gray-400 hover:text-white transition-colors flex-shrink-0">
-                  <XMarkIcon className="w-5 h-5" />
-                </button>
-                <button className="text-sm text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0">
-                  Popout
+                <button 
+                  onClick={() => window.dispatchEvent(new Event('open-marketing-widget'))}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    flashMarketing 
+                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white animate-pulse shadow-lg shadow-purple-500/50' 
+                      : 'text-purple-400 hover:text-purple-300 hover:bg-purple-500/10'
+                  }`}
+                  title="Open Marketing Widget"
+                >
+                  <MegaphoneIcon className="w-4 h-4" />
+                  <span>Marketing</span>
+                  {flashMarketing && <SparklesIcon className="w-4 h-4 animate-spin" />}
                 </button>
               </div>
             </div>
           </div>
         </footer>
       </div>
+
+      {/* Marketing Widget - Shows on Launch and Terminal pages */}
+      {(activeTab === 'launch' || activeTab === 'holders') && <MarketingWidget isTerminalPage={activeTab === 'holders'} flashOnMount={flashMarketing} />}
+      
+      {/* Dune Data Widget - Launch Analytics */}
+      <DuneDataWidget />
     </div>
   );
 }

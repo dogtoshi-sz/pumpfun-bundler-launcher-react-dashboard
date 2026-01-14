@@ -192,13 +192,19 @@ function displayMenu() {
   console.log("\n" + "=".repeat(80));
   console.log("🎯 MASTER MENU - Select an option:");
   console.log("=".repeat(80));
-  console.log("  1. 🚀 Launch Token (npm start)");
-  console.log("  2. 📋 Interactive Menu (selling, gathering, etc.)");
-  console.log("  3. 👥 Holder Wallet Menu (manual buy/sell with holder wallets)");
-  console.log("  4. 📊 Check Bundle Status");
-  console.log("  5. 💰 Check Balance");
-  console.log("  6. 📈 Check Token Status");
-  console.log("  7. 🔄 Refresh Settings Display");
+  console.log("");
+  console.log("  🚀 LAUNCHERS:");
+  console.log("  1. ⚡ Quick Launch (simple dev buy + Twitter, no Jito)");
+  console.log("  2. 🔥 Advanced Launch (bundles, LUTs, Jito - full system)");
+  console.log("");
+  console.log("  📋 TOOLS:");
+  console.log("  3. 📋 Interactive Menu (selling, gathering, etc.)");
+  console.log("  4. 👥 Holder Wallet Menu (manual buy/sell with holder wallets)");
+  console.log("  5. 📊 Check Bundle Status");
+  console.log("  6. 💰 Check Balance");
+  console.log("  7. 📈 Check Token Status");
+  console.log("  8. 🔄 Refresh Settings Display");
+  console.log("");
   console.log("  0. ❌ Exit");
   console.log("=".repeat(80));
 }
@@ -289,16 +295,26 @@ async function main() {
   // Main loop
   while (true) {
     displayMenu();
-    const choice = await question("\n👉 Enter your choice (0-7): ");
+    const choice = await question("\n👉 Enter your choice (0-8): ");
     
     switch (choice.trim()) {
       case '1':
-        console.log("\n🚀 Starting token launch...");
-        console.log("⚠️  This will open in a new process. Close it to return to menu.\n");
-        await runCommand('start', 'Launch Token');
-        break;
+        console.log("\n⚡ Starting Quick Launch...");
+        console.log("   Simple dev buy + Twitter posting (no Jito, no bundles)\n");
+        await runInteractiveCommand('quick-launch', 'Quick Launch');
+        console.log("\n👋 Master menu closed. Run 'npm run master' to restart.");
+        rl.close();
+        return;
         
       case '2':
+        console.log("\n🔥 Starting Advanced Launch...");
+        console.log("   Full system: bundles, LUTs, Jito, holder wallets\n");
+        await runInteractiveCommand('start', 'Advanced Launch');
+        console.log("\n👋 Master menu closed. Run 'npm run master' to restart.");
+        rl.close();
+        return;
+        
+      case '3':
         console.log("\n📋 Opening Interactive Menu...");
         console.log("⚠️  This will close the master menu. Restart it after you're done.\n");
         await runInteractiveCommand('menu', 'Interactive Menu');
@@ -307,7 +323,7 @@ async function main() {
         rl.close();
         return;
         
-      case '3':
+      case '4':
         console.log("\n👥 Opening Holder Wallet Menu...");
         console.log("⚠️  This will close the master menu. Restart it after you're done.\n");
         await runInteractiveCommand('holder-menu', 'Holder Wallet Menu');
@@ -316,19 +332,19 @@ async function main() {
         rl.close();
         return;
         
-      case '4':
+      case '5':
         await runCommand('check-bundle', 'Check Bundle Status');
         break;
         
-      case '5':
+      case '6':
         await runCommand('check-balance', 'Check Balance');
         break;
         
-      case '6':
+      case '7':
         await runCommand('status', 'Check Token Status');
         break;
         
-      case '7':
+      case '8':
         displayCurrentSettings();
         break;
         
@@ -338,7 +354,7 @@ async function main() {
         return;
         
       default:
-        console.log("\n❌ Invalid choice. Please enter a number between 0-7.");
+        console.log("\n❌ Invalid choice. Please enter a number between 0-8.");
     }
     
     if (choice.trim() !== '0') {

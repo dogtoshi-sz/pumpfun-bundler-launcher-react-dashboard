@@ -36,20 +36,18 @@ export async function generateSimpleLogo(options: SimpleLogoOptions): Promise<Bu
     throw new Error('Canvas package not installed. Run: npm install canvas');
   }
 
-  const {
-    tokenName = '',
-    tokenSymbol = '',
-    baseLogoPath,
-    fontPath,
-    fontFamily = 'Arial',
-    fontSize = 48,
-    textColor = '#FFFFFF',
-    backgroundColor = '#000000',
-    width = 512,
-    height = 512,
-    textPosition = 'center',
-    logoScale = 0.6
-  } = options;
+  const tokenName = options.tokenName || '';
+  const tokenSymbol = options.tokenSymbol || '';
+  const baseLogoPath = options.baseLogoPath;
+  const fontPath = options.fontPath;
+  const fontFamily = options.fontFamily || 'Arial';
+  const fontSize = options.fontSize || 48;
+  const textColor = options.textColor || '#FFFFFF';
+  const backgroundColor = options.backgroundColor || '#000000';
+  const width = options.width || 512;
+  const height = options.height || 512;
+  const textPosition = options.textPosition || 'center';
+  const logoScale = options.logoScale || 0.6;
 
   const { createCanvas, loadImage, registerFont } = Canvas;
 
@@ -71,34 +69,35 @@ export async function generateSimpleLogo(options: SimpleLogoOptions): Promise<Bu
   ctx.fillRect(0, 0, width, height);
 
   // Load and draw base logo if provided
-  let logoImage = null;
   if (baseLogoPath && fs.existsSync(baseLogoPath)) {
     try {
-      logoImage = await loadImage(baseLogoPath);
+      const logoImage = await loadImage(baseLogoPath) as any;
       
-      // Calculate logo size and position
-      const logoAspect = logoImage.width / logoImage.height;
-      const logoHeight = height * logoScale;
-      const logoWidth = logoHeight * logoAspect;
-      
-      // Center logo
-      const logoX = (width - logoWidth) / 2;
-      let logoY = 0;
-      
-      // Adjust logo position based on text position
-      if (textPosition === 'top') {
-        logoY = height * 0.15; // Logo in middle-lower area
-      } else if (textPosition === 'bottom') {
-        logoY = height * 0.1; // Logo in upper area
-      } else if (textPosition === 'overlay') {
-        logoY = (height - logoHeight) / 2; // Center, text will overlay
-      } else {
-        logoY = (height - logoHeight) / 2 - (tokenName || tokenSymbol ? fontSize * 0.8 : 0);
+      if (logoImage && logoImage.width && logoImage.height) {
+        // Calculate logo size and position
+        const logoAspect = logoImage.width / logoImage.height;
+        const logoHeight = height * logoScale;
+        const logoWidth = logoHeight * logoAspect;
+        
+        // Center logo
+        const logoX = (width - logoWidth) / 2;
+        let logoY = 0;
+        
+        // Adjust logo position based on text position
+        if (textPosition === 'top') {
+          logoY = height * 0.15; // Logo in middle-lower area
+        } else if (textPosition === 'bottom') {
+          logoY = height * 0.1; // Logo in upper area
+        } else if (textPosition === 'overlay') {
+          logoY = (height - logoHeight) / 2; // Center, text will overlay
+        } else {
+          logoY = (height - logoHeight) / 2 - (tokenName || tokenSymbol ? fontSize * 0.8 : 0);
+        }
+        
+        ctx.drawImage(logoImage, logoX, logoY, logoWidth, logoHeight);
+        console.log(`[Logo Generator] Drew base logo: ${baseLogoPath}`);
       }
-      
-      ctx.drawImage(logoImage, logoX, logoY, logoWidth, logoHeight);
-      console.log(`[Logo Generator] Drew base logo: ${baseLogoPath}`);
-    } catch (error) {
+    } catch (error: any) {
       console.warn(`[Logo Generator] Could not load base logo: ${error.message}`);
     }
   }
@@ -122,7 +121,7 @@ export async function generateSimpleLogo(options: SimpleLogoOptions): Promise<Bu
       textY = height * 0.25;
     } else if (textPosition === 'bottom') {
       textY = height * 0.75;
-    } else if (textPosition === 'overlay' && logoImage) {
+    } else if (textPosition === 'overlay') {
       textY = height / 2; // Overlay on logo
     }
 

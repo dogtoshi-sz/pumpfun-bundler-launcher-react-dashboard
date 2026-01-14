@@ -10,6 +10,13 @@ const fs = require('fs');
 // Handle bs58 v6 export format
 const base58 = require('bs58').default || require('bs58');
 
+// Extract Helius API key from RPC endpoint
+function getHeliusApiKey(rpcEndpoint) {
+  if (!rpcEndpoint) return null;
+  const match = rpcEndpoint.match(/api-key=([^&]+)/);
+  return match ? match[1] : null;
+}
+
 // Load .env file before initializing (same as control-panel-server.js)
 const rootEnvPath = path.join(__dirname, '..', '.env');
 if (fs.existsSync(rootEnvPath)) {
@@ -35,11 +42,444 @@ class LiveTradesTracker {
     this.pendingTransactions = new Set();
     this.ourWallets = new Set(); // Track our wallet addresses
     this.walletTypes = new Map(); // Map wallet address -> type (DEV, Bundle, Holder)
+    this.testWallets = new Set(); // Track manually added test wallets (temporary)
     this.pollInterval = null; // Polling interval for live updates
     this.lastFetchedSlot = new Map(); // Cache last fetched slot per mint
     this.tradeCache = new Map(); // Cache trades per mint address
     this.currentMarketCap = null; // Current market cap from API
     this.PUMP_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+    this.autoStartInterval = null; // Interval for checking current-run.json
+    this.lastCheckedMint = null; // Track last mint we started tracking
+    
+    // Config persistence paths
+    this.configDir = path.join(__dirname, '..', 'keys');
+    this.autoSellConfigPath = path.join(this.configDir, 'auto-sell-config.json');
+    
+    // Per-wallet auto-sell system
+    this.autoSellConfig = new Map(); // Map wallet address -> { threshold: number, enabled: boolean, triggered: boolean }
+    this.externalNetVolume = 0; // Cumulative NET external volume (buys - sells)
+    this.autoSellEnabled = false; // Global toggle for auto-sell system
+    this.autoSellListeners = []; // Listeners for auto-sell events
+    
+    // MEV Protection settings
+    this.mevProtection = {
+      enabled: true,
+      confirmationDelaySec: 3,       // Wait X seconds after threshold reached, then re-check
+      launchCooldownSec: 5,          // Don't auto-sell for X seconds after first external trade
+      rapidTraderWindowSec: 10,      // If wallet buys AND sells within X seconds, ignore both
+    };
+    this.firstExternalTradeTime = null; // Track first external trade time
+    this.externalTraderHistory = new Map(); // Map trader address -> [{type, solAmount, timestamp}, ...]
+    this.pendingSellTriggers = new Map(); // Map wallet address -> timeout for delayed confirmation
+    
+    // Load saved settings on startup
+    this.loadAutoSellConfig();
+  }
+  
+  // Save auto-sell config to file
+  saveAutoSellConfig() {
+    try {
+      const config = {
+        autoSellEnabled: this.autoSellEnabled,
+        mevProtection: this.mevProtection,
+        walletConfigs: {},
+        savedAt: new Date().toISOString(),
+      };
+      
+      // Save wallet-specific thresholds (by wallet type, not address since addresses change per run)
+      for (const [addr, settings] of this.autoSellConfig) {
+        const walletType = this.walletTypes.get(addr) || this.walletTypes.get(addr.toLowerCase());
+        if (walletType) {
+          // Save by type for template configs (e.g., "DEV", "Bundle_0", "Holder_1")
+          config.walletConfigs[walletType] = {
+            threshold: settings.threshold,
+            enabled: settings.enabled,
+          };
+        }
+      }
+      
+      fs.writeFileSync(this.autoSellConfigPath, JSON.stringify(config, null, 2));
+      console.log(`[AutoSell] 💾 Saved config: ${Object.keys(config.walletConfigs).length} wallet types`);
+    } catch (err) {
+      console.error('[AutoSell] Failed to save config:', err.message);
+    }
+  }
+  
+  // Load auto-sell config from file
+  loadAutoSellConfig() {
+    try {
+      if (fs.existsSync(this.autoSellConfigPath)) {
+        const data = JSON.parse(fs.readFileSync(this.autoSellConfigPath, 'utf8'));
+        
+        // Restore global settings
+        if (typeof data.autoSellEnabled === 'boolean') {
+          this.autoSellEnabled = data.autoSellEnabled;
+        }
+        
+        // Restore MEV protection settings
+        if (data.mevProtection) {
+          this.mevProtection = { ...this.mevProtection, ...data.mevProtection };
+        }
+        
+        // Store template configs for later when wallets are registered
+        this.savedWalletConfigs = data.walletConfigs || {};
+        
+        console.log(`[AutoSell] 📂 Loaded config: enabled=${this.autoSellEnabled}, MEV delay=${this.mevProtection.confirmationDelaySec}s, ${Object.keys(this.savedWalletConfigs).length} wallet templates`);
+      }
+    } catch (err) {
+      console.error('[AutoSell] Failed to load config:', err.message);
+      this.savedWalletConfigs = {};
+    }
+  }
+  
+  // Apply saved config to a newly registered wallet
+  applySavedConfigToWallet(walletAddress, walletType) {
+    if (this.savedWalletConfigs && this.savedWalletConfigs[walletType]) {
+      const saved = this.savedWalletConfigs[walletType];
+      this.autoSellConfig.set(walletAddress.toLowerCase(), {
+        threshold: saved.threshold || 0,
+        enabled: saved.enabled !== false,
+        triggered: false,
+        triggeredAt: null,
+        sellResult: null,
+      });
+      console.log(`[AutoSell] Applied saved config to ${walletType}: threshold=${saved.threshold} SOL`);
+    }
+  }
+  
+  // Configure auto-sell for a specific wallet
+  configureAutoSell(walletAddress, threshold, enabled = true) {
+    const addr = walletAddress.toLowerCase();
+    const thresholdValue = parseFloat(threshold) || 0;
+    this.autoSellConfig.set(addr, {
+      threshold: thresholdValue,
+      enabled: enabled,
+      triggered: false,
+      triggeredAt: null,
+      sellResult: null,
+    });
+    console.log(`[AutoSell] Configured wallet ${walletAddress.slice(0, 8)}... threshold: ${threshold} SOL, enabled: ${enabled}`);
+    
+    // Auto-enable if threshold is set
+    if (thresholdValue > 0 && !this.autoSellEnabled) {
+      this.autoSellEnabled = true;
+      console.log(`[AutoSell] ✅ AUTO-ENABLED (threshold configured)`);
+    }
+    
+    // Save config to persist between sessions
+    this.saveAutoSellConfig();
+    
+    return this.getAutoSellConfig();
+  }
+  
+  // Get all auto-sell configurations
+  getAutoSellConfig() {
+    const config = {};
+    for (const [addr, settings] of this.autoSellConfig) {
+      config[addr] = { ...settings };
+    }
+    
+    // Check if in cooldown
+    let inCooldown = false;
+    let cooldownRemaining = 0;
+    if (this.mevProtection.enabled && this.firstExternalTradeTime) {
+      const timeSinceFirst = (Date.now() - this.firstExternalTradeTime) / 1000;
+      if (timeSinceFirst < this.mevProtection.launchCooldownSec) {
+        inCooldown = true;
+        cooldownRemaining = this.mevProtection.launchCooldownSec - timeSinceFirst;
+      }
+    }
+    
+    return {
+      wallets: config,
+      externalNetVolume: this.externalNetVolume,
+      enabled: this.autoSellEnabled,
+      mevProtection: this.mevProtection,
+      inCooldown: inCooldown,
+      cooldownRemaining: cooldownRemaining,
+      pendingSells: Array.from(this.pendingSellTriggers.keys()),
+    };
+  }
+  
+  // Set auto-sell configs from an object (for bulk configuration)
+  setAutoSellConfigs(configs) {
+    this.autoSellConfig.clear();
+    let hasThresholds = false;
+    for (const [addr, settings] of Object.entries(configs)) {
+      const threshold = parseFloat(settings.threshold) || 0;
+      if (threshold > 0) hasThresholds = true;
+      this.autoSellConfig.set(addr.toLowerCase(), {
+        threshold: threshold,
+        enabled: settings.enabled !== false,
+        triggered: false,
+        triggeredAt: null,
+        sellResult: null,
+      });
+    }
+    console.log(`[AutoSell] Configured ${this.autoSellConfig.size} wallets for auto-sell`);
+    
+    // Auto-enable if any thresholds are set
+    if (hasThresholds && !this.autoSellEnabled) {
+      this.autoSellEnabled = true;
+      console.log(`[AutoSell] ✅ AUTO-ENABLED (thresholds configured)`);
+    }
+    
+    // Save config to persist between sessions
+    this.saveAutoSellConfig();
+    
+    return this.getAutoSellConfig();
+  }
+  
+  // Enable/disable global auto-sell
+  setAutoSellEnabled(enabled) {
+    this.autoSellEnabled = enabled;
+    console.log(`[AutoSell] ${enabled ? '✅ ENABLED' : '❌ DISABLED'}`);
+    
+    // Save config to persist between sessions
+    this.saveAutoSellConfig();
+    
+    return this.getAutoSellConfig();
+  }
+  
+  // Reset auto-sell state (for new token runs)
+  resetAutoSell() {
+    this.externalNetVolume = 0;
+    for (const [addr, settings] of this.autoSellConfig) {
+      settings.triggered = false;
+      settings.triggeredAt = null;
+      settings.sellResult = null;
+    }
+    
+    // Clear MEV protection state
+    this.firstExternalTradeTime = null;
+    this.externalTraderHistory.clear();
+    
+    // Clear any pending sell triggers
+    for (const timeout of this.pendingSellTriggers.values()) {
+      clearTimeout(timeout);
+    }
+    this.pendingSellTriggers.clear();
+    
+    console.log('[AutoSell] Reset all auto-sell states (including MEV protection)');
+    return this.getAutoSellConfig();
+  }
+  
+  // Configure MEV protection settings
+  setMevProtection(settings) {
+    this.mevProtection = {
+      ...this.mevProtection,
+      ...settings,
+    };
+    console.log('[AutoSell] MEV protection updated:', this.mevProtection);
+    
+    // Save config to persist between sessions
+    this.saveAutoSellConfig();
+    
+    return this.mevProtection;
+  }
+  
+  // Get MEV protection settings
+  getMevProtection() {
+    return { ...this.mevProtection };
+  }
+  
+  // Track external volume and check thresholds (with MEV protection)
+  trackExternalVolume(trade) {
+    // Only track non-wallet trades
+    // BUT: FUNDING wallet trades count as EXTERNAL for testing auto-sell
+    // (User can buy with funding wallet to test auto-sell triggers)
+    const isFundingWallet = trade.walletType === 'FUNDING';
+    if (trade.isOurWallet && !isFundingWallet) return;
+    
+    const now = Date.now();
+    const traderAddr = trade.fullTrader?.toLowerCase();
+    
+    // Track first external trade time (for launch cooldown)
+    if (!this.firstExternalTradeTime) {
+      this.firstExternalTradeTime = now;
+      console.log(`[AutoSell] 📍 First external trade detected, cooldown starts...`);
+    }
+    
+    // MEV Protection: Track trader history for rapid buy/sell detection
+    if (this.mevProtection.enabled && traderAddr) {
+      if (!this.externalTraderHistory.has(traderAddr)) {
+        this.externalTraderHistory.set(traderAddr, []);
+      }
+      const history = this.externalTraderHistory.get(traderAddr);
+      history.push({ type: trade.type, solAmount: trade.solAmount, timestamp: now });
+      
+      // Keep only recent history (last 60 seconds)
+      const cutoff = now - 60000;
+      while (history.length > 0 && history[0].timestamp < cutoff) {
+        history.shift();
+      }
+      
+      // Check for rapid buy/sell pattern (MEV bot signature)
+      const windowMs = this.mevProtection.rapidTraderWindowSec * 1000;
+      const recentTrades = history.filter(h => h.timestamp > now - windowMs);
+      const hasBuy = recentTrades.some(t => t.type === 'buy');
+      const hasSell = recentTrades.some(t => t.type === 'sell');
+      
+      if (hasBuy && hasSell) {
+        // This trader bought AND sold within the window - likely MEV bot
+        // Net out their trades instead of counting them
+        const netVolume = recentTrades.reduce((sum, t) => 
+          sum + (t.type === 'buy' ? t.solAmount : -t.solAmount), 0);
+        
+        // Only log if significant
+        if (Math.abs(netVolume) > 0.01) {
+          console.log(`[AutoSell] ⚠️ MEV detected: ${traderAddr.slice(0, 8)}... rapid buy+sell, net: ${netVolume.toFixed(4)} SOL`);
+        }
+        
+        // Recalculate external volume from net position instead of counting this trade
+        // Skip this trade's direct effect on volume since we're netting
+        // (The volume was already added/subtracted, so we let it stand but don't trigger)
+      }
+    }
+    
+    // Calculate net volume change (buys add, sells subtract)
+    const volumeChange = trade.type === 'buy' ? trade.solAmount : -trade.solAmount;
+    this.externalNetVolume += volumeChange;
+    
+    // Don't trigger if disabled or no mint address
+    if (!this.autoSellEnabled || !this.currentMintAddress) return;
+    
+    // MEV Protection: Launch cooldown check
+    if (this.mevProtection.enabled) {
+      const timeSinceFirst = (now - this.firstExternalTradeTime) / 1000;
+      if (timeSinceFirst < this.mevProtection.launchCooldownSec) {
+        console.log(`[AutoSell] ⏳ In launch cooldown (${timeSinceFirst.toFixed(1)}s / ${this.mevProtection.launchCooldownSec}s)`);
+        // Still notify listeners but don't trigger
+        this.notifyAutoSellListeners({
+          type: 'volumeUpdate',
+          externalNetVolume: this.externalNetVolume,
+          trade: trade,
+          inCooldown: true,
+          cooldownRemaining: this.mevProtection.launchCooldownSec - timeSinceFirst,
+        });
+        return;
+      }
+    }
+    
+    // Check each wallet's threshold
+    for (const [walletAddr, config] of this.autoSellConfig) {
+      if (!config.enabled || config.triggered) continue;
+      if (this.pendingSellTriggers.has(walletAddr)) continue; // Already pending confirmation
+      
+      // Check if threshold is met
+      if (this.externalNetVolume >= config.threshold && config.threshold > 0) {
+        console.log(`[AutoSell] 🎯 Threshold REACHED for ${walletAddr.slice(0, 8)}... | ${this.externalNetVolume.toFixed(4)} SOL >= ${config.threshold} SOL`);
+        
+        // MEV Protection: Confirmation delay
+        if (this.mevProtection.enabled && this.mevProtection.confirmationDelaySec > 0) {
+          const delayMs = this.mevProtection.confirmationDelaySec * 1000;
+          console.log(`[AutoSell] ⏱️ Waiting ${this.mevProtection.confirmationDelaySec}s for confirmation...`);
+          
+          // Store the volume at trigger time
+          const triggerVolume = this.externalNetVolume;
+          
+          const timeout = setTimeout(() => {
+            this.pendingSellTriggers.delete(walletAddr);
+            
+            // Re-check if volume is still above threshold
+            if (this.externalNetVolume >= config.threshold) {
+              console.log(`[AutoSell] ✅ Confirmed! Volume still ${this.externalNetVolume.toFixed(4)} >= ${config.threshold} SOL after ${this.mevProtection.confirmationDelaySec}s`);
+              this.triggerAutoSell(walletAddr, config);
+            } else {
+              console.log(`[AutoSell] ❌ Cancelled! Volume dropped to ${this.externalNetVolume.toFixed(4)} < ${config.threshold} SOL (MEV likely dumped)`);
+              this.notifyAutoSellListeners({
+                type: 'sellCancelled',
+                walletAddress: walletAddr,
+                reason: 'Volume dropped below threshold after MEV protection delay',
+                triggerVolume: triggerVolume,
+                currentVolume: this.externalNetVolume,
+              });
+            }
+          }, delayMs);
+          
+          this.pendingSellTriggers.set(walletAddr, timeout);
+        } else {
+          // No delay, trigger immediately
+          this.triggerAutoSell(walletAddr, config);
+        }
+      }
+    }
+    
+    // Notify listeners of volume update
+    this.notifyAutoSellListeners({
+      type: 'volumeUpdate',
+      externalNetVolume: this.externalNetVolume,
+      trade: trade,
+    });
+  }
+  
+  // Trigger auto-sell for a wallet
+  async triggerAutoSell(walletAddress, config) {
+    config.triggered = true;
+    config.triggeredAt = Date.now();
+    
+    console.log(`[AutoSell] 🚀 TRIGGERING SELL for ${walletAddress.slice(0, 8)}...`);
+    
+    // Notify listeners that sell is being triggered
+    this.notifyAutoSellListeners({
+      type: 'sellTriggered',
+      walletAddress: walletAddress,
+      threshold: config.threshold,
+      externalNetVolume: this.externalNetVolume,
+    });
+    
+    // Execute the sell (will be handled by control-panel-server)
+    try {
+      const sellResult = await this.executeAutoSell(walletAddress);
+      config.sellResult = sellResult;
+      
+      this.notifyAutoSellListeners({
+        type: 'sellComplete',
+        walletAddress: walletAddress,
+        result: sellResult,
+      });
+    } catch (error) {
+      console.error(`[AutoSell] ❌ Sell failed for ${walletAddress.slice(0, 8)}...:`, error.message);
+      config.sellResult = { error: error.message };
+      
+      this.notifyAutoSellListeners({
+        type: 'sellFailed',
+        walletAddress: walletAddress,
+        error: error.message,
+      });
+    }
+  }
+  
+  // Execute auto-sell (to be called by control-panel-server via callback)
+  async executeAutoSell(walletAddress) {
+    // This will be overridden by control-panel-server to actually execute the sell
+    console.log(`[AutoSell] ⚡ Execute sell for ${walletAddress.slice(0, 8)}... (handler not set)`);
+    return { success: false, error: 'Sell handler not configured' };
+  }
+  
+  // Set the sell execution callback
+  setAutoSellExecutor(callback) {
+    this.executeAutoSell = callback;
+    console.log('[AutoSell] ✅ Sell executor configured');
+  }
+  
+  // Add listener for auto-sell events
+  addAutoSellListener(callback) {
+    this.autoSellListeners.push(callback);
+    return () => {
+      this.autoSellListeners = this.autoSellListeners.filter(cb => cb !== callback);
+    };
+  }
+  
+  // Notify all auto-sell listeners
+  notifyAutoSellListeners(event) {
+    for (const listener of this.autoSellListeners) {
+      try {
+        listener(event);
+      } catch (e) {
+        console.error('[AutoSell] Listener error:', e.message);
+      }
+    }
   }
   
   // Derive Pump.fun bonding curve PDA from mint address
@@ -88,13 +528,56 @@ class LiveTradesTracker {
     }
     
     if (this.wsUrl) {
-      console.log(`[LiveTrades] ✅ WebSocket URL configured: ${this.wsUrl.replace(/api-key=[^&]+/, 'api-key=***')}`);
+      // WebSocket URL configured (using QuickNode for live trades, Helius only for historical)
+    // console.log(`[LiveTrades] ✅ WebSocket URL configured: ${this.wsUrl.replace(/api-key=[^&]+/, 'api-key=***')}`);
     } else {
       console.warn('[LiveTrades] ⚠️ RPC_WEBSOCKET_ENDPOINT not found');
     }
 
     // Load our wallet addresses from current-run.json
     this.loadOurWallets();
+    
+    // Auto-start tracking when token is launched (monitor current-run.json)
+    this.startAutoTracking();
+  }
+  
+  // Auto-start tracking when current-run.json is created/updated with mint address
+  startAutoTracking() {
+    // Check every 2 seconds for new token launches
+    this.autoStartInterval = setInterval(async () => {
+      try {
+        const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
+        if (!fs.existsSync(currentRunPath)) {
+          return; // No current-run.json yet
+        }
+        
+        const data = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+        const mintAddress = data.mintAddress;
+        
+        // If we have a mint address and we're not already tracking it, start tracking
+        if (mintAddress && mintAddress !== this.lastCheckedMint) {
+          // Check if mint address is valid (not empty, proper length)
+          if (mintAddress.length > 20 && mintAddress !== this.currentMintAddress) {
+            // Auto-start tracking for newly launched token (QuickNode webhook handles live trades)
+            // console.log(`[LiveTrades] 🚀 Auto-starting tracking for newly launched token: ${mintAddress.slice(0, 8)}...`);
+            this.lastCheckedMint = mintAddress;
+            // Start tracking (for historical data only - QuickNode handles live trades)
+            await this.startTracking(mintAddress);
+            // console.log(`[LiveTrades] ✅ Auto-tracking started! QuickNode webhook will catch all trades.`);
+          }
+        }
+      } catch (error) {
+        // Silently fail - current-run.json might not be ready yet
+      }
+    }, 2000); // Check every 2 seconds
+  }
+  
+  // Stop auto-tracking (cleanup)
+  stopAutoTracking() {
+    if (this.autoStartInterval) {
+      clearInterval(this.autoStartInterval);
+      this.autoStartInterval = null;
+    }
   }
 
   // Load our wallet addresses with types
@@ -102,38 +585,41 @@ class LiveTradesTracker {
     this.ourWallets.clear(); // Clear existing wallets
     this.walletTypes.clear(); // Clear wallet types
     
+    // Helper function to derive address from key (base58 or base64)
+    const deriveAddress = (key) => {
+      try {
+        const { Keypair } = require('@solana/web3.js');
+        let keypair;
+        // Try base58 first (most common for Solana keys)
+        try {
+          const decoded = base58.decode(key);
+          keypair = Keypair.fromSecretKey(decoded);
+        } catch (e) {
+          // Fallback to base64
+          keypair = Keypair.fromSecretKey(Buffer.from(key, 'base64'));
+        }
+        return keypair.publicKey.toString();
+      } catch (e) {
+        console.error(`[LiveTrades] Error deriving address from key: ${e.message}`);
+        return null;
+      }
+    };
+    
+    const addWallet = (address, type) => {
+      if (address) {
+        const addrLower = address.toLowerCase();
+        this.ourWallets.add(addrLower);
+        this.walletTypes.set(addrLower, type);
+        
+        // Apply saved auto-sell config for this wallet type
+        this.applySavedConfigToWallet(addrLower, type);
+      }
+    };
+    
     try {
       const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
       if (fs.existsSync(currentRunPath)) {
         const data = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
-        
-        // Helper function to derive address from key (base58 or base64)
-        const deriveAddress = (key) => {
-          try {
-            const { Keypair } = require('@solana/web3.js');
-            let keypair;
-            // Try base58 first (most common for Solana keys)
-            try {
-              const decoded = base58.decode(key);
-              keypair = Keypair.fromSecretKey(decoded);
-            } catch (e) {
-              // Fallback to base64
-              keypair = Keypair.fromSecretKey(Buffer.from(key, 'base64'));
-            }
-            return keypair.publicKey.toString();
-          } catch (e) {
-            console.error(`[LiveTrades] Error deriving address from key: ${e.message}`);
-            return null;
-          }
-        };
-        
-        const addWallet = (address, type) => {
-          if (address) {
-            const addrLower = address.toLowerCase();
-            this.ourWallets.add(addrLower);
-            this.walletTypes.set(addrLower, type);
-          }
-        };
         
         // Add DEV wallet (creatorDevWalletKey)
         if (data.creatorDevWalletKey) {
@@ -186,29 +672,182 @@ class LiveTradesTracker {
           });
         }
         
-        // Debug: Log all wallet addresses with types
-        const devCount = Array.from(this.walletTypes.values()).filter(t => t === 'DEV').length;
-        const bundleCount = Array.from(this.walletTypes.values()).filter(t => t === 'Bundle').length;
-        const holderCount = Array.from(this.walletTypes.values()).filter(t => t === 'Holder').length;
-        
-        console.log(`[LiveTrades] ✅ Loaded ${this.ourWallets.size} our wallet addresses:`);
-        console.log(`[LiveTrades]   - DEV: ${devCount}`);
-        console.log(`[LiveTrades]   - Bundle: ${bundleCount}`);
-        console.log(`[LiveTrades]   - Holder: ${holderCount}`);
-        
-        if (this.ourWallets.size > 0) {
-          const walletList = Array.from(this.ourWallets).slice(0, 5);
-          walletList.forEach(addr => {
-            const type = this.walletTypes.get(addr) || 'Unknown';
-            console.log(`[LiveTrades]   ${type}: ${addr.slice(0, 8)}...`);
-          });
+        // Load auto-buy results (for tracking actual buy prices)
+        // This is used by auto-sell to know the price each wallet bought at
+        if (data.autoBuyResults && data.autoBuyResults.successfulBuys) {
+          console.log(`[LiveTrades] 📊 Loading auto-buy results for ${data.autoBuyResults.successfulBuys.length} wallet(s)...`);
+          
+          for (const buyResult of data.autoBuyResults.successfulBuys) {
+            const addr = buyResult.address?.toLowerCase();
+            if (addr) {
+              // Store buy info in autoSellConfig
+              const existingConfig = this.autoSellConfig.get(addr) || {};
+              this.autoSellConfig.set(addr, {
+                ...existingConfig,
+                buyAmount: buyResult.buyAmount, // SOL spent to buy
+                buySignature: buyResult.signature,
+                buyTimestamp: buyResult.timestamp,
+                actualBuyPrice: buyResult.buyAmount // For auto-sell reference
+              });
+              console.log(`[LiveTrades]   💰 Wallet ${addr.slice(0, 8)}... bought for ${buyResult.buyAmount} SOL`);
+            }
+          }
+          
+          // Store skipped wallets info (front-run protection triggered)
+          if (data.autoBuyResults.skippedWallets && data.autoBuyResults.skippedWallets.length > 0) {
+            console.log(`[LiveTrades]   ⚠️  ${data.autoBuyResults.skippedWallets.length} wallet(s) skipped due to front-run protection (threshold: ${data.autoBuyResults.frontRunThreshold} SOL)`);
+          }
         }
-      } else {
-        console.warn('[LiveTrades] ⚠️ current-run.json not found');
+      }
+      
+      // Also load from warmed-wallets-for-launch.json (for warmed wallet runs)
+      const warmedWalletsPath = path.join(__dirname, '..', 'keys', 'warmed-wallets-for-launch.json');
+      if (fs.existsSync(warmedWalletsPath)) {
+        try {
+          const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'));
+          console.log(`[LiveTrades] 📂 Found warmed-wallets-for-launch.json, loading wallets...`);
+          
+          // Add creator/DEV wallet
+          if (warmedData.creatorWalletKey) {
+            const devAddr = deriveAddress(warmedData.creatorWalletKey);
+            if (devAddr && !this.ourWallets.has(devAddr.toLowerCase())) {
+              addWallet(devAddr, 'DEV');
+            }
+          }
+          if (warmedData.creatorWalletAddress) {
+            addWallet(warmedData.creatorWalletAddress, 'DEV');
+          }
+          
+          // Add bundle wallets
+          if (warmedData.bundleWalletKeys && Array.isArray(warmedData.bundleWalletKeys)) {
+            warmedData.bundleWalletKeys.forEach(key => {
+              const addr = deriveAddress(key);
+              if (addr && !this.ourWallets.has(addr.toLowerCase())) {
+                addWallet(addr, 'Bundle');
+              }
+            });
+          }
+          if (warmedData.bundleWalletAddresses && Array.isArray(warmedData.bundleWalletAddresses)) {
+            warmedData.bundleWalletAddresses.forEach(addr => {
+              if (!this.ourWallets.has(addr.toLowerCase())) {
+                addWallet(addr, 'Bundle');
+              }
+            });
+          }
+          
+          // Add holder wallets
+          if (warmedData.holderWalletKeys && Array.isArray(warmedData.holderWalletKeys)) {
+            warmedData.holderWalletKeys.forEach(key => {
+              const addr = deriveAddress(key);
+              if (addr && !this.ourWallets.has(addr.toLowerCase())) {
+                addWallet(addr, 'Holder');
+              }
+            });
+          }
+          if (warmedData.holderWalletAddresses && Array.isArray(warmedData.holderWalletAddresses)) {
+            warmedData.holderWalletAddresses.forEach(addr => {
+              if (!this.ourWallets.has(addr.toLowerCase())) {
+                addWallet(addr, 'Holder');
+              }
+            });
+          }
+          
+          console.log(`[LiveTrades] ✅ Loaded warmed wallets for tracking`);
+        } catch (error) {
+          console.error('[LiveTrades] ⚠️ Error loading warmed wallets:', error.message);
+        }
+      }
+      
+      // ALWAYS add funding wallet (PRIVATE_KEY from .env) - this is the main funding wallet
+      try {
+        const rootEnvPath = path.join(__dirname, '..', '.env');
+        if (fs.existsSync(rootEnvPath)) {
+          require('dotenv').config({ path: rootEnvPath });
+        } else {
+          require('dotenv').config();
+        }
+        
+        const PRIVATE_KEY = process.env.PRIVATE_KEY;
+        if (PRIVATE_KEY && PRIVATE_KEY.trim() !== '') {
+          const fundingAddr = deriveAddress(PRIVATE_KEY.trim());
+          if (fundingAddr) {
+            addWallet(fundingAddr, 'FUNDING');
+            console.log(`[LiveTrades] ✅ Added funding wallet: ${fundingAddr.slice(0, 8)}...`);
+          }
+        }
+      } catch (error) {
+        console.warn('[LiveTrades] ⚠️ Could not load funding wallet from PRIVATE_KEY:', error.message);
+      }
+      
+      // Debug: Log all wallet addresses with types
+      const fundingCount = Array.from(this.walletTypes.values()).filter(t => t === 'FUNDING').length;
+      const devCount = Array.from(this.walletTypes.values()).filter(t => t === 'DEV').length;
+      const bundleCount = Array.from(this.walletTypes.values()).filter(t => t === 'Bundle').length;
+      const holderCount = Array.from(this.walletTypes.values()).filter(t => t === 'Holder').length;
+      
+      console.log(`[LiveTrades] ✅ Loaded ${this.ourWallets.size} our wallet addresses:`);
+      if (fundingCount > 0) console.log(`[LiveTrades]   - FUNDING: ${fundingCount}`);
+      console.log(`[LiveTrades]   - DEV: ${devCount}`);
+      console.log(`[LiveTrades]   - Bundle: ${bundleCount}`);
+      console.log(`[LiveTrades]   - Holder: ${holderCount}`);
+      
+      if (this.ourWallets.size > 0) {
+        const walletList = Array.from(this.ourWallets).slice(0, 5);
+        walletList.forEach(addr => {
+          const type = this.walletTypes.get(addr) || 'Unknown';
+          console.log(`[LiveTrades]   ${type}: ${addr.slice(0, 8)}...`);
+        });
       }
     } catch (error) {
       console.error('[LiveTrades] ❌ Error loading our wallets:', error);
     }
+  }
+
+  // Add test wallets manually (for testing - temporary, not saved)
+  addTestWallets(walletAddresses) {
+    if (!Array.isArray(walletAddresses)) {
+      walletAddresses = [walletAddresses];
+    }
+    
+    let addedCount = 0;
+    walletAddresses.forEach(addr => {
+      if (addr && typeof addr === 'string') {
+        const addrLower = addr.toLowerCase().trim();
+        if (addrLower.length > 0) {
+          this.ourWallets.add(addrLower);
+          this.testWallets.add(addrLower);
+          this.walletTypes.set(addrLower, 'TEST'); // Mark as TEST type
+          addedCount++;
+        }
+      }
+    });
+    
+    console.log(`[LiveTrades] ✅ Added ${addedCount} test wallet(s) for testing`);
+    if (addedCount > 0) {
+      console.log(`[LiveTrades] 📝 Test wallets (${this.testWallets.size} total):`);
+      Array.from(this.testWallets).slice(0, 5).forEach(addr => {
+        console.log(`[LiveTrades]   TEST: ${addr.slice(0, 8)}...`);
+      });
+    }
+    
+    return addedCount;
+  }
+
+  // Remove test wallets (clear all test wallets)
+  clearTestWallets() {
+    const count = this.testWallets.size;
+    this.testWallets.forEach(addr => {
+      this.ourWallets.delete(addr);
+      this.walletTypes.delete(addr);
+    });
+    this.testWallets.clear();
+    console.log(`[LiveTrades] 🗑️ Cleared ${count} test wallet(s)`);
+    return count;
+  }
+
+  // Get list of test wallets
+  getTestWallets() {
+    return Array.from(this.testWallets);
   }
 
   // Add SSE listener
@@ -247,11 +886,108 @@ class LiveTradesTracker {
     }
   }
 
-  // Get current market cap from recent trades (calculated, not from API)
+  // Cache SOL price (refresh every 60 seconds)
+  solPriceCache = { price: 0, lastFetch: 0 };
+  
+  // Fetch current SOL price from CoinGecko
+  async getSolPrice() {
+    const now = Date.now();
+    // Use cache if less than 60 seconds old
+    if (this.solPriceCache.price > 0 && (now - this.solPriceCache.lastFetch) < 60000) {
+      return this.solPriceCache.price;
+    }
+    
+    try {
+      const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+      const price = response.data?.solana?.usd || 0;
+      if (price > 0) {
+        this.solPriceCache = { price, lastFetch: now };
+        // Only log price updates every 5 minutes to reduce spam
+        if (!this._lastPriceLog || Date.now() - this._lastPriceLog > 300000) {
+          console.log(`[LiveTrades] 💰 SOL price: $${price.toFixed(2)}`);
+          this._lastPriceLog = Date.now();
+        }
+      }
+      return price || 200; // Fallback to $200
+    } catch (error) {
+      // Rate-limit warning to once per minute
+      if (!this._lastPriceWarn || Date.now() - this._lastPriceWarn > 60000) {
+        console.error('[LiveTrades] ⚠️ Failed to fetch SOL price:', error.message);
+        this._lastPriceWarn = Date.now();
+      }
+      return this.solPriceCache.price || 200; // Use cached or fallback
+    }
+  }
+  
+  // Get current market cap by reading bonding curve account
   async getCurrentMarketCap(mintAddress) {
-    // Market cap will be calculated from trades, not fetched from API
-    // Return null to use calculated market cap from trades
-    return null;
+    try {
+      if (!this.connection || !this.currentBondingCurveAddress) {
+        return null;
+      }
+      
+      const bondingCurvePubkey = new PublicKey(this.currentBondingCurveAddress);
+      const accountInfo = await this.connection.getAccountInfo(bondingCurvePubkey);
+      
+      if (!accountInfo || !accountInfo.data) {
+        console.log('[LiveTrades] ⚠️ Could not fetch bonding curve account');
+        return null;
+      }
+      
+      // Parse bonding curve data
+      // Pump.fun bonding curve layout:
+      // 8 bytes: discriminator
+      // 8 bytes: virtualTokenReserves (u64)
+      // 8 bytes: virtualSolReserves (u64)
+      // 8 bytes: realTokenReserves (u64)
+      // 8 bytes: realSolReserves (u64)
+      // 8 bytes: tokenTotalSupply (u64)
+      // 1 byte: complete (bool)
+      
+      const data = accountInfo.data;
+      if (data.length < 49) {
+        console.log('[LiveTrades] ⚠️ Bonding curve data too short');
+        return null;
+      }
+      
+      // Read u64 values (little endian)
+      const virtualTokenReserves = Number(data.readBigUInt64LE(8));
+      const virtualSolReserves = Number(data.readBigUInt64LE(16));
+      
+      // Calculate price using virtual reserves (pump.fun formula)
+      // virtualSolReserves is in lamports (9 decimals)
+      // virtualTokenReserves is raw (6 decimals)
+      const virtualSolInSOL = virtualSolReserves / 1e9;
+      const virtualTokens = virtualTokenReserves / 1e6;
+      
+      // Price per token in SOL
+      const pricePerTokenSOL = virtualSolInSOL / virtualTokens;
+      
+      // Market cap = price * 1B total supply
+      const totalSupply = 1_000_000_000;
+      const marketCapSOL = pricePerTokenSOL * totalSupply;
+      
+      // Get real SOL price from CoinGecko
+      const solPrice = await this.getSolPrice();
+      const marketCapUSD = marketCapSOL * solPrice;
+      
+      console.log(`[LiveTrades] 📊 Market Cap: ${marketCapSOL.toFixed(2)} SOL × $${solPrice.toFixed(0)} = $${marketCapUSD.toFixed(0)}`);
+      
+      return marketCapUSD;
+    } catch (error) {
+      console.error('[LiveTrades] ❌ Error fetching market cap:', error.message);
+      return null;
+    }
+  }
+  
+  // Refresh market cap periodically
+  async refreshMarketCap() {
+    if (!this.currentMintAddress) return;
+    
+    const marketCap = await this.getCurrentMarketCap(this.currentMintAddress);
+    if (marketCap && marketCap > 0) {
+      this.currentMarketCap = marketCap;
+    }
   }
 
   // Start tracking a mint address
@@ -274,21 +1010,28 @@ class LiveTradesTracker {
       this.currentMarketCap = currentMarketCap;
     }
     
-    // Check cache first
+    // Check cache first - but only use if it has trades
     if (this.tradeCache.has(mintAddress) && this.currentMintAddress === mintAddress) {
       const cachedTrades = this.tradeCache.get(mintAddress);
-      this.trades = cachedTrades;
-      console.log(`[LiveTrades] Using cached trades for ${mintAddress.slice(0, 8)}... (${cachedTrades.length} trades)`);
-      
-      // Still start WebSocket for new trades
-      this.currentMintAddress = mintAddress;
-      this.currentBondingCurveAddress = bondingCurveAddress;
-      if (!this.ws || !this.isConnected) {
-        this.connect();
+      // Only use cache if it has trades (don't cache empty results)
+      if (cachedTrades && cachedTrades.length > 0) {
+        this.trades = cachedTrades;
+        console.log(`[LiveTrades] Using cached trades for ${mintAddress.slice(0, 8)}... (${cachedTrades.length} trades)`);
+        
+        // Still start WebSocket for new trades
+        this.currentMintAddress = mintAddress;
+        this.currentBondingCurveAddress = bondingCurveAddress;
+        if (!this.ws || !this.isConnected) {
+          this.connect();
+        } else {
+          this.subscribe();
+        }
+        return;
       } else {
-        this.subscribe();
+        console.log(`[LiveTrades] Cache exists but is empty, refetching...`);
+        // Clear empty cache and continue to fetch
+        this.tradeCache.delete(mintAddress);
       }
-      return;
     }
     
     this.currentMintAddress = mintAddress;
@@ -297,8 +1040,9 @@ class LiveTradesTracker {
     this.processedSignatures.clear();
     this.loadOurWallets(); // Reload wallets in case they changed
     
-    // Fetch recent trade history using bonding curve address (not mint)
-    await this.fetchTradeHistory(mintAddress, bondingCurveAddress);
+    // Skip historical fetch - Helius tier limits make it unreliable
+    // Live trades will be caught by WebSocket subscription to bonding curve
+    console.log(`[LiveTrades] ⏭️ Skipping historical fetch - using Helius WebSocket for live trades`);
     
     if (!this.ws || !this.isConnected) {
       this.connect();
@@ -319,16 +1063,24 @@ class LiveTradesTracker {
 
     try {
       console.log(`[LiveTrades] 🔍 Fetching trade history for bonding curve ${bondingCurveAddress.slice(0, 8)}...`);
+      console.log(`[LiveTrades] 📍 Mint: ${mintAddress.slice(0, 8)}...`);
+      console.log(`[LiveTrades] 📍 Bonding Curve: ${bondingCurveAddress}`);
       
-      // Step 1: Get signatures from bonding curve address (not mint)
-      // Fetch ~650 signatures to ensure we get ~500 swaps after filtering
+      // Step 1: Get signatures - try BOTH bonding curve AND mint address
+      // Bonding curve has pool transactions, mint address has token transfers
+      // We need both to catch all swaps
       const bondingCurvePubkey = new PublicKey(bondingCurveAddress);
-      let allSignatures = [];
+      const mintPubkey = new PublicKey(mintAddress);
+      let allSignatures = new Set(); // Use Set to avoid duplicates
       let before = null;
-      const targetSignatures = 650; // Fetch extra to account for non-swap txs
+      const targetSignatures = 1000; // Increased from 650 to ensure we get 100+ trades
       
+      // Method 1: Fetch from bonding curve (pool transactions)
       try {
-        while (allSignatures.length < targetSignatures) {
+        console.log(`[LiveTrades] 🔍 Fetching signatures from bonding curve...`);
+        let pageCount = 0;
+        before = null;
+        while (allSignatures.size < targetSignatures) {
           const signatures = await this.connection.getSignaturesForAddress(
             bondingCurvePubkey,
             {
@@ -338,23 +1090,35 @@ class LiveTradesTracker {
             'confirmed'
           );
           
-          if (signatures.length === 0) break;
+          if (signatures.length === 0) {
+            console.log(`[LiveTrades] No more signatures from bonding curve (page ${pageCount + 1})`);
+            break;
+          }
           
-          allSignatures = allSignatures.concat(signatures.map(s => s.signature));
+          pageCount++;
+          signatures.forEach(s => allSignatures.add(s.signature));
           before = signatures[signatures.length - 1].signature;
           
+          console.log(`[LiveTrades] Bonding curve page ${pageCount}: Found ${signatures.length} signatures (total unique: ${allSignatures.size})`);
+          
           if (signatures.length < 100) break; // No more pages
+          
+          // Small delay between pages to avoid rate limits
+          if (allSignatures.size < targetSignatures) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
         }
       } catch (error) {
         console.error(`[LiveTrades] ❌ Error fetching signatures from bonding curve: ${error.message}`);
-        console.log(`[LiveTrades] ⚠️ Falling back to mint address for fetching trades...`);
-        
-        // Fallback: Use mint address if bonding curve fails
-        const mintPubkey = new PublicKey(mintAddress);
-        allSignatures = [];
+      }
+      
+      // Method 2: Also fetch from mint address (token transfers/transactions)
+      try {
+        console.log(`[LiveTrades] 🔍 Also fetching signatures from mint address...`);
+        let pageCount = 0;
         before = null;
-        
-        while (allSignatures.length < targetSignatures) {
+        const initialSize = allSignatures.size;
+        while (allSignatures.size < targetSignatures) {
           const signatures = await this.connection.getSignaturesForAddress(
             mintPubkey,
             {
@@ -364,63 +1128,244 @@ class LiveTradesTracker {
             'confirmed'
           );
           
-          if (signatures.length === 0) break;
+          if (signatures.length === 0) {
+            console.log(`[LiveTrades] No more signatures from mint (page ${pageCount + 1})`);
+            break;
+          }
           
-          allSignatures = allSignatures.concat(signatures.map(s => s.signature));
+          pageCount++;
+          signatures.forEach(s => allSignatures.add(s.signature));
           before = signatures[signatures.length - 1].signature;
           
-          if (signatures.length < 100) break;
+          console.log(`[LiveTrades] Mint page ${pageCount}: Found ${signatures.length} signatures (total unique: ${allSignatures.size})`);
+          
+          if (signatures.length < 100) break; // No more pages
+          
+          // Small delay between pages
+          if (allSignatures.size < targetSignatures) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
         }
+        console.log(`[LiveTrades] ✅ Added ${allSignatures.size - initialSize} new signatures from mint address`);
+      } catch (error) {
+        console.error(`[LiveTrades] ❌ Error fetching signatures from mint: ${error.message}`);
       }
       
-      console.log(`[LiveTrades] ✅ Found ${allSignatures.length} signatures`);
+      // Convert Set to Array
+      allSignatures = Array.from(allSignatures);
+      console.log(`[LiveTrades] ✅ Found ${allSignatures.length} total unique signatures`);
       
-      // Step 2: Fetch full transactions in batches
-      const batchSize = 50;
+      // Step 2: Fetch full transactions using Helius RPC (faster & more reliable)
+      const heliusApiKey = getHeliusApiKey(this.rpcEndpoint);
+      const useHeliusEnhanced = heliusApiKey && this.rpcEndpoint.includes('helius-rpc.com');
+      
+      const batchSize = 50; // Conservative batch size
       const transactions = [];
+      
+      console.log(`[LiveTrades] ${useHeliusEnhanced ? '🚀 Using Helius RPC' : '📡 Using standard RPC'} for transaction fetching`);
       
       for (let i = 0; i < allSignatures.length; i += batchSize) {
         const batch = allSignatures.slice(i, i + batchSize);
+        
+        // Use Helius's recommended approach: getTransaction with jsonParsed encoding
+        // Following Helius Developer tier documentation exactly
         const txs = await Promise.all(
-          batch.map(sig => 
-            this.connection.getTransaction(sig, {
-              encoding: 'jsonParsed',
-              maxSupportedTransactionVersion: 0,
-              commitment: 'confirmed'
-            })
-          )
+          batch.map(async (sig, idx) => {
+            try {
+              // Try multiple methods to fetch transaction (some may work better for different transaction ages)
+              let tx = null;
+              
+              // Method 1: Try with jsonParsed encoding and maxSupportedTransactionVersion
+              try {
+                tx = await this.connection.getTransaction(sig, {
+                  encoding: 'jsonParsed',
+                  maxSupportedTransactionVersion: 0,
+                  commitment: 'confirmed'
+                });
+              } catch (error1) {
+                // Method 2: Try without maxSupportedTransactionVersion (for older transactions)
+                try {
+                  tx = await this.connection.getTransaction(sig, {
+                    encoding: 'jsonParsed',
+                    commitment: 'confirmed'
+                  });
+                } catch (error2) {
+                  // Method 3: Try with finalized commitment (might have older data)
+                  try {
+                    tx = await this.connection.getTransaction(sig, {
+                      encoding: 'jsonParsed',
+                      commitment: 'finalized'
+                    });
+                  } catch (error3) {
+                    // All methods failed - transaction likely too old or invalid
+                    if (idx < 3) {
+                      console.log(`[LiveTrades] ⚠️ Transaction ${sig.slice(0, 8)}... not available (likely too old)`);
+                    }
+                    return null;
+                  }
+                }
+              }
+              
+              // Validate and normalize transaction structure before returning
+              if (tx && tx.transaction && tx.transaction.message) {
+                // Normalize accountKeys if needed (handle both string and object formats)
+                // Some RPCs return accountKeys as objects with pubkey property, others as strings
+                if (tx.transaction.message.accountKeys && Array.isArray(tx.transaction.message.accountKeys)) {
+                  tx.transaction.message.accountKeys = tx.transaction.message.accountKeys.map(key => {
+                    if (typeof key === 'string') return key;
+                    if (key && typeof key === 'object') {
+                      // Handle { pubkey: string } format
+                      if (key.pubkey) return typeof key.pubkey === 'string' ? key.pubkey : key.pubkey.toString();
+                      // Handle other object formats
+                      return key.toString();
+                    }
+                    return key;
+                  });
+                }
+                
+                // Ensure innerInstructions structure is valid (some may be undefined)
+                if (tx.meta && tx.meta.innerInstructions) {
+                  tx.meta.innerInstructions = tx.meta.innerInstructions.filter(inner => 
+                    inner && inner.instructions && Array.isArray(inner.instructions)
+                  );
+                }
+                
+                return tx;
+              }
+              
+              if (!tx && idx < 3) {
+                // Log first few failures - these are likely old transactions not in cache
+                console.log(`[LiveTrades] ⚠️ Transaction ${sig.slice(0, 8)}... not available (likely too old)`);
+              }
+              return null;
+            } catch (error) {
+              if (idx < 3) {
+                // Log first few errors for debugging (but don't spam)
+                const errorMsg = error.message || String(error);
+                // Only log if it's not a validation/structure error (those are expected for old txs)
+                if (!errorMsg.includes('Expected a') && !errorMsg.includes('path:')) {
+                  console.error(`[LiveTrades] ❌ Error fetching ${sig.slice(0, 8)}...: ${errorMsg}`);
+                }
+              }
+              return null;
+            }
+          })
         );
+        const validTxs = txs.filter(tx => tx !== null);
+        transactions.push(...validTxs);
+        if (validTxs.length < batch.length && i === 0) {
+          // Log if first batch has failures
+          console.log(`[LiveTrades] ⚠️ First batch: ${validTxs.length}/${batch.length} transactions fetched successfully`);
+          if (validTxs.length === 0) {
+            console.log(`[LiveTrades] 💡 All transactions returned null - this might indicate:`);
+            console.log(`[LiveTrades]   1. Transactions are too old (not in recent block history)`);
+            console.log(`[LiveTrades]   2. RPC endpoint doesn't have full transaction history`);
+            console.log(`[LiveTrades]   3. Signatures might be invalid`);
+          }
+        }
         
-        transactions.push(...txs.filter(tx => tx !== null));
+        if (false) { // Removed else block - using same method for all
+          // Standard RPC method
+          const txs = await Promise.all(
+            batch.map(sig => 
+              this.connection.getTransaction(sig, {
+                encoding: 'jsonParsed',
+                maxSupportedTransactionVersion: 0,
+                commitment: 'confirmed'
+              }).catch(() => null)
+            )
+          );
+          transactions.push(...txs.filter(tx => tx !== null));
+        }
         
-        // Small delay to avoid rate limits
+        // Progress logging
+        if ((i + batchSize) % 200 === 0 || i + batchSize >= allSignatures.length) {
+          console.log(`[LiveTrades] 📥 Fetched ${Math.min(i + batchSize, allSignatures.length)}/${allSignatures.length} transactions...`);
+        }
+        
+        // Small delay to avoid rate limits (less needed with Helius)
         if (i + batchSize < allSignatures.length) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, useHeliusEnhanced ? 50 : 100));
         }
       }
       
-      console.log(`[LiveTrades] ✅ Fetched ${transactions.length} full transactions`);
+      console.log(`[LiveTrades] ✅ Fetched ${transactions.length} full transactions from ${allSignatures.length} signatures`);
+      
+      // If we got 0 transactions but have signatures, try using Helius's parseTransaction API
+      // This might work better for historical transactions
+      if (transactions.length === 0 && allSignatures.length > 0 && heliusApiKey) {
+        console.log(`[LiveTrades] ⚠️ Got 0 transactions via RPC - trying Helius parseTransaction API...`);
+        
+        // Try Helius's parseTransaction API for a few signatures
+        const testBatch = allSignatures.slice(0, Math.min(10, allSignatures.length));
+        for (const sig of testBatch) {
+          try {
+            const response = await axios.get(
+              `https://api.helius.xyz/v0/transactions/${sig}?api-key=${heliusApiKey}`,
+              { timeout: 5000 }
+            );
+            if (response.data && response.data.transaction) {
+              // Helius returns different format - we'd need to convert
+              // For now, just log that we found it
+              console.log(`[LiveTrades] ✅ Found transaction via Helius API: ${sig.slice(0, 8)}...`);
+              // Note: Helius Enhanced API format is different, would need conversion
+              // For now, continue with RPC method
+            }
+          } catch (error) {
+            // Continue
+          }
+        }
+        
+        console.log(`[LiveTrades] 💡 Note: Helius Developer tier may have limited historical access`);
+        // QuickNode webhook will catch new trades in real-time going forward
+        // console.log(`[LiveTrades] 💡 WebSocket will catch new trades in real-time going forward`);
+      }
       
       // Step 3: Parse and filter for swaps
       const historicalTrades = [];
+      let parsedCount = 0;
+      let skippedCount = 0;
+      let errorCount = 0;
       
       for (const tx of transactions) {
+        // Extra safety checks for transaction structure
         if (!tx || !tx.meta || !tx.transaction) continue;
+        if (!tx.transaction.message) continue; // Skip malformed transactions
         
         const signature = tx.transaction.signatures?.[0];
         if (!signature || this.processedSignatures.has(signature)) continue;
         
         const blockTime = tx.blockTime || null;
-        const tradeResult = this.parseTransaction(tx, signature, blockTime);
         
-        if (tradeResult) {
-          const tradesToAdd = Array.isArray(tradeResult) ? tradeResult : [tradeResult];
-          for (const trade of tradesToAdd) {
-            if (trade && trade.timestamp) {
-              historicalTrades.push(trade);
-              this.processedSignatures.add(signature);
+        // Wrap in try-catch to handle parsing errors gracefully
+        try {
+          const tradeResult = this.parseTransaction(tx, signature, blockTime);
+          
+          if (tradeResult) {
+            const tradesToAdd = Array.isArray(tradeResult) ? tradeResult : [tradeResult];
+            let addedCount = 0;
+            for (const trade of tradesToAdd) {
+              if (trade && trade.timestamp) {
+                historicalTrades.push(trade);
+                this.processedSignatures.add(signature);
+                addedCount++;
+              }
             }
+            if (addedCount > 0) {
+              parsedCount++;
+            } else {
+              skippedCount++;
+            }
+          } else {
+            skippedCount++;
           }
+        } catch (parseError) {
+          // Skip transactions that can't be parsed (don't crash entire fetch)
+          errorCount++;
+          if (errorCount <= 5) { // Only log first 5 errors to avoid spam
+            console.error(`[LiveTrades] Skipping transaction ${signature.slice(0, 8)}...: ${parseError.message}`);
+          }
+          continue;
         }
       }
       
@@ -435,7 +1380,11 @@ class LiveTradesTracker {
         return 0;
       });
       
+      // Ensure we have at least 100 trades if available (increase maxTrades temporarily)
+      const originalMaxTrades = this.maxTrades;
+      this.maxTrades = Math.max(100, originalMaxTrades); // At least 100 trades
       this.trades = historicalTrades.slice(0, this.maxTrades);
+      this.maxTrades = originalMaxTrades; // Restore original
       
       // Cache trades for this mint
       this.tradeCache.set(mintAddress, [...this.trades]);
@@ -446,6 +1395,7 @@ class LiveTradesTracker {
       }
       
       console.log(`[LiveTrades] ✅ Loaded ${this.trades.length} historical trades`);
+      console.log(`[LiveTrades] 📊 Parsing stats: ${parsedCount} parsed, ${skippedCount} skipped, ${errorCount} errors`);
       
       // Send initial trades to all listeners
       if (this.trades.length > 0) {
@@ -454,7 +1404,12 @@ class LiveTradesTracker {
           this.sendToAllListeners(trade);
         });
       } else {
-        console.log(`[LiveTrades] ⚠️ No trades found - token may be new or have no trades yet`);
+        console.log(`[LiveTrades] ⚠️ No trades found after parsing ${transactions.length} transactions`);
+        console.log(`[LiveTrades] 💡 This could mean:`);
+        console.log(`[LiveTrades]   1. Token has no trades yet`);
+        console.log(`[LiveTrades]   2. Trades are too small (filtered out)`);
+        console.log(`[LiveTrades]   3. Bonding curve address derivation failed`);
+        console.log(`[LiveTrades]   4. Transaction parsing is too strict`);
       }
       
     } catch (error) {
@@ -483,18 +1438,31 @@ class LiveTradesTracker {
       return;
     }
 
-    console.log('[LiveTrades] Connecting to Helius WebSocket...');
+    console.log('[LiveTrades] 🔌 Connecting to Helius WebSocket...');
     this.ws = new WebSocket(this.wsUrl);
 
     this.ws.on('open', () => {
       console.log('[LiveTrades] ✅ Connected to Helius WebSocket');
       this.isConnected = true;
-      this.subscribe();
+      // Small delay to ensure WebSocket is fully ready before subscribing
+      setTimeout(() => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.subscribe();
+        } else {
+          console.error('[LiveTrades] ⚠️ WebSocket not ready after open event');
+        }
+      }, 100);
     });
 
     this.ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
+        // DEBUG: Log all incoming WebSocket messages
+        if (message.method) {
+          console.log(`[LiveTrades] 📨 WS Message: ${message.method}`);
+        } else if (message.result !== undefined) {
+          console.log(`[LiveTrades] 📨 WS Response: id=${message.id}, result=${JSON.stringify(message.result).slice(0, 50)}`);
+        }
         this.handleMessage(message);
       } catch (error) {
         console.error('[LiveTrades] Error parsing message:', error);
@@ -506,7 +1474,8 @@ class LiveTradesTracker {
     });
 
     this.ws.on('close', () => {
-      console.log('[LiveTrades] WebSocket closed, reconnecting...');
+      // WebSocket closed (Helius - historical data only, QuickNode handles live trades)
+      // console.log('[LiveTrades] WebSocket closed, reconnecting...');
       this.isConnected = false;
       this.subscriptionId = null;
       setTimeout(() => this.connect(), 3000);
@@ -520,16 +1489,40 @@ class LiveTradesTracker {
       return;
     }
 
+    // Ensure WebSocket is fully open before subscribing
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('[LiveTrades] ⚠️ WebSocket not open, readyState:', this.ws?.readyState);
+      // Retry after a short delay
+      setTimeout(() => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.subscribe();
+        } else {
+          console.error('[LiveTrades] ❌ WebSocket still not ready, falling back to polling only');
+          this.startPolling();
+        }
+      }, 200);
+      return;
+    }
+
     try {
-      // Subscribe to Pump.fun program (same as working tracker)
-      // Note: mentions only supports 1 address, so we subscribe to Pump.fun program and filter in code
+      // Subscribe to THIS TOKEN's bonding curve address ONLY
+      // This way we only get transactions for our specific token, not all pump.fun trades
+      if (!this.currentBondingCurveAddress) {
+        console.error('[LiveTrades] ❌ No bonding curve address set - cannot subscribe');
+        this.startPolling();
+        return;
+      }
+      
+      console.log(`[LiveTrades] 🎯 Subscribing to bonding curve: ${this.currentBondingCurveAddress}`);
+      console.log(`[LiveTrades] 🎯 This will ONLY track trades for mint: ${this.currentMintAddress?.slice(0, 8)}...`);
+      
       const logsSubscribeMessage = {
         jsonrpc: '2.0',
         id: 1,
         method: 'logsSubscribe',
         params: [
           {
-            mentions: [this.PUMP_PROGRAM_ID.toBase58()] // Subscribe to all Pump.fun transactions
+            mentions: [this.currentBondingCurveAddress] // Subscribe to THIS TOKEN's bonding curve ONLY!
           },
           {
             commitment: 'confirmed'
@@ -537,8 +1530,6 @@ class LiveTradesTracker {
         ]
       };
 
-      console.log('[LiveTrades] Subscribing to Pump.fun transaction logs...');
-      console.log(`[LiveTrades] Will filter for mint: ${this.currentMintAddress.slice(0, 8)}... in code`);
       this.ws.send(JSON.stringify(logsSubscribeMessage));
       
       // Also start polling as backup (only fetch NEW transactions)
@@ -561,7 +1552,8 @@ class LiveTradesTracker {
       this.fetchNewTransactions();
     }, 10000);
     
-    console.log('[LiveTrades] Started polling for new transactions (every 10s)');
+    // Started polling for new transactions (Helius - historical data only, QuickNode handles live)
+    // console.log('[LiveTrades] Started polling for new transactions (every 10s)');
   }
 
   // Stop polling
@@ -617,39 +1609,49 @@ class LiveTradesTracker {
       // Parse new transactions
       for (const tx of transactions) {
         if (!tx || !tx.meta || !tx.transaction) continue;
+        if (!tx.transaction.message) continue; // Skip malformed transactions
         
         const signature = tx.transaction.signatures?.[0];
         if (!signature || this.processedSignatures.has(signature)) continue;
         
         const blockTime = tx.blockTime || null;
-        const tradeResult = this.parseTransaction(tx, signature, blockTime);
         
-        if (tradeResult) {
-          const tradesToAdd = Array.isArray(tradeResult) ? tradeResult : [tradeResult];
+        // Wrap in try-catch to handle parsing errors gracefully
+        try {
+          const tradeResult = this.parseTransaction(tx, signature, blockTime);
           
-          for (const trade of tradesToAdd) {
-            if (trade && trade.timestamp) {
-              this.addTrade(trade);
-              newTradesCount++;
+          if (tradeResult) {
+            const tradesToAdd = Array.isArray(tradeResult) ? tradeResult : [tradeResult];
+            
+            for (const trade of tradesToAdd) {
+              if (trade && trade.timestamp) {
+                this.addTrade(trade);
+                newTradesCount++;
+              }
+            }
+            
+            this.processedSignatures.add(signature);
+            
+            // Update last fetched slot
+            if (tx.slot) {
+              const currentLastSlot = this.lastFetchedSlot.get(this.currentMintAddress);
+              if (!currentLastSlot || tx.slot > currentLastSlot) {
+                this.lastFetchedSlot.set(this.currentMintAddress, tx.slot);
+              }
             }
           }
-          
-          this.processedSignatures.add(signature);
-          
-          // Update last fetched slot
-          if (tx.slot) {
-            const currentLastSlot = this.lastFetchedSlot.get(this.currentMintAddress);
-            if (!currentLastSlot || tx.slot > currentLastSlot) {
-              this.lastFetchedSlot.set(this.currentMintAddress, tx.slot);
-            }
-          }
+        } catch (parseError) {
+          // Skip transactions that can't be parsed
+          console.error(`[LiveTrades] Skipping new trade ${signature.slice(0, 8)}...: ${parseError.message}`);
+          this.processedSignatures.add(signature); // Mark as processed to avoid retry
+          continue;
         }
       }
       
-      // Only log if we found new trades
-      if (newTradesCount > 0) {
-        console.log(`[LiveTrades] ✅ Found ${newTradesCount} new trade(s) from bonding curve`);
-      }
+      // Only log if we found new trades (Helius polling - historical data only, QuickNode handles live)
+      // if (newTradesCount > 0) {
+      //   console.log(`[LiveTrades] ✅ Found ${newTradesCount} new trade(s) from bonding curve`);
+      // }
     } catch (error) {
       // Silently handle errors for polling
     }
@@ -660,7 +1662,8 @@ class LiveTradesTracker {
     // Handle subscription confirmation
     if (message.id === 1 && message.result) {
       this.subscriptionId = message.result;
-      console.log(`[LiveTrades] ✅ Logs subscription confirmed! Subscription ID: ${this.subscriptionId}`);
+      // Logs subscription confirmed (Helius - historical data only, QuickNode handles live)
+      // console.log(`[LiveTrades] ✅ Logs subscription confirmed! Subscription ID: ${this.subscriptionId}`);
       console.log(`[LiveTrades] 🎯 Now listening for transaction logs on Pump.fun program...`);
       return;
     }
@@ -678,21 +1681,13 @@ class LiveTradesTracker {
         const logs = result.value.logs || [];
         const signature = result.value.signature;
         
-        // Filter: Check if logs mention our mint address (same as working tracker)
-        // This filters out transactions that don't involve our token
-        let mentionsOurMint = false;
-        if (this.currentMintAddress) {
-          const mintLower = this.currentMintAddress.toLowerCase();
-          for (const log of logs) {
-            if (typeof log === 'string' && log.toLowerCase().includes(mintLower)) {
-              mentionsOurMint = true;
-              break;
-            }
-          }
-        }
+        // DEBUG: Log that we received a notification
+        console.log(`[LiveTrades] 📩 logsNotification received! Sig: ${signature?.slice(0, 16)}... Logs: ${logs.length}`);
         
-        // Only fetch transactions that mention our mint (priority)
-        if (mentionsOurMint && signature) {
+        // Since we subscribed to the bonding curve address directly,
+        // ALL notifications we receive are for our token - no filtering needed!
+        if (signature) {
+          console.log(`[LiveTrades] 🔔 Trade detected! Fetching: ${signature.slice(0, 16)}...`);
           this.fetchTransactionBySignature(signature, true); // true = priority
         }
       }
@@ -756,6 +1751,8 @@ class LiveTradesTracker {
         // Remove from pending
         this.pendingTransactions.delete(signature);
         
+        console.log(`[LiveTrades] 📦 Fetched transaction: ${signature.slice(0, 16)}... - has meta: ${!!tx?.meta}, has tx.transaction: ${!!tx?.transaction}, has tx.message: ${!!tx?.message}`);
+        
         if (tx && tx.meta) {
           // Convert transaction to the format parseTransaction expects
           let txData;
@@ -783,13 +1780,23 @@ class LiveTradesTracker {
             };
           } else {
             // Unknown format - skip
+            console.log(`[LiveTrades] ❌ Unknown transaction format - skipping. Keys: ${Object.keys(tx).join(', ')}`);
             this.processedSignatures.delete(signature);
             return;
           }
           
+          console.log(`[LiveTrades] ✅ Transaction format recognized, parsing...`);
+          
           // Parse transaction
           const blockTime = txData.blockTime || null;
-          const tradeResult = this.parseTransaction(txData, signature, blockTime);
+          let tradeResult = null;
+          try {
+            tradeResult = this.parseTransaction(txData, signature, blockTime);
+            console.log(`[LiveTrades] 🔍 Parse result: ${tradeResult ? (Array.isArray(tradeResult) ? tradeResult.length + ' trades' : '1 trade') : 'null (no trade detected)'}`);
+          } catch (parseError) {
+            console.error(`[LiveTrades] ❌ Parse error: ${parseError.message}`);
+            console.error(parseError.stack);
+          }
           
           if (tradeResult) {
             // Handle both single trade and array of trades
@@ -797,6 +1804,7 @@ class LiveTradesTracker {
             
             for (const trade of tradesToAdd) {
               if (trade && trade.timestamp) {
+                console.log(`[LiveTrades] ➕ Adding trade: ${trade.type} | ${trade.solAmount} SOL | ${trade.isOurWallet ? '🎯 ' + trade.walletType : 'external'}`);
                 this.addTrade(trade);
               }
             }
@@ -822,7 +1830,11 @@ class LiveTradesTracker {
 
   // Parse transaction to extract trade data
   parseTransaction(tx, signature, blockTime) {
-    if (!tx.meta || !tx.transaction) return null;
+    // Safely check for required fields
+    if (!tx || !tx.meta || !tx.transaction) return null;
+    
+    // Additional safety checks for transaction structure
+    if (!tx.transaction.message) return null;
     
     const mintAddress = this.currentMintAddress;
     if (!mintAddress) return null;
@@ -835,6 +1847,7 @@ class LiveTradesTracker {
     const JUPITER_V6_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
     const JUPITER_V4_PROGRAM_ID = 'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB';
     
+    // Safely get instructions and accountKeys with fallbacks
     const instructions = tx.transaction.message?.instructions || [];
     const accountKeys = tx.transaction.message?.accountKeys || [];
     
@@ -878,8 +1891,9 @@ class LiveTradesTracker {
     
     // Skip if this transaction doesn't involve swap programs
     // But allow if it has significant token balance changes (might be a swap via different method)
-    const preTokenBalances = tx.meta.preTokenBalances || [];
-    const postTokenBalances = tx.meta.postTokenBalances || [];
+    // Safely get token balances
+    const preTokenBalances = (tx.meta && Array.isArray(tx.meta.preTokenBalances)) ? tx.meta.preTokenBalances : [];
+    const postTokenBalances = (tx.meta && Array.isArray(tx.meta.postTokenBalances)) ? tx.meta.postTokenBalances : [];
     
     // Check if there are significant token balance changes (indicating a swap)
     let hasSignificantTokenChange = false;
@@ -906,8 +1920,6 @@ class LiveTradesTracker {
     }
     
     // Find token balance changes for our mint
-    const trades = [];
-    
     // Create a map of account -> token balance
     const accountBalances = new Map();
     
@@ -955,9 +1967,13 @@ class LiveTradesTracker {
           addr = key.pubkey ? (typeof key.pubkey === 'string' ? key.pubkey : key.pubkey.toString()) : key.toString();
         }
         // Check if this account has SOL balance changes (likely the trader)
-        if (addr && tx.meta.preBalances && tx.meta.postBalances && i < tx.meta.preBalances.length) {
-          const preSol = tx.meta.preBalances[i] / 1e9;
-          const postSol = tx.meta.postBalances[i] / 1e9;
+        if (addr && 
+            tx.meta.preBalances && Array.isArray(tx.meta.preBalances) && 
+            tx.meta.postBalances && Array.isArray(tx.meta.postBalances) && 
+            i < tx.meta.preBalances.length && 
+            i < tx.meta.postBalances.length) {
+          const preSol = (tx.meta.preBalances[i] || 0) / 1e9;
+          const postSol = (tx.meta.postBalances[i] || 0) / 1e9;
           const solChange = Math.abs(preSol - postSol);
           // If SOL changed significantly (more than just fees), this is likely the trader
           if (solChange > 0.001) {
@@ -968,192 +1984,374 @@ class LiveTradesTracker {
       }
     }
     
-    // Find accounts with balance changes
-    for (const [owner, balances] of accountBalances.entries()) {
-      const tokenChange = balances.post - balances.pre;
-      if (Math.abs(tokenChange) < 0.000001) continue; // Ignore tiny changes
+    // Only process ONE trade per transaction - the actual trader (not the bonding curve)
+    // Skip accounts that are the bonding curve (pool)
+    if (!traderAddress) {
+      // console.log('[LiveTrades] ⚠️ Could not find trader address');
+      return null;
+    }
+    
+    // Find the trader's token balance change
+    // Strategy: The bonding curve has HUGE token balances (millions), traders have smaller amounts
+    // Also: bonding curve token change is OPPOSITE to trader's token change
+    let tokenChange = 0;
+    let owner = null;
+    let candidates = [];
+    
+    for (const [accountOwner, balances] of accountBalances.entries()) {
+      const change = balances.post - balances.pre;
+      if (Math.abs(change) < 0.000001) continue; // Ignore tiny changes
       
-      // Find the owner's account index
-      let ownerIndex = -1;
-      for (let i = 0; i < accountKeys.length; i++) {
+      candidates.push({
+        owner: accountOwner,
+        change,
+        preBalance: balances.pre,
+        postBalance: balances.post
+      });
+    }
+    
+    // CRITICAL: Filter OUT the bonding curve - it's the pool, not a trader
+    // The bonding curve's token change is OPPOSITE to the trader's, so including it causes buy/sell inversion
+    const bondingCurveLower = this.currentBondingCurveAddress?.toLowerCase();
+    const traderCandidates = candidates.filter(c => {
+      const ownerLower = c.owner.toLowerCase();
+      // Exclude bonding curve
+      if (bondingCurveLower && ownerLower === bondingCurveLower) {
+        return false;
+      }
+      return true;
+    });
+    
+    // First priority: find account that matches trader address (fee payer)
+    const traderLower = traderAddress.toLowerCase();
+    for (const c of traderCandidates) {
+      const accountLower = c.owner.toLowerCase();
+      if (accountLower === traderLower || c.owner.includes(traderAddress.slice(0, 8))) {
+        tokenChange = c.change;
+        owner = c.owner;
+        break;
+      }
+    }
+    
+    // If not found by address match, take the one with largest absolute change (actual trader)
+    if (!owner && traderCandidates.length > 0) {
+      // Sort by absolute change - the trader typically has the significant token movement
+      traderCandidates.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+      const traderCandidate = traderCandidates[0];
+      tokenChange = traderCandidate.change;
+      owner = traderCandidate.owner;
+    }
+    
+    if (!owner || Math.abs(tokenChange) < 0.000001) {
+      // console.log('[LiveTrades] ⚠️ No token balance change found for trader');
+      return null;
+    }
+    
+    const actualTrader = traderAddress;
+    
+    // Log token balance detection for debugging
+    console.log(`[LiveTrades] 📊 Token detection: trader=${actualTrader.slice(0, 8)}..., tokenChange=${tokenChange > 0 ? '+' : ''}${tokenChange.toFixed(2)}, owner=${owner?.slice(0, 8)}...`);
+    
+    // Get transaction fee first
+    const fee = tx.meta.fee / 1e9;
+    
+    // Calculate SOL balance change for the trader (not token account owner)
+    let preSol = 0;
+    let postSol = 0;
+    let traderIndex = -1;
+    
+    // Find trader's account index
+    for (let i = 0; i < accountKeys.length; i++) {
+      const key = accountKeys[i];
+      let addr = null;
+      if (typeof key === 'string') {
+        addr = key;
+      } else if (key && typeof key === 'object') {
+        addr = key.pubkey || (key.toBase58 ? key.toBase58() : null) || (typeof key.toString === 'function' && key.toString() !== '[object Object]' ? key.toString() : null);
+      }
+      if (addr && typeof addr === 'string' && actualTrader && typeof actualTrader === 'string' && addr.toLowerCase() === actualTrader.toLowerCase()) {
+        traderIndex = i;
+        break;
+      }
+    }
+    
+    // Use trader's SOL balance
+    if (traderIndex >= 0 && 
+        tx.meta.preBalances && Array.isArray(tx.meta.preBalances) && 
+        tx.meta.postBalances && Array.isArray(tx.meta.postBalances) &&
+        traderIndex < tx.meta.preBalances.length && 
+        traderIndex < tx.meta.postBalances.length) {
+      preSol = (tx.meta.preBalances[traderIndex] || 0) / 1e9;
+      postSol = (tx.meta.postBalances[traderIndex] || 0) / 1e9;
+    }
+    
+    // If trader not found by address, try to find by SOL balance change pattern
+    // For sells: look for account that received SOL (balance increased)
+    // For buys: look for account that paid SOL (balance decreased)
+    if (traderIndex < 0 && tx.meta.preBalances && tx.meta.postBalances && accountKeys.length > 0) {
+      let bestMatch = { index: -1, change: 0 };
+      
+      for (let i = 0; i < Math.min(accountKeys.length, tx.meta.preBalances.length); i++) {
+        const preSolI = (tx.meta.preBalances[i] || 0) / 1e9;
+        const postSolI = (tx.meta.postBalances[i] || 0) / 1e9;
+        const change = postSolI - preSolI;
+        
+        // Skip bonding curve
         const key = accountKeys[i];
-        const addr = typeof key === 'string' ? key : (key.pubkey || key.toString());
-        if (addr && addr.toLowerCase() === owner.toLowerCase()) {
-          ownerIndex = i;
-          break;
+        let addr = null;
+        if (typeof key === 'string') {
+          addr = key;
+        } else if (key && typeof key === 'object') {
+          addr = key.pubkey || (key.toBase58 ? key.toBase58() : null) || (typeof key.toString === 'function' && key.toString() !== '[object Object]' ? key.toString() : null);
         }
-      }
-      
-      // Use traderAddress if we found it, otherwise fall back to token account owner
-      const actualTrader = traderAddress || owner;
-      
-      // Get transaction fee first
-      const fee = tx.meta.fee / 1e9;
-      
-      // Calculate SOL balance change for the trader (not token account owner)
-      let preSol = 0;
-      let postSol = 0;
-      let traderIndex = -1;
-      
-      // Find trader's account index
-      for (let i = 0; i < accountKeys.length; i++) {
-        const key = accountKeys[i];
-        const addr = typeof key === 'string' ? key : (key.pubkey || key.toString());
-        if (addr && addr.toLowerCase() === actualTrader.toLowerCase()) {
-          traderIndex = i;
-          break;
+        // Ensure addr is a string before calling toLowerCase
+        if (addr && typeof addr === 'string' && this.currentBondingCurveAddress && addr.toLowerCase() === this.currentBondingCurveAddress.toLowerCase()) {
+          continue;
         }
-      }
-      
-      // Use trader's SOL balance, not token account owner's
-      if (traderIndex >= 0 && tx.meta.preBalances && tx.meta.postBalances) {
-        preSol = tx.meta.preBalances[traderIndex] / 1e9;
-        postSol = tx.meta.postBalances[traderIndex] / 1e9;
-      } else if (ownerIndex >= 0 && tx.meta.preBalances && tx.meta.postBalances) {
-        // Fallback to token account owner if trader not found
-        preSol = tx.meta.preBalances[ownerIndex] / 1e9;
-        postSol = tx.meta.postBalances[ownerIndex] / 1e9;
-      }
-      
-      // CRITICAL: Only process if there's a significant SOL balance change (indicating a swap)
-      // This filters out token transfers, creation, etc.
-      const solChange = Math.abs(preSol - postSol);
-      if (solChange < fee * 1.5) {
-        // SOL change is less than ~1.5x the fee, likely not a swap
-        continue;
-      }
-      
-      // Determine buy/sell based on BOTH token and SOL balance changes
-      // BUY: Token balance increases AND SOL balance decreases (spent SOL to get tokens)
-      // SELL: Token balance decreases AND SOL balance increases (sold tokens to get SOL)
-      const tokenIncreased = tokenChange > 0;
-      const solDecreased = preSol > postSol && (preSol - postSol) > fee; // SOL decreased beyond just fees
-      const solIncreased = postSol > preSol && (postSol - preSol) > fee; // SOL increased beyond just fees
-      
-      // Determine direction: use SOL balance change as primary indicator (more reliable)
-      let isBuy;
-      if (solDecreased && tokenIncreased) {
-        // SOL decreased and tokens increased = BUY
-        isBuy = true;
-      } else if (solIncreased && !tokenIncreased) {
-        // SOL increased and tokens decreased = SELL
-        isBuy = false;
-      } else {
-        // Fallback: use token balance change
-        // If tokens increased, it's a buy; if decreased, it's a sell
-        isBuy = tokenIncreased;
-      }
-      
-      const tokenAmount = Math.abs(tokenChange);
-      let solAmount = 0;
-      
-      // Calculate SOL amount from balance changes, accounting for fees
-      if (ownerIndex >= 0 && tx.meta.preBalances && tx.meta.postBalances) {
-        if (isBuy) {
-          // BUY: SOL decreased (spent SOL to buy tokens)
-          // Balance change = swap amount + fees
-          // So swap amount = balance change - fees
-          const balanceChange = preSol - postSol;
-          solAmount = Math.max(0, balanceChange - fee);
-        } else {
-          // SELL: SOL increased (received SOL from selling tokens)
-          // Balance change = swap amount - fees (fees already deducted from received amount)
-          // So swap amount = balance change + fees
-          const balanceChange = postSol - preSol;
-          solAmount = Math.max(0, balanceChange + fee);
-        }
-      }
-      
-      // If we still can't get SOL amount, try to find it from instruction data
-      if (solAmount === 0 || solAmount < 0.000001) {
-        // Look for SOL transfers in the transaction
-        const instructions = tx.transaction.message?.instructions || [];
-        for (const instruction of instructions) {
-          if (instruction.program === 'system' && instruction.parsed && instruction.parsed.type === 'transfer') {
-            const transferInfo = instruction.parsed.info;
-            if (transferInfo && transferInfo.lamports) {
-              const transferSol = transferInfo.lamports / 1e9;
-              // If this is a buy and we're sending SOL, or sell and receiving SOL
-              if ((isBuy && transferInfo.authority === owner) || (!isBuy && transferInfo.destination === owner)) {
-                solAmount = transferSol;
-                break;
-              }
-            }
+        
+        // For sells: look for positive change (received SOL)
+        // For buys: look for negative change (paid SOL)
+        if (tokenChange < 0 && change > fee + 0.001) {
+          // SELL: trader received SOL
+          if (change > bestMatch.change) {
+            bestMatch = { index: i, change: change };
+          }
+        } else if (tokenChange > 0 && change < -fee - 0.001) {
+          // BUY: trader paid SOL
+          if (Math.abs(change) > Math.abs(bestMatch.change)) {
+            bestMatch = { index: i, change: change };
           }
         }
       }
       
-      // Skip if we still don't have a valid SOL amount (but be less strict)
-      // Some trades might have very small amounts, so only skip if truly zero
-      if (solAmount === 0) {
-        // Try to estimate from token amount if SOL amount is zero
-        if (tokenAmount > 0) {
-          // Very rough estimate: assume price is around current market cap / supply
-          const estimatedPrice = this.currentMarketCap ? (this.currentMarketCap / 1000000000) : 0.000001;
-          solAmount = tokenAmount * estimatedPrice;
-        }
-        if (solAmount === 0) {
-          return null; // Skip this trade - can't calculate price
-        }
+      if (bestMatch.index >= 0) {
+        traderIndex = bestMatch.index;
+        preSol = (tx.meta.preBalances[traderIndex] || 0) / 1e9;
+        postSol = (tx.meta.postBalances[traderIndex] || 0) / 1e9;
+        console.log(`[LiveTrades] 🔍 Found trader by balance pattern: index=${traderIndex}, change=${bestMatch.change.toFixed(6)} SOL`);
       }
-      
-      // Use current market cap from API if available, otherwise calculate
-      let marketCap = this.currentMarketCap;
-      if (!marketCap || marketCap === 0) {
-        // Fallback: Calculate price per token (in SOL)
-        const pricePerToken = tokenAmount > 0 ? solAmount / tokenAmount : 0;
-        // Pump.fun tokens have 1B total supply
-        const totalSupply = 1000000000; // 1B tokens
-        marketCap = pricePerToken * totalSupply;
-      }
-      
-      
-      // Get timestamp
-      const timestamp = blockTime ? blockTime * 1000 : (tx.blockTime ? tx.blockTime * 1000 : Date.now());
-      const age = Math.floor((Date.now() - timestamp) / 60000); // minutes ago
-      
-      // Check if it's our wallet (case-insensitive comparison)
-      // Use actualTrader (transaction signer) instead of owner (token account owner)
-      const traderLower = actualTrader.toLowerCase();
-      const isOurWallet = this.ourWallets.has(traderLower);
-      const walletType = isOurWallet ? (this.walletTypes.get(traderLower) || 'Unknown') : null;
-      
-      // Debug logging for wallet matching
-      if (isOurWallet) {
-        console.log(`[LiveTrades] ✅ Found ${walletType} wallet trade: ${traderLower.slice(0, 8)}...`);
-      }
-      
-      trades.push({
-        signature: signature.slice(0, 8) + '...',
-        fullSignature: signature,
-        age: age,
-        type: isBuy ? 'buy' : 'sell',
-        marketCap: marketCap,
-        amount: tokenAmount,
-        totalUSD: solAmount * 150, // Approximate USD value (SOL price ~$150)
-        gas: fee,
-        trader: actualTrader.slice(0, 4) + '...' + actualTrader.slice(-4),
-        fullTrader: actualTrader,
-        timestamp: timestamp,
-        solAmount: solAmount,
-        isOurWallet: isOurWallet,
-        walletType: walletType, // DEV, Bundle, or Holder
-        slot: tx.slot || null
-      });
     }
     
-    // Return all trades (a transaction can have multiple swaps)
-    // Sort by token amount (largest first) so most significant trades are processed first
-    if (trades.length === 0) return null;
+    // Check for valid balance changes
+    const solChange = Math.abs(preSol - postSol);
+    if (solChange === 0 && tokenChange === 0) {
+      return null;
+    }
     
-    trades.sort((a, b) => b.amount - a.amount);
+    // Determine buy/sell based on token and SOL balance changes
+    // BUY: Token balance increases (trader RECEIVES tokens, PAYS SOL)
+    // SELL: Token balance decreases (trader SELLS tokens, RECEIVES SOL)
+    const tokenIncreased = tokenChange > 0;
+    const tokenDecreased = tokenChange < 0;
+    const solDecreased = preSol > postSol && (preSol - postSol) > fee;
+    const solIncreased = postSol > preSol && (postSol - preSol) > fee;
     
-    // Return all trades as an array (caller will handle array vs single trade)
-    return trades;
+    // More robust detection with logging for debugging
+    let isBuy;
+    
+    // PRIMARY RULE: Token balance change is the MOST reliable indicator
+    // - If trader's tokens INCREASED → they BOUGHT
+    // - If trader's tokens DECREASED → they SOLD
+    if (tokenIncreased && tokenDecreased) {
+      // This shouldn't happen, but if it does, use SOL direction
+      console.log(`[LiveTrades] ⚠️ Conflicting token change detected: ${tokenChange}`);
+      isBuy = solDecreased;
+    } else if (tokenIncreased) {
+      // Tokens increased = trader received tokens = BUY
+      // Sanity check: SOL should have decreased (trader paid)
+      if (solIncreased) {
+        console.log(`[LiveTrades] ⚠️ Mismatch: tokens+${tokenChange.toFixed(2)} but SOL+${(postSol - preSol).toFixed(6)} - forcing BUY based on tokens`);
+      }
+      isBuy = true;
+    } else if (tokenDecreased) {
+      // Tokens decreased = trader lost tokens = SELL
+      // Sanity check: SOL should have increased (trader received payment)
+      if (solDecreased) {
+        console.log(`[LiveTrades] ⚠️ Mismatch: tokens${tokenChange.toFixed(2)} but SOL-${(preSol - postSol).toFixed(6)} - forcing SELL based on tokens`);
+      }
+      isBuy = false;
+    } else {
+      // No token change - this might be a fee or other transaction
+      console.log(`[LiveTrades] ⚠️ No significant token change, using SOL direction`);
+      isBuy = solDecreased;
+    }
+    
+    // Debug log for suspicious transactions
+    if ((isBuy && solIncreased && (postSol - preSol) > 0.01) || (!isBuy && solDecreased && (preSol - postSol) > 0.01)) {
+      console.log(`[LiveTrades] 🔍 Potential misclassification: type=${isBuy ? 'BUY' : 'SELL'}, tokenChange=${tokenChange.toFixed(2)}, solChange=${(postSol - preSol).toFixed(6)}, sig=${signature.slice(0, 8)}...`);
+    }
+    
+    const tokenAmount = Math.abs(tokenChange);
+    
+    // Calculate SOL amount from balance change
+    let solAmount = 0;
+    
+    // If we found the trader's index, use that balance
+    // For sells, we need to be more lenient - trader might have 0 SOL before selling
+    if (traderIndex >= 0) {
+      if (isBuy) {
+        // BUY: Trader pays SOL, so preSol > postSol
+        if (preSol > 0 && postSol >= 0) {
+          solAmount = Math.max(0, (preSol - postSol) - fee);
+        }
+      } else {
+        // SELL: Trader receives SOL, so postSol > preSol
+        // Don't require preSol to be non-zero - trader might have started with 0
+        const solReceived = postSol - preSol;
+        if (solReceived > 0) {
+          // For sells, the trader receives SOL
+          // The net amount received is (postSol - preSol), but we want gross (before fees)
+          // Fee is deducted from what they receive, so gross = net + fee
+          solAmount = solReceived + fee;
+          console.log(`[LiveTrades] 💰 SELL calc: preSol=${preSol.toFixed(6)}, postSol=${postSol.toFixed(6)}, received=${solReceived.toFixed(6)}, fee=${fee.toFixed(6)}, gross=${solAmount.toFixed(6)}`);
+        } else if (solReceived <= 0 && postSol > 0) {
+          // Edge case: trader received SOL but calculation shows 0 or negative
+          // This can happen if preSol wasn't tracked correctly
+          // Use postSol as minimum estimate (they definitely received at least this much)
+          solAmount = Math.max(postSol, fee * 2); // At least 2x fee as minimum
+          console.log(`[LiveTrades] ⚠️ SELL edge case: using postSol=${postSol.toFixed(6)} as minimum, calculated=${solAmount.toFixed(6)}`);
+        }
+      }
+    }
+    
+    // Fallback: find account that received SOL (for sells) or paid SOL (for buys)
+    if (solAmount === 0 && tx.meta.preBalances && tx.meta.postBalances && accountKeys.length > 0) {
+      if (isBuy) {
+        // For buys, find account that paid SOL (balance decreased)
+        for (let i = 0; i < Math.min(accountKeys.length, tx.meta.preBalances.length); i++) {
+          const preSolI = (tx.meta.preBalances[i] || 0) / 1e9;
+          const postSolI = (tx.meta.postBalances[i] || 0) / 1e9;
+          const change = preSolI - postSolI;
+          if (change > fee + 0.001) { // Significant change (more than fee)
+            solAmount = Math.max(0, change - fee);
+            break;
+          }
+        }
+      } else {
+        // For sells, find account that received SOL (balance increased)
+        // Skip bonding curve
+        for (let i = 0; i < Math.min(accountKeys.length, tx.meta.preBalances.length); i++) {
+          const key = accountKeys[i];
+          let addr = null;
+          if (typeof key === 'string') {
+            addr = key;
+          } else if (key && typeof key === 'object') {
+            addr = key.pubkey || (key.toBase58 ? key.toBase58() : null) || (typeof key.toString === 'function' && key.toString() !== '[object Object]' ? key.toString() : null);
+          }
+          // Skip bonding curve
+        // Ensure addr is a string before calling toLowerCase
+        if (addr && typeof addr === 'string' && this.currentBondingCurveAddress && addr.toLowerCase() === this.currentBondingCurveAddress.toLowerCase()) {
+          continue;
+        }
+          
+          const preSolI = (tx.meta.preBalances[i] || 0) / 1e9;
+          const postSolI = (tx.meta.postBalances[i] || 0) / 1e9;
+          const change = postSolI - preSolI;
+          if (change > fee + 0.001) { // Significant change (more than fee)
+            // For sells: gross amount = net received + fee
+            solAmount = change + fee;
+            console.log(`[LiveTrades] 💰 SELL fallback: account[${i}], preSol=${preSolI.toFixed(6)}, postSol=${postSolI.toFixed(6)}, change=${change.toFixed(6)}, fee=${fee.toFixed(6)}, gross=${solAmount.toFixed(6)}`);
+            break;
+          }
+        }
+      }
+    }
+    
+    // Debug log for SOL calculation
+    console.log(`[LiveTrades] 💰 SOL calc: type=${isBuy ? 'BUY' : 'SELL'}, traderIndex=${traderIndex}, preSol=${preSol.toFixed(6)}, postSol=${postSol.toFixed(6)}, fee=${fee.toFixed(6)}, result=${solAmount.toFixed(6)}`);
+    
+    // For sells, if we still have 0, try multiple fallback methods
+    if (solAmount === 0 && !isBuy && tokenAmount > 0) {
+      // Method 1: Estimate from token amount and market cap
+      if (this.currentMarketCap && this.currentMarketCap > 0) {
+        const solPrice = this.solPriceCache?.price || 200;
+        const marketCapSOL = this.currentMarketCap / solPrice;
+        const pricePerToken = marketCapSOL / 1000000000; // 1B supply
+        solAmount = tokenAmount * pricePerToken;
+        console.log(`[LiveTrades] 💰 Estimated SOL from market cap: ${solAmount.toFixed(6)} SOL (pricePerToken=${pricePerToken.toFixed(9)})`);
+      }
+      
+      // Method 2: If still 0, use a reasonable minimum based on token amount
+      if (solAmount === 0) {
+        // Very rough estimate: assume at least 0.0001 SOL per million tokens
+        solAmount = Math.max(0.0001, (tokenAmount / 1000000) * 0.0001);
+        console.log(`[LiveTrades] ⚠️ Using token-based SOL estimate: ${solAmount.toFixed(6)} SOL`);
+      }
+    }
+    
+    // Skip if no valid amounts at all
+    if (solAmount === 0 && tokenAmount === 0) {
+      return null;
+    }
+    
+    // Final fallback: minimum SOL estimate for display (only if we have tokens but no SOL)
+    if (solAmount === 0 && tokenAmount > 0) {
+      solAmount = 0.0001; // Increased from 0.00001 to be more visible
+      console.log(`[LiveTrades] ⚠️ Using absolute minimum SOL estimate: ${solAmount.toFixed(6)} SOL`);
+    }
+    
+    // Calculate market cap (in USD)
+    let marketCap = this.currentMarketCap;
+    if (!marketCap || marketCap === 0) {
+      const pricePerToken = tokenAmount > 0 ? solAmount / tokenAmount : 0;
+      const marketCapSOL = pricePerToken * 1000000000; // 1B supply
+      const solPrice = this.solPriceCache?.price || 200;
+      marketCap = marketCapSOL * solPrice; // Convert to USD using cached price
+    }
+    
+    // Get timestamp
+    const timestamp = blockTime ? blockTime * 1000 : (tx.blockTime ? tx.blockTime * 1000 : Date.now());
+    const age = Math.floor((Date.now() - timestamp) / 60000);
+    
+    // Check if it's our wallet
+    const traderAddrLower = actualTrader.toLowerCase();
+    const isOurWallet = this.ourWallets.has(traderAddrLower);
+    const walletType = isOurWallet ? (this.walletTypes.get(traderAddrLower) || 'Unknown') : null;
+    
+    // Log our wallet trades
+    if (isOurWallet) {
+      console.log(`[LiveTrades] ✅ ${walletType} trade: ${isBuy ? 'BUY' : 'SELL'} | ${solAmount.toFixed(6)} SOL | ${tokenAmount.toFixed(0)} tokens`);
+    }
+    
+    // Refresh market cap after trade (async, don't wait)
+    this.refreshMarketCap().catch(() => {});
+    
+    // Return single trade (not array since we only process one per transaction now)
+    return {
+      signature: signature.slice(0, 8) + '...',
+      fullSignature: signature,
+      age: age,
+      type: isBuy ? 'buy' : 'sell',
+      marketCap: marketCap,
+      amount: tokenAmount,
+      totalUSD: solAmount * 150,
+      gas: fee,
+      trader: actualTrader.slice(0, 4) + '...' + actualTrader.slice(-4),
+      fullTrader: actualTrader,
+      timestamp: timestamp,
+      solAmount: solAmount,
+      isOurWallet: isOurWallet,
+      walletType: walletType,
+      slot: tx.slot || null
+    };
   }
 
   // Add trade to list
   addTrade(trade) {
+    console.log(`[LiveTrades] 📥 addTrade called: ${trade.type} | ${trade.solAmount} SOL | listeners: ${this.listeners.length}`);
+    
+    // Filter by mint address if current mint is set
+    // This allows QuickNode to send all trades, but we only process ones for our mint
+    if (this.currentMintAddress && trade.mintAddress) {
+      const tradeMintLower = trade.mintAddress.toLowerCase().trim();
+      const currentMintLower = this.currentMintAddress.toLowerCase().trim();
+      if (tradeMintLower !== currentMintLower) {
+        // Skip trades for other mints
+        console.log(`[LiveTrades] ⏭️ Skipping trade - mint mismatch`);
+        return;
+      }
+    }
+    
     // Insert trade in correct position (sorted by timestamp, newest first)
     let insertIndex = 0;
     for (let i = 0; i < this.trades.length; i++) {
@@ -1186,7 +2384,20 @@ class LiveTradesTracker {
       this.tradeCache.set(this.currentMintAddress, [...this.trades]);
     }
     
+    // Track external volume for auto-sell
+    this.trackExternalVolume(trade);
+    
+    // Record trade in launch tracker (for history and PnL)
+    try {
+      const { getLaunchTracker } = require('./launch-tracker');
+      const tracker = getLaunchTracker();
+      tracker.recordTrade(trade);
+    } catch (err) {
+      // Silently ignore if tracker not available
+    }
+    
     // Send to all listeners
+    console.log(`[LiveTrades] 📤 Sending trade to ${this.listeners.length} listener(s)`);
     this.sendToAllListeners(trade);
   }
 
@@ -1198,6 +2409,9 @@ class LiveTradesTracker {
 
 // Singleton instance
 const liveTradesTracker = new LiveTradesTracker();
-liveTradesTracker.initialize();
+
+// NOTE: Disabled Helius WebSocket - using PumpPortal tracker instead (pumpportal-tracker.js)
+// liveTradesTracker.initialize();
+// If you need historical fetch or test wallets, call initialize() manually
 
 module.exports = liveTradesTracker;

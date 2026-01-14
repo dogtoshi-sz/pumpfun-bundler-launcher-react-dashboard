@@ -16,23 +16,23 @@ const connection = new Connection(RPC_ENDPOINT, {
 interface WarmConfig {
   walletsPerBatch: number // How many wallets to warm in parallel
   tradesPerWallet: number // Total trades per wallet
-  minBuyAmount: number // Minimum SOL to spend per trade (SUPER TINY - e.g., 0.001)
-  maxBuyAmount: number // Maximum SOL to spend per trade (SUPER TINY - e.g., 0.005)
-  minIntervalSeconds: number // Minimum wait between trades (e.g., 30)
-  maxIntervalSeconds: number // Maximum wait between trades (e.g., 300 = 5 minutes)
-  priorityFee: 'low' | 'medium' | 'high' // Priority fee level (always 'low' for cheapest)
+  minBuyAmount: number // Minimum SOL to spend per trade (SUPER TINY - e.g., 0.0005)
+  maxBuyAmount: number // Maximum SOL to spend per trade (SUPER TINY - e.g., 0.001)
+  minIntervalSeconds: number // Minimum wait between trades (e.g., 10)
+  maxIntervalSeconds: number // Maximum wait between trades (e.g., 60)
+  priorityFee: 'none' | 'low' | 'medium' | 'high' // Priority fee level ('none' = cheapest)
   useJupiter: boolean // Use Jupiter swap (works with any token, no referrer needed)
   useTrendingTokens: boolean // Use trending tokens from API instead of static list
 }
 
 const DEFAULT_CONFIG: WarmConfig = {
   walletsPerBatch: 2, // Process 2 wallets at a time to avoid rate limits
-  tradesPerWallet: 10, // 10 trades per wallet
-  minBuyAmount: 0.001, // 0.001 SOL minimum (SUPER TINY - ~$0.15)
-  maxBuyAmount: 0.005, // 0.005 SOL maximum (SUPER TINY - ~$0.75)
-  minIntervalSeconds: 30, // 30 seconds minimum between trades
-  maxIntervalSeconds: 300, // 5 minutes maximum between trades
-  priorityFee: 'low', // ALWAYS use low priority fee (cheapest possible)
+  tradesPerWallet: 2, // Just 2 trades per wallet (enough to show activity)
+  minBuyAmount: 0.002, // 0.002 SOL minimum (~$0.28) - Minimum Jupiter accepts
+  maxBuyAmount: 0.003, // 0.003 SOL maximum (~$0.42) - Small but works
+  minIntervalSeconds: 10, // 10 seconds minimum between trades
+  maxIntervalSeconds: 60, // 1 minute maximum between trades
+  priorityFee: 'none', // No priority fee for warming (saves SOL)
   useJupiter: true, // Use Jupiter (works with any token)
   useTrendingTokens: true // Use trending tokens from API
 }
@@ -378,15 +378,15 @@ if (require.main === module) {
   // Load tokens
   const tokenList = getTokensFromList()
   
-  // Parse config from environment variables or use defaults
+  // Parse config from environment variables or use MINIMAL defaults (works with Jupiter)
   const config: WarmConfig = {
-    walletsPerBatch: parseInt(process.env.WARM_WALLETS_PER_BATCH || '3'),
-    tradesPerWallet: parseInt(process.env.WARM_TRADES_PER_WALLET || '10'),
-    minBuyAmount: parseFloat(process.env.WARM_MIN_BUY || '0.01'),
-    maxBuyAmount: parseFloat(process.env.WARM_MAX_BUY || '0.05'),
-    minIntervalSeconds: parseInt(process.env.WARM_MIN_INTERVAL || '30'),
-    maxIntervalSeconds: parseInt(process.env.WARM_MAX_INTERVAL || '300'),
-    priorityFee: (process.env.WARM_PRIORITY_FEE as 'low' | 'medium' | 'high') || 'low',
+    walletsPerBatch: parseInt(process.env.WARM_WALLETS_PER_BATCH || '2'),
+    tradesPerWallet: parseInt(process.env.WARM_TRADES_PER_WALLET || '2'), // Just 2 trades is enough
+    minBuyAmount: parseFloat(process.env.WARM_MIN_BUY || '0.002'), // 0.002 SOL ≈ $0.28 (minimum Jupiter accepts)
+    maxBuyAmount: parseFloat(process.env.WARM_MAX_BUY || '0.003'), // 0.003 SOL ≈ $0.42
+    minIntervalSeconds: parseInt(process.env.WARM_MIN_INTERVAL || '10'),
+    maxIntervalSeconds: parseInt(process.env.WARM_MAX_INTERVAL || '60'),
+    priorityFee: (process.env.WARM_PRIORITY_FEE as 'none' | 'low' | 'medium' | 'high') || 'none', // No priority fee for warming (saves SOL)
     useJupiter: process.env.WARM_USE_JUPITER !== 'false'
   }
   

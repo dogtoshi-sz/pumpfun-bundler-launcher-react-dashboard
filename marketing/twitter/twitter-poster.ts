@@ -54,6 +54,7 @@ interface TwitterPostOptions {
   deleteOldTweets?: boolean;
   profileConfig?: ProfileConfig;
   tokenConfig?: TokenConfig;
+  communityId?: string; // Post to a specific community
 }
 
 /**
@@ -409,6 +410,12 @@ export async function postToTwitter(options: TwitterPostOptions): Promise<{
           
           if (mediaId) {
             tweetOptions.media = { media_ids: [mediaId] };
+          }
+          
+          // Add community_id if specified
+          if (options.communityId) {
+            tweetOptions.community_id = options.communityId;
+            console.log(`[Twitter] Posting to community: ${options.communityId}`);
           }
           
           const tweet = await rwClient.v2.tweet(tweetOptions);
