@@ -41,7 +41,6 @@ import {
 import apiService from '../services/api';
 import AIContentGenerator from './AIContentGenerator';
 import AutoSellConfig from './AutoSellConfig';
-import FundingWallet from './FundingWallet';
 
 // Compact Info Tooltip Component with enhanced styling
 const InfoTooltip = ({ content, type = 'default' }) => {
@@ -2591,20 +2590,6 @@ export default function TokenLaunch({ onLaunch }) {
     }
   };
 
-  // Scroll to private key section and highlight it
-  const scrollToPrivateKey = () => {
-    // Find the PRIVATE_KEY input section and scroll to it
-    setTimeout(() => {
-      const settingsSection = document.querySelector('[data-section="wallet-config"]');
-      if (settingsSection) {
-        settingsSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        settingsSection.classList.add('ring-2', 'ring-orange-500', 'ring-opacity-75');
-        setTimeout(() => {
-          settingsSection.classList.remove('ring-2', 'ring-orange-500', 'ring-opacity-75');
-        }, 3000);
-      }
-    }, 100);
-  };
 
   return (
     <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
@@ -2614,16 +2599,8 @@ export default function TokenLaunch({ onLaunch }) {
           <h2 className="text-xl font-bold text-white">Launch Token</h2>
         </div>
         <div className="flex items-center gap-2">
-          {/* 🔥 Compact Funding Wallet Widget */}
-          <FundingWallet 
-            onWalletReady={(wallet) => {
-              console.log('[TokenLaunch] Hot wallet ready:', wallet.address, 'Balance:', wallet.balance);
-            }}
-            onSwitchToPrivateKey={scrollToPrivateKey}
-          />
-          
           {/* Config buttons */}
-          <div className="flex items-center gap-1 ml-2 border-l border-gray-700 pl-2">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={exportConfigAsJSON}

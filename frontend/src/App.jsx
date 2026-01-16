@@ -39,6 +39,7 @@ import PumpPortalTest from './components/PumpPortalTest';
 import QuickSetup from './components/QuickSetup';
 import { TrendDetector } from './components/trend-detector';
 import { useLaunchScore } from './hooks/useLaunchScore';
+import FundingWallet from './components/FundingWallet';
 
 function App() {
   const [activeTab, setActiveTab] = useState('launch');
@@ -257,23 +258,34 @@ function App() {
                   })()}
                 </nav>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                {/* Funding Wallet Widget - Sleek header integration */}
+                <FundingWallet 
+                  onWalletReady={(wallet) => {
+                    console.log('[App] Hot wallet ready:', wallet.address);
+                  }}
+                  onSwitchToPrivateKey={() => {
+                    // Navigate to settings and highlight private key section
+                    setActiveTab('settings');
+                    setActiveSettingsSection('wallets');
+                  }}
+                />
+                
+                <div className="h-6 w-px bg-gray-800"></div>
+                
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="Search tokens..."
-                    className="bg-gray-900/50 border border-gray-800 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-48"
+                    placeholder="Search..."
+                    className="bg-gray-900/50 border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 w-36"
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <button className="p-2 hover:bg-gray-900/50 rounded-lg transition-colors">
-                    <BellIcon className="w-5 h-5 text-gray-400" />
+                <div className="flex items-center gap-1">
+                  <button className="p-1.5 hover:bg-gray-900/50 rounded-lg transition-colors">
+                    <BellIcon className="w-4 h-4 text-gray-500" />
                   </button>
-                  <button className="p-2 hover:bg-gray-900/50 rounded-lg transition-colors">
-                    <Squares2X2Icon className="w-5 h-5 text-gray-400" />
-                  </button>
-                  <button className="p-2 hover:bg-gray-900/50 rounded-lg transition-colors">
-                    <UserIcon className="w-5 h-5 text-gray-400" />
+                  <button className="p-1.5 hover:bg-gray-900/50 rounded-lg transition-colors">
+                    <UserIcon className="w-4 h-4 text-gray-500" />
                   </button>
                 </div>
               </div>
