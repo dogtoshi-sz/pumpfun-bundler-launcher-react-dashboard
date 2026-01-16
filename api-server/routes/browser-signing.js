@@ -15,6 +15,79 @@
 
 const express = require('express');
 const router = express.Router();
+
+// ============================================
+// 🔒 SECURITY MIDDLEWARE - BLOCK PRIVATE KEYS
+// ============================================
+// This middleware REJECTS any request that contains private keys
+// to prevent accidental or malicious key leakage
+
+const PRIVATE_KEY_PATTERNS = [
+  /privateKey/i,
+  /secretKey/i,
+  /private_key/i,
+  /secret_key/i,
+  /privKey/i,
+  /secKey/i,
+];
+
+// Check if a string looks like a base58 private key (64 bytes = ~87-88 chars)
+function looksLikePrivateKey(value) {
+  if (typeof value !== 'string') return false;
+  // Base58 private keys are typically 87-88 characters
+  // Public keys are typically 43-44 characters
+  if (value.length >= 80 && value.length <= 95) {
+    // Check if it's valid base58
+    const base58Chars = /^[1-9A-HJ-NP-Za-km-z]+$/;
+    return base58Chars.test(value);
+  }
+  return false;
+}
+
+// Recursively check object for private keys
+function containsPrivateKey(obj, path = '') {
+  if (!obj || typeof obj !== 'object') {
+    if (looksLikePrivateKey(obj)) {
+      console.error(`🚨 SECURITY: Blocked potential private key at ${path}`);
+      return true;
+    }
+    return false;
+  }
+  
+  for (const [key, value] of Object.entries(obj)) {
+    const currentPath = path ? `${path}.${key}` : key;
+    
+    // Check if key name suggests private key
+    if (PRIVATE_KEY_PATTERNS.some(pattern => pattern.test(key))) {
+      console.error(`🚨 SECURITY: Blocked private key field: ${currentPath}`);
+      return true;
+    }
+    
+    // Recursively check values
+    if (containsPrivateKey(value, currentPath)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+// Security middleware - apply to ALL routes
+router.use((req, res, next) => {
+  // Check request body for private keys
+  if (req.body && containsPrivateKey(req.body, 'body')) {
+    console.error(`🚨 SECURITY VIOLATION: Request to ${req.path} contained private key data!`);
+    console.error(`🚨 IP: ${req.ip}, User-Agent: ${req.get('user-agent')}`);
+    return res.status(400).json({
+      error: 'SECURITY_VIOLATION',
+      message: 'Private keys must NEVER be sent to the server. Sign transactions locally in your browser.',
+    });
+  }
+  
+  // Log clean requests
+  console.log(`✅ [Browser Signing] ${req.method} ${req.path} - No private keys detected`);
+  next();
+});
 const { 
   Connection, 
   PublicKey, 

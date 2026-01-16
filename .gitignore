@@ -178,3 +178,45 @@ show-keys.js
 # Generated images (created by logo generator)
 image/createdlogos/
 logs/
+
+# ============================================================
+# 🔒 EXTRA SECURITY - NEVER COMMIT THESE
+# ============================================================
+
+# Backup files from browser storage
+**/goat-backup*.json
+**/goat-run-*.json
+**/emergency-backup*.json
+**/*-backup-*.json
+
+# Any file with "private" or "secret" in name
+**/*private*
+**/*secret*
+**/*Private*
+**/*Secret*
+
+# Intermediary wallet files
+**/intermediary*.json
+**/hop1*.json
+**/hop2*.json
+**/hop3*.json
+
+# Archive and old keys
+keys-archive*/
+**/archive*.json
+
+# Warmed wallets
+**/warmed*.json
+
+# Production environment files
+.env.production
+api-server/.env
+api-server/.env.*
+!api-server/.env.production.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.production.example
+
+# Railway and deployment sensitive files
+.railway/
+railway-token.txt

@@ -108,13 +108,42 @@ const upload = multer({
 app.use(cors());
 
 // ============================================================
-// 🔒 SECURITY: LOCALHOST ONLY - BLOCK ALL EXTERNAL REQUESTS
+// 🔒 SECURITY: ACCESS CONTROL
 // ============================================================
+// In PRODUCTION mode: Only allow SAFE endpoints (no private keys)
+// In LOCAL mode: Allow all endpoints (for CLI tools)
+// ============================================================
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+// SAFE endpoints that NEVER handle private keys (allowed in production)
+const SAFE_ENDPOINTS = [
+  '/api/health',
+  '/api/wallets/balances',
+  '/api/wallets/holdings',
+  '/api/bundles/gather-unsigned',
+  '/api/bundles/recover-intermediary-unsigned',
+  '/api/bundles/submit-signed',
+  '/api/bundles/submit-recovery',
+  '/api/bundles/submit-gathers',
+  '/api/bundles/create-unsigned',
+  '/api/bundles/sell-unsigned',
+  '/api/bundles/submit-sells',
+];
+
+// Health check endpoint (always allowed)
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    mode: isProduction ? 'production' : 'local',
+    timestamp: new Date().toISOString(),
+    security: 'Private keys never accepted by this server',
+  });
+});
+
 app.use((req, res, next) => {
-  // Get IP from various possible sources
   const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || '';
   
-  // More robust localhost detection - check if IP contains localhost patterns
   const isLocalhost = 
     ip === '127.0.0.1' || 
     ip === '::1' || 
@@ -123,28 +152,43 @@ app.use((req, res, next) => {
     ip.startsWith('127.') ||
     ip.startsWith('::ffff:127.') ||
     ip.includes('localhost') ||
-    ip === '' || // Empty IP usually means localhost
+    ip === '' ||
     req.headers.host?.includes('localhost') ||
     req.headers.host?.includes('127.0.0.1');
-  
-  // Also check X-Forwarded-For header (for reverse proxies like ngrok)
+
+  // PRODUCTION MODE: Only allow safe endpoints
+  if (isProduction) {
+    const isSafeEndpoint = SAFE_ENDPOINTS.some(ep => req.path.startsWith(ep));
+    
+    if (!isSafeEndpoint) {
+      console.warn(`🚨 PRODUCTION: Blocked unsafe endpoint: ${req.method} ${req.path}`);
+      return res.status(403).json({ 
+        error: 'This endpoint is not available in production mode.',
+        message: 'For security, only browser-signing endpoints are allowed.',
+        allowedEndpoints: SAFE_ENDPOINTS,
+      });
+    }
+    
+    console.log(`✅ PRODUCTION: ${req.method} ${req.path} from ${ip}`);
+    return next();
+  }
+
+  // LOCAL MODE: Localhost-only access
   const forwardedFor = req.headers['x-forwarded-for'];
-  const isFromNgrok = forwardedFor && forwardedFor.length > 0 && !forwardedFor.includes('127.0.0.1') && !forwardedFor.includes('localhost');
+  const isFromProxy = forwardedFor && forwardedFor.length > 0 && !forwardedFor.includes('127.0.0.1') && !forwardedFor.includes('localhost');
   
-  // BLOCK ALL EXTERNAL REQUESTS (including via ngrok)
-  if (isFromNgrok) {
-    console.warn(`🚨 BLOCKED EXTERNAL REQUEST via ngrok: ${req.method} ${req.path} from ${forwardedFor}`);
+  if (isFromProxy) {
+    console.warn(`🚨 BLOCKED EXTERNAL REQUEST via proxy: ${req.method} ${req.path} from ${forwardedFor}`);
     return res.status(403).json({ 
       error: 'Access denied. This API is localhost-only for security.',
-      message: 'External access via ngrok/tunnel is blocked.' 
+      message: 'External access via proxy is blocked in local mode.' 
     });
   }
   
   if (!isLocalhost) {
-    console.warn(`🚨 BLOCKED EXTERNAL REQUEST: ${req.method} ${req.path} from IP: ${ip}, Host: ${req.headers.host}`);
+    console.warn(`🚨 BLOCKED EXTERNAL REQUEST: ${req.method} ${req.path} from IP: ${ip}`);
     return res.status(403).json({ 
       error: 'Access denied. This API is localhost-only for security.',
-      debug: { ip, host: req.headers.host }
     });
   }
   
