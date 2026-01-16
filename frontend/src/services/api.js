@@ -1,6 +1,11 @@
 import axios from 'axios';
 
-const API_BASE = '/api';
+// In production, use the full API URL. In development, use relative /api path
+const API_BASE = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
+
+console.log('[API] Using base URL:', API_BASE);
 
 const api = axios.create({
   baseURL: API_BASE,
