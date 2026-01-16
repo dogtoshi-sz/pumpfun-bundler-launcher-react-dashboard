@@ -180,6 +180,11 @@ const psdLogoApi = require('./psd-logo-api');
 app.use('/api/psd', psdLogoApi);
 app.use('/api/logo', psdLogoApi);
 
+// Browser-based signing routes (for production - keys stay in browser)
+const browserSigningRoutes = require('./routes/browser-signing');
+app.use('/api/wallets', browserSigningRoutes);
+app.use('/api/bundles', browserSigningRoutes);
+
 // ============================================================================
 // GEMINI AI IMAGE GENERATION (Nano Banana)
 // ============================================================================
