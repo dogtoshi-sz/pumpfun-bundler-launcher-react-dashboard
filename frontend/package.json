@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "serve dist -s -l $PORT"
   },
   "dependencies": {
+    "serve": "^14.2.0",
     "@heroicons/react": "^2.2.0",
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.89.1",
