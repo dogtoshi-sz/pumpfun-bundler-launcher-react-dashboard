@@ -57,7 +57,7 @@ try {
 }
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 const execAsync = promisify(exec);
 const multer = require('multer');
 
