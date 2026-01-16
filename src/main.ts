@@ -11,7 +11,7 @@ import { DESCRIPTION, FILE, JITO_FEE, PUMP_PROGRAM, RPC_ENDPOINT, RPC_WEBSOCKET_
 import { saveDataToFile, sleep } from "../utils"
 import { NUM_INTERMEDIARY_HOPS, USE_MULTI_INTERMEDIARY_SYSTEM } from "../constants"
 import { createAndSendV0Tx, execute } from "../executor/legacy"
-import { PumpFunSDK } from "@solana-launchpad/sdk"
+import { PumpFunSDK } from "@solana-ipfs/sdk"
 
 const commitment = "confirmed"
 
