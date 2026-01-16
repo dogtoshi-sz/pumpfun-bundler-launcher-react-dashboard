@@ -61,6 +61,36 @@ const PORT = process.env.PORT || 3001;
 const execAsync = promisify(exec);
 const multer = require('multer');
 
+// Determine project root - handles both local and Railway deployments
+// On Railway with api-server as root: __dirname = /app, project files are in /app
+// Locally: __dirname = .../goat-prod/api-server, project root is ..
+const getProjectRoot = () => {
+  // Check if running on Railway (api-server is the deployed root)
+  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
+  if (isRailway) {
+    // On Railway, all files are deployed to /app (even if api-server was the root)
+    // But we need to check if src folder exists at parent or at root
+    const parentSrc = path.join(__dirname, '..', 'src');
+    const currentSrc = path.join(__dirname, 'src');
+    
+    if (fs.existsSync(parentSrc)) {
+      return path.join(__dirname, '..');
+    } else if (fs.existsSync(currentSrc)) {
+      return __dirname;
+    }
+    // Fallback: assume api-server is deployed as root but with project structure
+    console.log('[API Server] ⚠️ Could not find src folder, using __dirname as root');
+    return __dirname;
+  }
+  // Local development - project root is parent of api-server
+  return path.join(__dirname, '..');
+};
+const PROJECT_ROOT = getProjectRoot();
+console.log(`[API Server] Project root: ${PROJECT_ROOT}`);
+
+// Helper to resolve paths relative to project root
+const projectPath = (...segments) => path.join(PROJECT_ROOT, ...segments);
+
 // Load .env file for server - ALWAYS use root directory .env file
 // This ensures consistency with readEnvFile() and writeEnvFile() functions
 const rootEnvPath = path.join(__dirname, '..', '.env');
@@ -1047,7 +1077,7 @@ app.post('/api/launch-token', async (req, res) => {
       console.log(`   Holder: ${useWarmedHolderWallets ? 'WARMED' : 'FRESH'} (${holderWalletAddresses?.length || 0} selected)`);
       
       // Load warmed wallets and save selected ones to a file that index.ts can read
-      const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+      const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
       const allWarmedWallets = loadWarmedWallets();
       
       console.log(`[Launch] Loaded ${allWarmedWallets.length} warmed wallets from wallet warming system`);
@@ -2353,7 +2383,7 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
     }
     
     // Load wallet from warmed wallets to get private key
-    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const wallets = loadWarmedWallets();
     const wallet = wallets.find(w => w.address === walletAddress);
     
@@ -2558,7 +2588,7 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
     
     // Update wallet balance after selling
     try {
-      const { updateWalletBalance } = require('../src/wallet-warming-manager.ts');
+      const { updateWalletBalance } = require(projectPath('src', 'wallet-warming-manager.ts'));
       await updateWalletBalance(walletAddress);
       console.log(`[Sell All] Updated balance for ${walletAddress.substring(0, 8)}...`);
     } catch (error) {
@@ -3297,7 +3327,7 @@ app.post('/api/marketing/website/update', async (req, res) => {
     
     // Import and use website update module (TypeScript)
     // The module will read from process.env.DATABASE_URL (like Nodematrix does)
-    const { updateWebsiteConfig } = require('../marketing/website/website-update.ts');
+    const { updateWebsiteConfig } = require(projectPath('marketing', 'website', 'website-update.ts'));
     const result = await updateWebsiteConfig({
       siteUrl: vercelSiteUrl,
       secret: secret || '', // Optional, not used for DB saves
@@ -3358,7 +3388,7 @@ app.post('/api/marketing/telegram/send-code', async (req, res) => {
     
     // Import and use Telegram verification wrapper
     console.log('[Marketing] Calling sendTelegramVerificationCode...');
-    const { sendTelegramVerificationCode } = require('../marketing/telegram/telegram-verification.ts');
+    const { sendTelegramVerificationCode } = require(projectPath('marketing', 'telegram', 'telegram-verification.ts'));
     const result = await sendTelegramVerificationCode({
       api_id,
       api_hash,
@@ -3386,7 +3416,7 @@ app.post('/api/marketing/telegram/verify-code', async (req, res) => {
     }
     
     // Import and use Telegram verification wrapper
-    const { verifyTelegramCode } = require('../marketing/telegram/telegram-verification.ts');
+    const { verifyTelegramCode } = require(projectPath('marketing', 'telegram', 'telegram-verification.ts'));
     const result = await verifyTelegramCode({
       api_id,
       api_hash,
@@ -3416,7 +3446,7 @@ app.post('/api/marketing/telegram/check-status', async (req, res) => {
     }
     
     // Import and use Telegram verification wrapper
-    const { checkTelegramStatus } = require('../marketing/telegram/telegram-verification.ts');
+    const { checkTelegramStatus } = require(projectPath('marketing', 'telegram', 'telegram-verification.ts'));
     const result = await checkTelegramStatus({
       api_id,
       api_hash,
@@ -3444,7 +3474,7 @@ app.post('/api/marketing/telegram/create-group', async (req, res) => {
     }
     
     // Import and use Telegram wrapper (TypeScript)
-    const { createTelegramGroup } = require('../marketing/telegram/telegram-wrapper.ts');
+    const { createTelegramGroup } = require(projectPath('marketing', 'telegram', 'telegram-wrapper.ts'));
     const result = await createTelegramGroup({
       config: config,
       scripted_conversations: scripted_conversations,
@@ -3480,7 +3510,7 @@ let warmingProcesses = new Map(); // Track active warming processes
 // Get all warmed wallets
 app.get('/api/warming-wallets', async (req, res) => {
   try {
-    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const wallets = loadWarmedWallets();
     
     res.json({
@@ -3518,7 +3548,7 @@ app.get('/api/warming-wallets', async (req, res) => {
 app.post('/api/warming-wallets/create', async (req, res) => {
   try {
     const { tags } = req.body; // Optional tags array
-    const { createWarmingWallet, loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { createWarmingWallet, loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     
     // Create the wallet (this saves it automatically)
     const wallet = createWarmingWallet(Array.isArray(tags) ? tags : []);
@@ -3616,7 +3646,7 @@ app.post('/api/warming-wallets/add', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Private key is required' });
     }
     
-    const { addWarmingWallet, loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { addWarmingWallet, loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     
     // Add the wallet (this saves it automatically)
     const wallet = addWarmingWallet(privateKey.trim(), tags || []);
@@ -3697,7 +3727,7 @@ app.post('/api/volume-wallets/spawn', async (req, res) => {
       });
     }
     
-    const { createWarmingWallet } = require('../src/wallet-warming-manager.ts');
+    const { createWarmingWallet } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const results = [];
     
     for (let i = 0; i < count; i++) {
@@ -3722,7 +3752,7 @@ app.post('/api/volume-wallets/spawn', async (req, res) => {
         console.log(`[VolumeWallets]   ✅ Target wallet created and saved: ${targetWallet.address.slice(0, 12)}...`);
         
         // Save intermediate wallets (for record-keeping, even though they're temporary)
-        const { addWarmingWallet } = require('../src/wallet-warming-manager.ts');
+        const { addWarmingWallet } = require(projectPath('src', 'wallet-warming-manager.ts'));
         for (let h = 0; h < intermediateWallets.length; h++) {
           const intKp = intermediateWallets[h];
           const intPrivateKey = base58.encode(intKp.secretKey);
@@ -3773,7 +3803,7 @@ app.post('/api/volume-wallets/spawn', async (req, res) => {
         }
         
         // Verify wallet was saved by checking if it exists in warmed wallets
-        const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+        const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
         const savedWallets = loadWarmedWallets();
         const walletSaved = savedWallets.some(w => w.address === targetWallet.address);
         
@@ -3808,7 +3838,7 @@ app.post('/api/volume-wallets/spawn', async (req, res) => {
         // Even if funding failed, ensure wallets are saved if they were created
         let savedWallets = [];
         try {
-          const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+          const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
           const allWallets = loadWarmedWallets();
           
           // Check if target wallet exists (it should have been created before funding)
@@ -3870,7 +3900,7 @@ app.put('/api/warming-wallets/:address/tags', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Tags must be an array' });
     }
     
-    const { updateWalletTags } = require('../src/wallet-warming-manager.ts');
+    const { updateWalletTags } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const updated = updateWalletTags(address, tags);
     
     if (updated) {
@@ -3904,7 +3934,7 @@ app.post('/api/warming-wallets/update-balances', async (req, res) => {
     }
     
     console.log(`[Warming] Updating SOL balances for ${walletAddresses.length} wallet(s)...`);
-    const { updateMultipleWalletBalances } = require('../src/wallet-warming-manager.ts');
+    const { updateMultipleWalletBalances } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const result = await updateMultipleWalletBalances(walletAddresses);
     
     console.log(`[Warming] Balance update complete: ${result.updated} updated, ${result.failed} failed, total: ${result.totalSol.toFixed(4)} SOL`);
@@ -3938,7 +3968,7 @@ app.post('/api/warming-wallets/gather-sol', async (req, res) => {
     }
     
     console.log(`[Warming] Gathering SOL from ${walletAddresses.length} wallet(s)...`);
-    const { gatherSolFromWallets } = require('../src/wallet-warming-manager.ts');
+    const { gatherSolFromWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const result = await gatherSolFromWallets(walletAddresses);
     
     console.log(`[Warming] Gather complete: ${result.gathered} gathered, ${result.failed} failed, total: ${result.totalSolGathered.toFixed(6)} SOL`);
@@ -3967,7 +3997,7 @@ app.post('/api/warming-wallets/withdraw-sol', async (req, res) => {
     }
     
     // Load wallet from warmed wallets to get private key
-    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const wallets = loadWarmedWallets();
     const wallet = wallets.find(w => w.address === walletAddress);
     
@@ -4035,7 +4065,7 @@ app.post('/api/warming-wallets/withdraw-sol', async (req, res) => {
     
     // Update balance in wallet record from blockchain (more accurate)
     try {
-      const { updateWalletBalance } = require('../src/wallet-warming-manager.ts');
+      const { updateWalletBalance } = require(projectPath('src', 'wallet-warming-manager.ts'));
       await updateWalletBalance(walletAddress);
       console.log(`[Withdraw] Updated balance for ${walletAddress.substring(0, 8)}...`);
     } catch (error) {
@@ -4045,7 +4075,7 @@ app.post('/api/warming-wallets/withdraw-sol', async (req, res) => {
       if (walletIndex >= 0) {
         wallets[walletIndex].solBalance = rentExemption;
         wallets[walletIndex].lastBalanceUpdate = new Date().toISOString();
-        const { saveWarmedWallets } = require('../src/wallet-warming-manager.ts');
+        const { saveWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
         saveWarmedWallets(wallets);
       }
     }
@@ -4079,7 +4109,7 @@ app.post('/api/warming-wallets/update-stats', async (req, res) => {
     }
     
     console.log(`[Warming] Updating stats for ${walletAddresses.length} wallet(s) from blockchain...`);
-    const { updateMultipleWalletsFromBlockchain } = require('../src/wallet-warming-manager.ts');
+    const { updateMultipleWalletsFromBlockchain } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const result = await updateMultipleWalletsFromBlockchain(walletAddresses);
     
     console.log(`[Warming] Update complete: ${result.updated} updated, ${result.failed} failed`);
@@ -4101,7 +4131,7 @@ app.post('/api/warming-wallets/update-stats', async (req, res) => {
 app.delete('/api/warming-wallets/:address', async (req, res) => {
   try {
     const { address } = req.params;
-    const { deleteWarmingWallet } = require('../src/wallet-warming-manager.ts');
+    const { deleteWarmingWallet } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const deleted = deleteWarmingWallet(address);
     
     if (deleted) {
@@ -4125,7 +4155,7 @@ app.post('/api/warm-wallets/start', async (req, res) => {
     }
     
     // Import wallet warming manager
-    const { warmWallets } = require('../src/wallet-warming-manager.ts');
+    const { warmWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     
     // Default config with MINIMAL settings (cheapest that actually works with Jupiter)
     const warmConfig = {
@@ -4188,7 +4218,7 @@ app.post('/api/warm-wallets/start', async (req, res) => {
 // Get warming progress (now just returns wallet stats)
 app.get('/api/warm-wallets/progress', async (req, res) => {
   try {
-    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const wallets = loadWarmedWallets();
     
     res.json({
@@ -4219,7 +4249,7 @@ app.get('/api/warm-wallets/progress', async (req, res) => {
 app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
   try {
     console.log('[Warming] Fetching trending tokens from Moralis (NEW, BONDING, GRADUATED)...');
-    const { getCachedTrendingTokens } = require('../src/fetch-trending-tokens.ts');
+    const { getCachedTrendingTokens } = require(projectPath('src', 'fetch-trending-tokens.ts'));
     const limit = parseInt(req.query.limit) || 100; // Allow custom limit, default 100
     const tokens = await getCachedTrendingTokens(limit);
     
@@ -4272,7 +4302,7 @@ const DUNE_QUERIES = {
 let aiGenerator = null;
 let generateContentWithBranding = null;
 try {
-  const aiModule = require('../launch-orchestrator/services/ai-generator');
+  const aiModule = require(projectPath('launch-orchestrator', 'services', 'ai-generator'));
   aiGenerator = aiModule.aiGenerator;
   generateContentWithBranding = aiModule.generateContentWithBranding;
   console.log('[API Server] ✅ AI Generator loaded');
@@ -4340,7 +4370,7 @@ app.post('/api/ai/generate-variations', async (req, res) => {
 
     // If generateImages is requested, use the branding-aware function
     if (generateImages) {
-      const { generateVariationsWithBranding } = require('../launch-orchestrator/services/ai-generator');
+      const { generateVariationsWithBranding } = require(projectPath('launch-orchestrator', 'services', 'ai-generator'));
       const result = await generateVariationsWithBranding(prompt, count, {
         theme,
         forceTemplate,
@@ -4690,7 +4720,7 @@ app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Wallet addresses are required' });
     }
     
-    const { loadWarmedWallets } = require('../src/wallet-warming-manager.ts');
+    const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
     const warmedWallets = loadWarmedWallets();
     
     // Get private keys for selected addresses
@@ -4772,7 +4802,7 @@ app.post('/api/marketing/twitter/get-account-info', async (req, res) => {
     }
     
     // Import and use Twitter poster module (TypeScript)
-    const { getTwitterAccountInfo } = require('../marketing/twitter/twitter-poster.ts');
+    const { getTwitterAccountInfo } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
     const result = await getTwitterAccountInfo({
       apiKey,
       apiSecret,
@@ -4832,7 +4862,7 @@ app.post('/api/marketing/twitter/auto-post', async (req, res) => {
     }
     
     // Import and use Twitter poster module (TypeScript)
-    const { postToTwitter } = require('../marketing/twitter/twitter-poster.ts');
+    const { postToTwitter } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
     const result = await postToTwitter({
       apiKey,
       apiSecret,
@@ -4932,7 +4962,7 @@ app.post('/api/marketing/twitter/post-single', async (req, res) => {
     }
     
     // Import and use Twitter poster module (TypeScript)
-    const { postToTwitter } = require('../marketing/twitter/twitter-poster.ts');
+    const { postToTwitter } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
     const result = await postToTwitter({
       apiKey,
       apiSecret,
@@ -5149,7 +5179,7 @@ app.post('/api/marketing/telegram/get-messages', async (req, res) => {
     }
     
     // Import Telegram messages wrapper
-    const { getTelegramMessages } = require('../marketing/telegram/telegram_messages_wrapper.ts');
+    const { getTelegramMessages } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
     
     const result = await getTelegramMessages(
       api_id,
@@ -5197,7 +5227,7 @@ app.post('/api/marketing/telegram/send-message', async (req, res) => {
     }
     
     // Import Telegram messages wrapper
-    const { sendTelegramMessage } = require('../marketing/telegram/telegram_messages_wrapper.ts');
+    const { sendTelegramMessage } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
     
     const result = await sendTelegramMessage(
       api_id,
@@ -5250,7 +5280,7 @@ app.post('/api/marketing/telegram/pin-message', async (req, res) => {
     }
     
     // Import Telegram messages wrapper
-    const { pinTelegramMessage } = require('../marketing/telegram/telegram_messages_wrapper.ts');
+    const { pinTelegramMessage } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
     
     const result = await pinTelegramMessage(
       api_id,
@@ -5296,7 +5326,7 @@ app.post('/api/marketing/telegram/delete-message', async (req, res) => {
     }
     
     // Import Telegram messages wrapper
-    const { deleteTelegramMessage } = require('../marketing/telegram/telegram_messages_wrapper.ts');
+    const { deleteTelegramMessage } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
     
     const result = await deleteTelegramMessage(
       api_id,
@@ -5342,7 +5372,7 @@ app.post('/api/marketing/telegram/get-chat-info', async (req, res) => {
     }
     
     // Import Telegram messages wrapper
-    const { getTelegramChatInfo } = require('../marketing/telegram/telegram_messages_wrapper.ts');
+    const { getTelegramChatInfo } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
     
     const result = await getTelegramChatInfo(
       api_id,
@@ -5429,7 +5459,7 @@ app.post('/api/twitter-accounts/test', async (req, res) => {
     }
     
     // Test credentials by fetching account info
-    const { getTwitterAccountInfo } = require('../marketing/twitter/twitter-poster.ts');
+    const { getTwitterAccountInfo } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
     const result = await getTwitterAccountInfo({
       apiKey,
       apiSecret,
@@ -5456,7 +5486,7 @@ app.post('/api/twitter-accounts', async (req, res) => {
     }
     
     // Test credentials first
-    const { getTwitterAccountInfo } = require('../marketing/twitter/twitter-poster.ts');
+    const { getTwitterAccountInfo } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
     const testResult = await getTwitterAccountInfo({
       apiKey,
       apiSecret,
@@ -5591,7 +5621,7 @@ app.post('/api/telegram-accounts/test', async (req, res) => {
     }
     
     // Test credentials by getting "me" info
-    const { executeTelegramAction } = require('../marketing/telegram/telegram_messages_wrapper.ts');
+    const { executeTelegramAction } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
     
     // We'll use a simple get_chat_info call to test connectivity
     // Note: This requires the account to be authorized already

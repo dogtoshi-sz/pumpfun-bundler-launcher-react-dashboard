@@ -1,7 +1,21 @@
 // FAST wrapper - uses direct require instead of spawning processes
 // Register ts-node once at startup for direct TypeScript imports
 const path = require('path');
-const projectRoot = path.join(__dirname, '..');
+const fs = require('fs');
+
+// Determine project root - handles both local and Railway deployments
+const getProjectRoot = () => {
+  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
+  if (isRailway) {
+    const parentSrc = path.join(__dirname, '..', 'src');
+    if (fs.existsSync(parentSrc)) {
+      return path.join(__dirname, '..');
+    }
+    return __dirname;
+  }
+  return path.join(__dirname, '..');
+};
+const projectRoot = getProjectRoot();
 
 // Register ts-node/esm loader for TypeScript imports
 require('ts-node').register({
