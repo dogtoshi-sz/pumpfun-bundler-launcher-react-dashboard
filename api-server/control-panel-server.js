@@ -129,6 +129,27 @@ const SAFE_ENDPOINTS = [
   '/api/bundles/create-unsigned',
   '/api/bundles/sell-unsigned',
   '/api/bundles/submit-sells',
+  // Warming wallets - needed for production
+  '/api/warming-wallets',
+  '/api/warm-wallets',
+  // Settings & config (read-only in production)
+  '/api/settings',
+  '/api/token-configs',
+  '/api/deployer-wallet',
+  '/api/next-pump-address',
+  '/api/current-run',
+  '/api/holder-wallets',
+  '/api/launch-wallet-info',
+  // AI features
+  '/api/ai/',
+  // Dune analytics
+  '/api/dune/',
+  // Launch endpoints (use hot wallet key in production)
+  '/api/launch-token',
+  '/api/quick-launch-token',
+  '/api/rapid-launch',
+  // Auto-sell config
+  '/api/auto-sell/',
 ];
 
 // Health check endpoint (always allowed)
