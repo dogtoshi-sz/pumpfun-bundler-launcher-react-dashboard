@@ -41,6 +41,7 @@ import {
 import apiService from '../services/api';
 import AIContentGenerator from './AIContentGenerator';
 import AutoSellConfig from './AutoSellConfig';
+import FundingWallet from './FundingWallet';
 
 // Compact Info Tooltip Component with enhanced styling
 const InfoTooltip = ({ content, type = 'default' }) => {
@@ -2639,6 +2640,14 @@ export default function TokenLaunch({ onLaunch }) {
           )}
         </div>
       </div>
+
+      {/* 🔥 Funding Wallet - Connect Phantom or use Private Key */}
+      <FundingWallet 
+        className="mb-4"
+        onWalletReady={(wallet) => {
+          console.log('[TokenLaunch] Hot wallet ready:', wallet.address, 'Balance:', wallet.balance);
+        }}
+      />
 
       {/* Launch Mode Toggle */}
       <div className="mb-4 p-3 bg-gray-800/30 border border-gray-700/50 rounded-lg">
