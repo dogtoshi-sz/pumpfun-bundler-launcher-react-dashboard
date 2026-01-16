@@ -1661,7 +1661,6 @@ export default function TokenLaunch({ onLaunch }) {
             telegram: settings.TELEGRAM || '',
             twitter: settings.TWITTER || '',
             description: settings.DESCRIPTION || '',
-            chain: 'solana',
             create_group: settings.TELEGRAM_CREATE_GROUP !== 'false',
             create_channel: settings.TELEGRAM_CREATE_CHANNEL === 'true',
             channel_username: settings.TELEGRAM_CHANNEL_USERNAME || '',
@@ -1969,7 +1968,6 @@ export default function TokenLaunch({ onLaunch }) {
             telegram: settings.TELEGRAM || '',
             twitter: settings.TWITTER || '',
             description: settings.DESCRIPTION || '',
-            chain: 'solana',
             tokenImageBase64: tokenImageBase64,
           },
         })

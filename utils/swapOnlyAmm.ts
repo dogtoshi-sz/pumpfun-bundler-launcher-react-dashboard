@@ -24,8 +24,16 @@ const JITO_TIP_ACCOUNTS = [
   "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD"
 ]
 
-// Minimum Jito tip for Helius Sender (0.0002 SOL)
-const JITO_TIP_LAMPORTS = 200_000 // 0.0002 SOL
+// Jito tip range for Helius Sender - randomized to avoid detection
+// Range: 5,000 - 50,000 lamports (0.000005 - 0.00005 SOL)
+// Kept very low so total fee (priority + tip) stays under 0.0001 SOL for normal trades
+const JITO_TIP_MIN = 5_000 // 0.000005 SOL minimum
+const JITO_TIP_MAX = 50_000 // 0.00005 SOL maximum
+
+// Get random Jito tip amount within range
+const getRandomJitoTip = (): number => {
+  return JITO_TIP_MIN + Math.floor(Math.random() * (JITO_TIP_MAX - JITO_TIP_MIN))
+}
 
 // Get RPC connection for ALT lookups
 const getRpcEndpoint = () => process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com'
@@ -52,12 +60,13 @@ const addJitoTipToTransaction = async (
       addressLookupTableAccounts: altAccounts,
     })
     
-    // Add Jito tip instruction
+    // Add Jito tip instruction with randomized amount to avoid detection
     const tipAccount = new PublicKey(JITO_TIP_ACCOUNTS[Math.floor(Math.random() * JITO_TIP_ACCOUNTS.length)])
+    const jitoTipAmount = getRandomJitoTip()
     const tipIx = SystemProgram.transfer({
       fromPubkey: wallet.publicKey,
       toPubkey: tipAccount,
-      lamports: JITO_TIP_LAMPORTS,
+      lamports: jitoTipAmount,
     })
     decompiledMessage.instructions.push(tipIx)
     
@@ -145,31 +154,36 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
 
 export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: number, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra') => {
   // Use provided priority fee or add random variation to avoid looking botted
-  // If no fee provided, use base fee + random variation (0-50,000 lamports)
-  // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
+  // Each tier has different variance to look organic:
+  // - ULTRA/HIGH: Speed matters, small ±2-5% variation
+  // - MEDIUM: ±10-20% variation for more randomness
+  // - LOW/NORMAL: Wide range from 1,000 to 75,000 lamports (0.000001 to 0.000075 SOL)
+  // - NONE: Minimal 100-5,000 lamports (almost free, just to vary)
   let feeToUse: number
   if (priorityFeeLamports !== undefined) {
-    // Add proportional variation based on fee level:
-    // - HIGH fees (5M+): ±2% variation (still very high, just slightly varied)
-    // - MEDIUM fees (500k+): ±5% variation (still medium-high, slightly varied)
-    // - LOW fees (<500k): ±50k lamports flat variation (low but varied)
-    if (priorityFeeLamports >= 5_000_000) {
-      // HIGH: ±2% variation
-      const variationPercent = (Math.random() * 0.04 - 0.02) // -2% to +2%
+    if (originalFeeLevel === 'none') {
+      // NONE: Very minimal but still varied (100 to 5,000 lamports = 0.0000001 to 0.000005 SOL)
+      feeToUse = 100 + Math.floor(Math.random() * 4900)
+    } else if (priorityFeeLamports >= 5_000_000) {
+      // ULTRA: ±2% variation (speed critical)
+      const variationPercent = (Math.random() * 0.04 - 0.02)
       feeToUse = Math.floor(priorityFeeLamports * (1 + variationPercent))
-    } else if (priorityFeeLamports >= 500_000) {
-      // MEDIUM: ±5% variation
-      const variationPercent = (Math.random() * 0.10 - 0.05) // -5% to +5%
+    } else if (priorityFeeLamports >= 1_000_000) {
+      // HIGH: ±5% variation
+      const variationPercent = (Math.random() * 0.10 - 0.05)
+      feeToUse = Math.floor(priorityFeeLamports * (1 + variationPercent))
+    } else if (priorityFeeLamports >= 100_000) {
+      // MEDIUM: ±20% variation for more organic look
+      const variationPercent = (Math.random() * 0.40 - 0.20)
       feeToUse = Math.floor(priorityFeeLamports * (1 + variationPercent))
     } else {
-      // LOW: Flat 0-50k variation (for very low fees)
-      const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-      feeToUse = priorityFeeLamports + variation
+      // LOW/NORMAL: Wide random range (1,000 to 75,000 lamports)
+      // This gives fees between 0.000001 and 0.000075 SOL - very cheap and varied
+      feeToUse = 1000 + Math.floor(Math.random() * 74000)
     }
   } else {
-    const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 0
-    const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-    feeToUse = baseFee + variation
+    // Default: random between 1,000 and 50,000 lamports (organic low fee)
+    feeToUse = 1000 + Math.floor(Math.random() * 49000)
   }
   try {
     const publicKey = btoa(wallet.secretKey.toString())
@@ -224,32 +238,36 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
 export const getSellTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, amount: string, priorityFeeLamports?: number, originalFeeLevel?: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra') => {
   try {
     // Use provided priority fee or add random variation to avoid looking botted
-    // If no fee provided, use base fee + random variation (0-50,000 lamports)
-    // Jupiter defaults to ~800k lamports (0.0008 SOL), so we vary between 0-50k to stay low but varied
-    // This makes each trade have slightly different fees (looks more natural)
+    // Each tier has different variance to look organic:
+    // - ULTRA/HIGH: Speed matters, small ±2-5% variation
+    // - MEDIUM: ±10-20% variation for more randomness
+    // - LOW/NORMAL: Wide range from 1,000 to 75,000 lamports (0.000001 to 0.000075 SOL)
+    // - NONE: Minimal 100-5,000 lamports (almost free, just to vary)
     let feeToUse: number
     if (priorityFeeLamports !== undefined) {
-      // Add proportional variation based on fee level:
-      // - HIGH fees (5M+): ±2% variation (still very high, just slightly varied)
-      // - MEDIUM fees (500k+): ±5% variation (still medium-high, slightly varied)
-      // - LOW fees (<500k): ±50k lamports flat variation (low but varied)
-      if (priorityFeeLamports >= 5_000_000) {
-        // HIGH: ±2% variation
-        const variationPercent = (Math.random() * 0.04 - 0.02) // -2% to +2%
+      if (originalFeeLevel === 'none') {
+        // NONE: Very minimal but still varied (100 to 5,000 lamports = 0.0000001 to 0.000005 SOL)
+        feeToUse = 100 + Math.floor(Math.random() * 4900)
+      } else if (priorityFeeLamports >= 5_000_000) {
+        // ULTRA: ±2% variation (speed critical)
+        const variationPercent = (Math.random() * 0.04 - 0.02)
         feeToUse = Math.floor(priorityFeeLamports * (1 + variationPercent))
-      } else if (priorityFeeLamports >= 500_000) {
-        // MEDIUM: ±5% variation
-        const variationPercent = (Math.random() * 0.10 - 0.05) // -5% to +5%
+      } else if (priorityFeeLamports >= 1_000_000) {
+        // HIGH: ±5% variation
+        const variationPercent = (Math.random() * 0.10 - 0.05)
+        feeToUse = Math.floor(priorityFeeLamports * (1 + variationPercent))
+      } else if (priorityFeeLamports >= 100_000) {
+        // MEDIUM: ±20% variation for more organic look
+        const variationPercent = (Math.random() * 0.40 - 0.20)
         feeToUse = Math.floor(priorityFeeLamports * (1 + variationPercent))
       } else {
-        // LOW: Flat 0-50k variation (for very low fees)
-        const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-        feeToUse = priorityFeeLamports + variation
+        // LOW/NORMAL: Wide random range (1,000 to 75,000 lamports)
+        // This gives fees between 0.000001 and 0.000075 SOL - very cheap and varied
+        feeToUse = 1000 + Math.floor(Math.random() * 74000)
       }
     } else {
-      const baseFee = PRIORITY_FEE_LAMPORTS_LOW || 0
-      const variation = Math.floor(Math.random() * 50000) // 0-50,000 lamports random variation
-      feeToUse = baseFee + variation
+      // Default: random between 1,000 and 50,000 lamports (organic low fee)
+      feeToUse = 1000 + Math.floor(Math.random() * 49000)
     }
     
     // Get quote from Jupiter (fast, no retry wrapper - same as buy)

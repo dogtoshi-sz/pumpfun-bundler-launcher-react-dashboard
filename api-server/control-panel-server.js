@@ -111,12 +111,25 @@ app.use(cors());
 // 🔒 SECURITY: LOCALHOST ONLY - BLOCK ALL EXTERNAL REQUESTS
 // ============================================================
 app.use((req, res, next) => {
-  const ip = req.ip || req.connection.remoteAddress || '';
-  const isLocalhost = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === 'localhost';
+  // Get IP from various possible sources
+  const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0]?.trim() || '';
+  
+  // More robust localhost detection - check if IP contains localhost patterns
+  const isLocalhost = 
+    ip === '127.0.0.1' || 
+    ip === '::1' || 
+    ip === '::ffff:127.0.0.1' || 
+    ip === 'localhost' ||
+    ip.startsWith('127.') ||
+    ip.startsWith('::ffff:127.') ||
+    ip.includes('localhost') ||
+    ip === '' || // Empty IP usually means localhost
+    req.headers.host?.includes('localhost') ||
+    req.headers.host?.includes('127.0.0.1');
   
   // Also check X-Forwarded-For header (for reverse proxies like ngrok)
   const forwardedFor = req.headers['x-forwarded-for'];
-  const isFromNgrok = forwardedFor && forwardedFor.length > 0;
+  const isFromNgrok = forwardedFor && forwardedFor.length > 0 && !forwardedFor.includes('127.0.0.1') && !forwardedFor.includes('localhost');
   
   // BLOCK ALL EXTERNAL REQUESTS (including via ngrok)
   if (isFromNgrok) {
@@ -128,9 +141,10 @@ app.use((req, res, next) => {
   }
   
   if (!isLocalhost) {
-    console.warn(`🚨 BLOCKED EXTERNAL REQUEST: ${req.method} ${req.path} from ${ip}`);
+    console.warn(`🚨 BLOCKED EXTERNAL REQUEST: ${req.method} ${req.path} from IP: ${ip}, Host: ${req.headers.host}`);
     return res.status(403).json({ 
-      error: 'Access denied. This API is localhost-only for security.' 
+      error: 'Access denied. This API is localhost-only for security.',
+      debug: { ip, host: req.headers.host }
     });
   }
   
@@ -1616,22 +1630,61 @@ app.get('/api/next-pump-address', (req, res) => {
     // Priority 2: Pump address pool
     if (!address) {
       try {
-        const pumpAddressesPath = path.join(__dirname, '..', 'keys', 'pump-addresses.json');
-        if (fs.existsSync(pumpAddressesPath)) {
-          const data = fs.readFileSync(pumpAddressesPath, 'utf-8');
+        const projectRoot = path.join(__dirname, '..');
+        const pumpAddressesPath = path.join(projectRoot, 'keys', 'pump-addresses.json');
+        const absolutePath = path.resolve(pumpAddressesPath);
+        console.log('[Next Pump Address] Checking pump-addresses.json');
+        console.log('[Next Pump Address] Project root:', projectRoot);
+        console.log('[Next Pump Address] Resolved path:', absolutePath);
+        console.log('[Next Pump Address] File exists:', fs.existsSync(absolutePath));
+        
+        if (fs.existsSync(absolutePath)) {
+          const data = fs.readFileSync(absolutePath, 'utf-8');
           const addresses = JSON.parse(data);
+          console.log('[Next Pump Address] ✅ Loaded', addresses.length, 'addresses from file');
           
-          const available = addresses.find((addr) => 
-            addr.status === 'available' && !addr.used
-          );
-          
-          if (available) {
-            address = available.publicKey;
-            source = 'Pump address pool (pump-addresses.json)';
+          if (!Array.isArray(addresses)) {
+            console.error('[Next Pump Address] ❌ File is not an array, got:', typeof addresses);
+          } else {
+            const available = addresses.find((addr) => {
+              const isAvailable = addr.status === 'available' && addr.used === false;
+              if (!isAvailable && addresses.indexOf(addr) < 3) {
+                console.log('[Next Pump Address] Address', addresses.indexOf(addr), 'not available:', { 
+                  status: addr.status, 
+                  used: addr.used, 
+                  type: typeof addr.used 
+                });
+              }
+              return isAvailable;
+            });
+            
+            console.log('[Next Pump Address] Available address found:', !!available);
+            if (available) {
+              address = available.publicKey;
+              source = 'Pump address pool (pump-addresses.json)';
+              console.log('[Next Pump Address] ✅ Using address:', address);
+            } else {
+              console.log('[Next Pump Address] ❌ No available addresses found. Sample:', 
+                addresses.slice(0, 3).map(a => ({ 
+                  publicKey: a.publicKey?.substring(0, 20) + '...', 
+                  status: a.status, 
+                  used: a.used,
+                  usedType: typeof a.used
+                }))
+              );
+            }
           }
+        } else {
+          console.log('[Next Pump Address] ❌ File does not exist at:', absolutePath);
+          // Try alternative paths
+          const altPath1 = path.join(process.cwd(), 'keys', 'pump-addresses.json');
+          const altPath2 = path.join(__dirname, '..', '..', 'keys', 'pump-addresses.json');
+          console.log('[Next Pump Address] Trying alternative path 1:', altPath1, 'exists:', fs.existsSync(altPath1));
+          console.log('[Next Pump Address] Trying alternative path 2:', altPath2, 'exists:', fs.existsSync(altPath2));
         }
       } catch (error) {
-        console.error('[Next Pump Address] Error reading pump-addresses.json:', error);
+        console.error('[Next Pump Address] ❌ Error reading pump-addresses.json:', error);
+        console.error('[Next Pump Address] Error stack:', error.stack);
       }
     }
     
@@ -2619,7 +2672,24 @@ app.get('/api/launch-wallet-info', async (req, res) => {
     
     // Get wallet addresses (public keys only)
     // Use top-level base58 import (handles bs58 v6 export format)
-    const fundingWalletKp = Keypair.fromSecretKey(base58.decode(env.PRIVATE_KEY));
+    if (!env.PRIVATE_KEY || env.PRIVATE_KEY.trim() === '') {
+      return res.status(400).json({
+        error: 'PRIVATE_KEY is not set in .env file',
+        message: 'Please set PRIVATE_KEY in your .env file to use the launch wallet features.'
+      });
+    }
+    
+    let fundingWalletKp;
+    try {
+      fundingWalletKp = Keypair.fromSecretKey(base58.decode(env.PRIVATE_KEY));
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid PRIVATE_KEY format',
+        message: 'PRIVATE_KEY must be a valid base58-encoded secret key (64 bytes).',
+        details: error.message
+      });
+    }
+    
     const fundingWalletAddress = fundingWalletKp.publicKey.toBase58();
     
     // Get funding wallet balance
@@ -2647,7 +2717,16 @@ app.get('/api/launch-wallet-info', async (req, res) => {
       creatorDevPrivateKey = env.PRIVATE_KEY; // Will be shortened later
     } else if (env.BUYER_WALLET && env.BUYER_WALLET.trim() !== '') {
       // PRIORITY 1: Check if BUYER_WALLET is set in .env - if yes, use it
-      const creatorKp = Keypair.fromSecretKey(base58.decode(env.BUYER_WALLET));
+      let creatorKp;
+      try {
+        creatorKp = Keypair.fromSecretKey(base58.decode(env.BUYER_WALLET));
+      } catch (error) {
+        return res.status(400).json({
+          error: 'Invalid BUYER_WALLET format',
+          message: 'BUYER_WALLET must be a valid base58-encoded secret key (64 bytes).',
+          details: error.message
+        });
+      }
       const creatorBalance = await connection.getBalance(creatorKp.publicKey);
       creatorDevWallet = {
         address: creatorKp.publicKey.toBase58(),
@@ -2672,6 +2751,14 @@ app.get('/api/launch-wallet-info', async (req, res) => {
         }
       }
       
+      // CRITICAL: If USE_FUNDING_AS_BUYER=false and the stored wallet key is the same as PRIVATE_KEY,
+      // ignore it and treat as if no wallet exists (will create fresh wallet)
+      // This ensures we don't reuse the funding wallet when user wants a separate dev wallet
+      if (creatorDevWalletKey && !useFundingAsBuyer && creatorDevWalletKey === env.PRIVATE_KEY) {
+        console.log('[Launch Wallet Info] creatorDevWalletKey matches PRIVATE_KEY and USE_FUNDING_AS_BUYER=false - will create fresh wallet');
+        creatorDevWalletKey = null; // Ignore it, treat as if no wallet exists
+      }
+      
       if (creatorDevWalletKey) {
         // Use previously auto-created wallet from current-run.json
         const creatorKp = Keypair.fromSecretKey(base58.decode(creatorDevWalletKey));
@@ -2680,7 +2767,7 @@ app.get('/api/launch-wallet-info', async (req, res) => {
           address: creatorKp.publicKey.toBase58(),
           source: 'creatorDevWalletKey from current-run.json (auto-created in previous launch)',
           balance: creatorBalance / 1e9,
-          isAutoCreated: false
+          isAutoCreated: false // This is an existing wallet, but funding logic will handle it
         };
         creatorDevPrivateKey = creatorDevWalletKey; // Will be shortened later
       } else {
@@ -2811,13 +2898,27 @@ app.get('/api/launch-wallet-info', async (req, res) => {
     } else if (creatorDevWallet.isAutoCreated && !warmedCreatorAddress) {
       // Auto-created wallet (no warmed wallet selected): need to fund it fully
       creatorDevSolNeeded = creatorRequiredAmount;
-    } else {
-      // Existing wallet or warmed wallet: check if it needs funding
+    } else if (!useFundingAsBuyer && !warmedCreatorAddress) {
+      // IMPORTANT: When USE_FUNDING_AS_BUYER=false and no warmed wallet selected,
+      // we need to fund the DEV wallet fully, even if it exists from a previous launch
+      // This ensures the wallet has enough SOL for the buyer amount
+      // The wallet might have been used/drained in previous launches
       if (effectiveCreatorBalance < creatorRequiredAmount) {
         // Need to top up the wallet to cover the buy + buffer
         creatorDevSolNeeded = creatorRequiredAmount - effectiveCreatorBalance;
+      } else {
+        // Wallet already has enough balance - no additional funding needed
+        creatorDevSolNeeded = 0;
       }
-      // If wallet has enough balance, no funding needed from master wallet
+    } else {
+      // Warmed wallet selected: check if it needs funding
+      if (effectiveCreatorBalance < creatorRequiredAmount) {
+        // Need to top up the wallet to cover the buy + buffer
+        creatorDevSolNeeded = creatorRequiredAmount - effectiveCreatorBalance;
+      } else {
+        // Wallet has enough balance - no funding needed
+        creatorDevSolNeeded = 0;
+      }
     }
     
     // Update creatorDevWallet info if warmed
