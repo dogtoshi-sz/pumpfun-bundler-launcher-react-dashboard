@@ -2,25 +2,18 @@ import { useState, useEffect, useCallback } from 'react';
 import { 
   RocketLaunchIcon, 
   UserGroupIcon, 
-  BeakerIcon, 
   Cog6ToothIcon,
   LockClosedIcon,
   CubeIcon,
   CpuChipIcon,
   BellIcon,
-  Squares2X2Icon,
   UserIcon,
-  ChatBubbleLeftRightIcon,
-  XMarkIcon,
   MegaphoneIcon,
-  SparklesIcon,
-  ChartBarIcon,
   ArrowTrendingUpIcon
 } from '@heroicons/react/24/outline';
 import { 
   RocketLaunchIcon as RocketLaunchIconSolid,
   UserGroupIcon as UserGroupIconSolid,
-  BeakerIcon as BeakerIconSolid,
   Cog6ToothIcon as Cog6ToothIconSolid,
   LockClosedIcon as LockClosedIconSolid,
   CubeIcon as CubeIconSolid,
@@ -31,12 +24,7 @@ import {
 import TokenLaunch from './components/TokenLaunch';
 import HolderWallets from './components/HolderWallets';
 import Settings from './components/Settings';
-import WalletTester from './components/WalletTester';
 import WalletWarming from './components/WalletWarming';
-import MarketingWidget from './components/MarketingWidget';
-import DuneDataWidget from './components/DuneDataWidget';
-import PumpPortalTest from './components/PumpPortalTest';
-import QuickSetup from './components/QuickSetup';
 import { TrendDetector } from './components/trend-detector';
 import { useLaunchScore } from './hooks/useLaunchScore';
 import FundingWallet from './components/FundingWallet';
@@ -164,12 +152,10 @@ function App() {
 
   const tabs = [
     { id: 'launch', name: 'Launch', icon: RocketLaunchIcon, iconSolid: RocketLaunchIconSolid, component: TokenLaunch },
+    { id: 'holders', name: 'Trading Terminal', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
     { id: 'trends', name: 'Trends', icon: ArrowTrendingUpIcon, iconSolid: ArrowTrendingUpIconSolid, component: TrendDetector },
-    { id: 'holders', name: 'Terminal', icon: UserGroupIcon, iconSolid: UserGroupIconSolid, component: HolderWallets },
-    { id: 'warming', name: 'Warming', icon: CpuChipIcon, iconSolid: CpuChipIconSolid, component: WalletWarming },
+    { id: 'warming', name: 'Wallets', icon: CpuChipIcon, iconSolid: CpuChipIconSolid, component: WalletWarming },
     { id: 'pnl', name: 'PnL', icon: null, iconSolid: null, component: null, isExternal: true, url: 'http://localhost:3001/profit-loss' },
-    { id: 'setup', name: '⚡ Setup', icon: SparklesIcon, iconSolid: SparklesIcon, component: QuickSetup },
-    { id: 'pptest', name: '🧪 Test', icon: BeakerIcon, iconSolid: BeakerIconSolid, component: PumpPortalTest },
     { id: 'settings', name: 'Settings', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid, component: Settings },
   ];
 
