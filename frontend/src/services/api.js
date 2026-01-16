@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { isProductionMode } from './productionMode';
+import { getHotWalletPrivateKey, getHotWalletAddress } from './hotWallet';
 
 // In production, use the full API URL. In development, use relative /api path
 const API_BASE = import.meta.env.VITE_API_URL 
@@ -11,6 +13,29 @@ const api = axios.create({
   baseURL: API_BASE,
   timeout: 30000,
 });
+
+/**
+ * In PRODUCTION mode, attach the hot wallet private key to requests
+ * that need signing. The server will use this key instead of .env PRIVATE_KEY
+ */
+const attachHotWalletKey = (data = {}) => {
+  if (isProductionMode()) {
+    const hotWalletKey = getHotWalletPrivateKey();
+    const hotWalletAddress = getHotWalletAddress();
+    if (hotWalletKey) {
+      console.log('[API] 🔥 Production mode: Using Hot Wallet for signing');
+      return {
+        ...data,
+        _hotWalletKey: hotWalletKey,
+        _hotWalletAddress: hotWalletAddress,
+        _isProductionMode: true
+      };
+    } else {
+      console.warn('[API] ⚠️ Production mode but no Hot Wallet set up!');
+    }
+  }
+  return data;
+};
 
 export const apiService = {
   // Settings
@@ -26,11 +51,11 @@ export const apiService = {
     });
   },
   
-  // Token launch
-  launchToken: (data = {}) => api.post('/launch-token', data),
-  quickLaunchToken: (data = {}) => api.post('/quick-launch-token', data),
-  // Rapid Launch - passes all data directly, doesn't use .env
-  rapidLaunch: (data) => api.post('/rapid-launch', data, { timeout: 120000 }),
+  // Token launch - in production, uses Hot Wallet
+  launchToken: (data = {}) => api.post('/launch-token', attachHotWalletKey(data)),
+  quickLaunchToken: (data = {}) => api.post('/quick-launch-token', attachHotWalletKey(data)),
+  // Rapid Launch - passes all data directly, uses Hot Wallet in production
+  rapidLaunch: (data) => api.post('/rapid-launch', attachHotWalletKey(data), { timeout: 120000 }),
   getNextPumpAddress: () => api.get('/next-pump-address'),
   
   // Deployer wallet

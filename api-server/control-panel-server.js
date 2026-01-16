@@ -946,6 +946,14 @@ app.post('/api/launch-token', async (req, res) => {
     const envPath = path.join(projectRoot, '.env');
     const currentRunPath = path.join(projectRoot, 'keys', 'current-run.json');
     
+    // Check for production mode with hot wallet key
+    const { _hotWalletKey, _hotWalletAddress, _isProductionMode } = req.body || {};
+    const isProductionLaunch = _isProductionMode && _hotWalletKey;
+    
+    if (isProductionLaunch) {
+      console.log(`[Launch] 🔥 PRODUCTION MODE - Using Hot Wallet: ${_hotWalletAddress?.slice(0, 8)}...`);
+    }
+    
     // Verify .env file exists and is readable
     if (!fs.existsSync(envPath)) {
       return res.status(500).json({ 
@@ -1283,13 +1291,23 @@ app.post('/api/launch-token', async (req, res) => {
     // Execute npm start in background
     // Use the same working directory as terminal would use
     // The child process (index.ts) will reload .env with dotenv.config({ override: true })
+    
+    // Build environment - in production mode, use hot wallet key
+    const childEnv = {
+      ...process.env, // Inherit parent environment
+      // Ensure NODE_ENV and other important vars are set
+      NODE_ENV: process.env.NODE_ENV || 'development'
+    };
+    
+    // PRODUCTION MODE: Override PRIVATE_KEY with hot wallet key
+    if (isProductionLaunch && _hotWalletKey) {
+      childEnv.PRIVATE_KEY = _hotWalletKey;
+      console.log(`[Launch] 🔥 Using Hot Wallet as funding wallet (production mode)`);
+    }
+    
     const childProcess = exec('npm start', { 
       cwd: projectRoot, // Same directory as running "npm start" from terminal
-      env: {
-        ...process.env, // Inherit parent environment
-        // Ensure NODE_ENV and other important vars are set
-        NODE_ENV: process.env.NODE_ENV || 'development'
-      },
+      env: childEnv,
       // Capture output for streaming
     });
     
@@ -1355,8 +1373,18 @@ app.post('/api/rapid-launch', async (req, res) => {
       website, 
       imageUrl,
       imagePath,
-      devBuyAmount = 0.5 
+      devBuyAmount = 0.5,
+      _hotWalletKey,
+      _hotWalletAddress,
+      _isProductionMode
     } = req.body;
+    
+    // Check for production mode with hot wallet key
+    const isProductionLaunch = _isProductionMode && _hotWalletKey;
+    
+    if (isProductionLaunch) {
+      console.log(`[Rapid Launch] 🔥 PRODUCTION MODE - Using Hot Wallet: ${_hotWalletAddress?.slice(0, 8)}...`);
+    }
 
     if (!name || !symbol) {
       return res.status(400).json({ 
@@ -1420,6 +1448,12 @@ app.post('/api/rapid-launch', async (req, res) => {
       ENABLE_TWITTER_POSTING: 'false', // Disable for rapid launch
       QUICK_LAUNCH_AUTO_CONFIRM: 'true',
     };
+    
+    // PRODUCTION MODE: Override PRIVATE_KEY with hot wallet key
+    if (isProductionLaunch && _hotWalletKey) {
+      launchEnv.PRIVATE_KEY = _hotWalletKey;
+      console.log(`[Rapid Launch] 🔥 Using Hot Wallet as funding wallet (production mode)`);
+    }
 
     console.log(`[Rapid Launch] Token: ${launchEnv.TOKEN_NAME} ($${launchEnv.TOKEN_SYMBOL})`);
 
