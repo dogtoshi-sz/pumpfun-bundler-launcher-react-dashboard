@@ -11,7 +11,4 @@ builder = "nixpacks"
 buildCommand = "npm install && npm run build"
 
 [deploy]
-startCommand = "npx serve dist -s -l 3000"
-
-[service]
-internalPort = 3000
+startCommand = "serve dist -s -l $PORT"
