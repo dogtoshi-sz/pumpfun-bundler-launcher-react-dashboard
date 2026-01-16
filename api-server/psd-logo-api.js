@@ -14,6 +14,21 @@ const fs = require('fs');
 
 const router = express.Router();
 
+// Determine project root - handles both local and Railway deployments
+const getProjectRoot = () => {
+  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
+  if (isRailway) {
+    const parentSrc = path.join(__dirname, '..', 'src');
+    if (fs.existsSync(parentSrc)) {
+      return path.join(__dirname, '..');
+    }
+    return __dirname;
+  }
+  return path.join(__dirname, '..');
+};
+const PROJECT_ROOT = getProjectRoot();
+const projectPath = (...segments) => path.join(PROJECT_ROOT, ...segments);
+
 // Configure multer for PSD file uploads
 const psdStorage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -111,7 +126,7 @@ router.post('/generate', async (req, res) => {
     
     // Use simple logo generator (works with images and fonts, no PSD parsing needed)
     try {
-      const { generateSimpleLogoAsBase64, generateAndSaveSimpleLogo } = require('../src/simple-logo-generator.ts');
+      const { generateSimpleLogoAsBase64, generateAndSaveSimpleLogo } = require(projectPath('src', 'simple-logo-generator.ts'));
       
       const options = {
         tokenName,
@@ -172,7 +187,7 @@ router.post('/generate', async (req, res) => {
  */
 router.get('/alphabet', (req, res) => {
   try {
-    const { listAlphabetLogos } = require('../src/launch-logo-generator.ts');
+    const { listAlphabetLogos } = require(projectPath('src', 'launch-logo-generator.ts'));
     const logos = listAlphabetLogos();
     
     res.json({
@@ -212,7 +227,7 @@ router.post('/generate-launch', async (req, res) => {
     console.log(`[Logo API] Generating launch logos for: ${tokenName || tokenSymbol}`);
     
     try {
-      const { generateLaunchLogos } = require('../src/launch-logo-generator.ts');
+      const { generateLaunchLogos } = require(projectPath('src', 'launch-logo-generator.ts'));
       
       const logos = await generateLaunchLogos({
         tokenName: tokenName || '',
