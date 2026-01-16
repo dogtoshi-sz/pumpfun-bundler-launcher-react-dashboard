@@ -174,3 +174,7 @@ show-keys.js
 **/config.json
 !package.json
 !tsconfig*.json
+
+# Generated images (created by logo generator)
+image/createdlogos/
+logs/

@@ -1570,37 +1570,37 @@ export default function HolderWallets() {
                   </div>
                 </div>
 
-                {/* Buy Buttons - SOL Amounts */}
+                {/* Buy Buttons - SOL Amounts (6 buttons in 2 rows) */}
                 <div className="mb-1.5">
                   <div className="flex items-center gap-1 mb-0.5">
                     <ArrowUpTrayIcon className="w-2.5 h-2.5 text-green-400" />
                     <p className="text-[9px] text-gray-400 font-semibold">Buy SOL</p>
                   </div>
+                  <div className="grid grid-cols-3 gap-0.5 mb-0.5">
+                    {[0.1, 0.2, 0.4].map((amount) => (
+                      <button
+                        key={amount}
+                        onClick={() => handleQuickBuy(wallet, amount)}
+                        disabled={loading[`${wallet.address}-buy-${amount}`] || wallet.solBalance < amount}
+                        className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                        title={`${amount} SOL`}
+                      >
+                        {loading[`${wallet.address}-buy-${amount}`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : amount}
+                      </button>
+                    ))}
+                  </div>
                   <div className="grid grid-cols-3 gap-0.5 mb-1">
-                    <button
-                      onClick={() => handleQuickBuy(wallet, 0.1)}
-                      disabled={loading[`${wallet.address}-buy-0.1`] || wallet.solBalance < 0.1}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
-                      title="0.1 SOL"
-                    >
-                      {loading[`${wallet.address}-buy-0.1`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '0.1'}
-                    </button>
-                    <button
-                      onClick={() => handleQuickBuy(wallet, 0.5)}
-                      disabled={loading[`${wallet.address}-buy-0.5`] || wallet.solBalance < 0.5}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
-                      title="0.5 SOL"
-                    >
-                      {loading[`${wallet.address}-buy-0.5`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '0.5'}
-                    </button>
-                    <button
-                      onClick={() => handleQuickBuy(wallet, 1.0)}
-                      disabled={loading[`${wallet.address}-buy-1.0`] || wallet.solBalance < 1.0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
-                      title="1.0 SOL"
-                    >
-                      {loading[`${wallet.address}-buy-1.0`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '1.0'}
-                    </button>
+                    {[0.5, 0.7, 1.0].map((amount) => (
+                      <button
+                        key={amount}
+                        onClick={() => handleQuickBuy(wallet, amount)}
+                        disabled={loading[`${wallet.address}-buy-${amount}`] || wallet.solBalance < amount}
+                        className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                        title={`${amount} SOL`}
+                      >
+                        {loading[`${wallet.address}-buy-${amount}`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : amount}
+                      </button>
+                    ))}
                   </div>
                   
                   {/* Buy Buttons - Percentage */}

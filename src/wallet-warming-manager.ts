@@ -5,7 +5,7 @@ import { Connection, Keypair, PublicKey, SystemProgram, TransactionMessage, Vers
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
-import { buyTokenSimple, sellTokenSimple, getWalletTokenBalance } from "../trading-terminal"
+import { buyTokenSimple, sellTokenSimple, getWalletTokenBalance } from "../cli/trading-terminal"
 import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "../constants"
 import { sleep } from "../utils"
 import { getCachedTrendingTokens } from "./fetch-trending-tokens"

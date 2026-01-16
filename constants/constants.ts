@@ -178,6 +178,10 @@ export const PRIORITY_FEE_LAMPORTS_MEDIUM = Number(process.env.PRIORITY_FEE_LAMP
 // This is the sweet spot: cheap but fast enough for most use cases
 export const PRIORITY_FEE_LAMPORTS_LOW = Number(process.env.PRIORITY_FEE_LAMPORTS_LOW || '100000')
 
+// MINIMAL priority: Very cheap trades that still look organic - for manual/holder trades
+// Default: 5,000 lamports (0.000005 SOL) - very cheap but adds variance
+export const PRIORITY_FEE_LAMPORTS_MINIMAL = Number(process.env.PRIORITY_FEE_LAMPORTS_MINIMAL || '5000')
+
 // NONE priority: Absolute minimum - no priority fee (slowest but cheapest)
 // Default: 0 lamports (0 SOL) - base transaction fee only (~5-10s confirmation)
 export const PRIORITY_FEE_LAMPORTS_NONE = Number(process.env.PRIORITY_FEE_LAMPORTS_NONE || '0')
