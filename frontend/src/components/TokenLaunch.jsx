@@ -2591,6 +2591,21 @@ export default function TokenLaunch({ onLaunch }) {
     }
   };
 
+  // Scroll to private key section and highlight it
+  const scrollToPrivateKey = () => {
+    // Find the PRIVATE_KEY input section and scroll to it
+    setTimeout(() => {
+      const settingsSection = document.querySelector('[data-section="wallet-config"]');
+      if (settingsSection) {
+        settingsSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        settingsSection.classList.add('ring-2', 'ring-orange-500', 'ring-opacity-75');
+        setTimeout(() => {
+          settingsSection.classList.remove('ring-2', 'ring-orange-500', 'ring-opacity-75');
+        }, 3000);
+      }
+    }, 100);
+  };
+
   return (
     <div className="bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-lg p-4">
       <div className="flex justify-between items-center mb-3">
@@ -2598,37 +2613,48 @@ export default function TokenLaunch({ onLaunch }) {
           <RocketLaunchIconSolid className="w-6 h-6 text-blue-400" />
           <h2 className="text-xl font-bold text-white">Launch Token</h2>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={exportConfigAsJSON}
-            className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
-            title="Export configuration as JSON"
-          >
-            <ArrowDownTrayIcon className="w-4 h-4" />
-          </button>
-          <label className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors cursor-pointer" title="Import configuration from JSON">
-            <ArrowPathIcon className="w-4 h-4" />
-            <input
-              type="file"
-              accept=".json"
-              onChange={importConfigFromJSON}
-              className="hidden"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => {
-              setShowConfigModal(true);
-              loadSavedConfigs();
+        <div className="flex items-center gap-2">
+          {/* 🔥 Compact Funding Wallet Widget */}
+          <FundingWallet 
+            onWalletReady={(wallet) => {
+              console.log('[TokenLaunch] Hot wallet ready:', wallet.address, 'Balance:', wallet.balance);
             }}
-            className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
-            title="Load saved configuration"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-            </svg>
-          </button>
+            onSwitchToPrivateKey={scrollToPrivateKey}
+          />
+          
+          {/* Config buttons */}
+          <div className="flex items-center gap-1 ml-2 border-l border-gray-700 pl-2">
+            <button
+              type="button"
+              onClick={exportConfigAsJSON}
+              className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
+              title="Export configuration as JSON"
+            >
+              <ArrowDownTrayIcon className="w-4 h-4" />
+            </button>
+            <label className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors cursor-pointer" title="Import configuration from JSON">
+              <ArrowPathIcon className="w-4 h-4" />
+              <input
+                type="file"
+                accept=".json"
+                onChange={importConfigFromJSON}
+                className="hidden"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setShowConfigModal(true);
+                loadSavedConfigs();
+              }}
+              className="p-2 bg-gray-800/50 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
+              title="Load saved configuration"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              </svg>
+            </button>
+          </div>
           {savingStatus && (
             <div className={`text-sm px-3 py-1 rounded ${
               savingStatus.startsWith('✅') ? 'bg-green-900/50 text-green-400' : 
@@ -2640,14 +2666,6 @@ export default function TokenLaunch({ onLaunch }) {
           )}
         </div>
       </div>
-
-      {/* 🔥 Funding Wallet - Connect Phantom or use Private Key */}
-      <FundingWallet 
-        className="mb-4"
-        onWalletReady={(wallet) => {
-          console.log('[TokenLaunch] Hot wallet ready:', wallet.address, 'Balance:', wallet.balance);
-        }}
-      />
 
       {/* Launch Mode Toggle */}
       <div className="mb-4 p-3 bg-gray-800/30 border border-gray-700/50 rounded-lg">
@@ -5405,9 +5423,9 @@ export default function TokenLaunch({ onLaunch }) {
 
       {/* Wallet Info & Fee Breakdown */}
       {walletInfo && (
-        <div className="mt-6 space-y-4">
+        <div className="mt-6 space-y-4" data-section="wallet-config">
             {/* Funding Wallet */}
-            <div className="p-4 bg-gray-900/50 rounded-lg border-l-4 border-blue-500">
+            <div className="p-4 bg-gray-900/50 rounded-lg border-l-4 border-blue-500 transition-all duration-300">
               <div className="flex justify-between items-center">
                 <div>
                   <p className="text-sm font-semibold text-blue-400 mb-1 flex items-center gap-2">
