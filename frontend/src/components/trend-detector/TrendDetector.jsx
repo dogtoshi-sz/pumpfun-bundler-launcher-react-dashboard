@@ -363,7 +363,7 @@ export default function TrendDetector({ onCopyToLauncher }) {
                   <CommandLineIcon className="w-4 h-4" />
                   <span>Terminal</span>
                 </div>
-                <code className="text-green-400">cd trend-detector && npm install && npm run dev</code>
+                <code className="text-green-400">cd features/trends && npm install && npm run dev</code>
               </div>
               
               <div className="flex items-center gap-3">

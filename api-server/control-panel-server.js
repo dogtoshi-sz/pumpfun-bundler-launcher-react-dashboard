@@ -4302,7 +4302,7 @@ const DUNE_QUERIES = {
 let aiGenerator = null;
 let generateContentWithBranding = null;
 try {
-  const aiModule = require(projectPath('launch-orchestrator', 'services', 'ai-generator'));
+  const aiModule = require(projectPath('features', 'ai-generator', 'services', 'ai-generator'));
   aiGenerator = aiModule.aiGenerator;
   generateContentWithBranding = aiModule.generateContentWithBranding;
   console.log('[API Server] ✅ AI Generator loaded');
@@ -4322,7 +4322,7 @@ app.post('/api/ai/generate', async (req, res) => {
     if (!aiGenerator) {
       return res.status(500).json({ 
         success: false, 
-        error: 'AI Generator not available. Make sure launch-orchestrator is set up.' 
+        error: 'AI Generator not available. Make sure features/ai-generator is set up.' 
       });
     }
 
@@ -4370,7 +4370,7 @@ app.post('/api/ai/generate-variations', async (req, res) => {
 
     // If generateImages is requested, use the branding-aware function
     if (generateImages) {
-      const { generateVariationsWithBranding } = require(projectPath('launch-orchestrator', 'services', 'ai-generator'));
+      const { generateVariationsWithBranding } = require(projectPath('features', 'ai-generator', 'services', 'ai-generator'));
       const result = await generateVariationsWithBranding(prompt, count, {
         theme,
         forceTemplate,
@@ -9364,7 +9364,7 @@ app.post('/api/private-funding/recover-intermediary', async (req, res) => {
 // TREND DETECTOR - MOVED TO SEPARATE SERVICE
 // =====================================================
 // The Trend Detector is now a standalone service to reduce bundler overhead.
-// Run it separately with: cd trend-detector && npm run dev
+// Run it separately with: cd features/trends && npm run dev
 // It runs on http://localhost:3003
 // The frontend connects directly to that service when enabled.
 // =====================================================
