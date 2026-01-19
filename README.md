@@ -1,12 +1,12 @@
-# 🚀 Trencher Bundler
+# Trencher Bundler
 
 **The ONLY Pump.fun bundler with a full web dashboard.** Launch tokens, manage wallets, auto-sell, and track P&L — all from one page.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎯 Why Trencher Bundler?
+## Why Trencher Bundler?
 
-![Trencher Bundler](docs/images/introimage.png)
+![Trencher Bundler](./docs/images/introimage.png)
 
 Trencher Bundler isn't just another token launcher. We built the most complete bundling solution for Pump.fun that handles everything from launch to profit-taking.
 
@@ -25,25 +25,25 @@ Trencher Bundler isn't just another token launcher. We built the most complete b
 Whether you're launching your first token or managing multiple launches, Trencher Bundler provides the tools and automation you need.
 
 **Connect with us:**
-- 🌐 Website: [trencherbundler.fun](https://trencherbundler.fun)
-- 🐦 Twitter: [@trencherbundler_x](https://x.com/trencherbundler_x)
-- 💬 Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
+- Website: [trencherbundler.fun](https://trencherbundler.fun)
+- Twitter: [@trencherbundler_x](https://x.com/trencherbundler_x)
+- Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
 
-## ✨ Features
+## Features
 
-- **🎯 Single-Page Dashboard** - Complete control from one beautiful UI
-- **⚡ Jito Bundle Execution** - Launch tokens with coordinated buys in the same block
-- **💼 Wallet Management** - Create, warm, and manage unlimited wallets
-- **📊 Real-Time P&L Tracking** - Track profits/losses across all wallets
-- **🤖 Auto-Sell** - Configure automatic selling at price thresholds
-- **⚡ Rapid Sell** - Instantly sell all positions via Jito bundles
-- **🔐 Secure Key Management** - All keys saved locally, never exposed
-- **💾 Fund Recovery** - Built-in tools to recover stuck SOL from failed launches
+- **Single-Page Dashboard** - Complete control from one beautiful UI
+- **Jito Bundle Execution** - Launch tokens with coordinated buys in the same block
+- **Wallet Management** - Create, warm, and manage unlimited wallets
+- **Real-Time P&L Tracking** - Track profits/losses across all wallets
+- **Auto-Sell** - Configure automatic selling at price thresholds
+- **Rapid Sell** - Instantly sell all positions via Jito bundles
+- **Secure Key Management** - All keys saved locally, never exposed
+- **Fund Recovery** - Built-in tools to recover stuck SOL from failed launches
 
-## 📸 Screenshots
+## Screenshots
 
 ### Token Launch Configuration
-![Token Launch](docs/images/tokenlaunch.png)
+![Token Launch](./docs/images/tokenlaunch.png)
 *Configure and launch your token with bundled buys*
 
 **Key Features:**
@@ -55,7 +55,7 @@ Whether you're launching your first token or managing multiple launches, Trenche
 - **Launch Token** - Start the launch process
 
 ### Wallet Management
-![Wallet Management](docs/images/walletmanagement.png)
+![Wallet Management](./docs/images/walletmanagement.png)
 *Create, warm, and manage wallets*
 
 **Key Features:**
@@ -66,7 +66,7 @@ Whether you're launching your first token or managing multiple launches, Trenche
 - **Select Wallets** - Choose which wallets to use for launches
 
 ### DEV, Bundle & Holder Wallet Configuration
-![Wallet Configuration](docs/images/devbundleholderwalletconfig.png)
+![Wallet Configuration](./docs/images/devbundleholderwalletconfig.png)
 *Detailed wallet configuration and auto-sell settings*
 
 **Key Features:**
@@ -81,7 +81,7 @@ Whether you're launching your first token or managing multiple launches, Trenche
 - **MEV Protection** - Enable delays to avoid front-running
 
 ### Trading Terminal
-![Trading Terminal](docs/images/tradingterminal.png)
+![Trading Terminal](./docs/images/tradingterminal.png)
 *Real-time trading, P&L tracking, and position management*
 
 **Key Features:**
@@ -96,7 +96,7 @@ Whether you're launching your first token or managing multiple launches, Trenche
   - **Retry** - Retry failed bundle submission (uses existing wallets)
   - **Relaunch** - Start a completely new launch
 
-## 🛠️ Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -165,9 +165,9 @@ cd ..
    http://localhost:5173
    ```
 
-## 📖 How It Works
+## How It Works
 
-### 🎯 The Bundler System
+### The Bundler System
 
 Trencher Bundler uses **Jito bundles** to coordinate multiple transactions in a single block:
 
@@ -181,7 +181,7 @@ Trencher Bundler uses **Jito bundles** to coordinate multiple transactions in a 
 - **MEV Protection** - Harder for bots to front-run your launch
 - **Speed** - Faster than sending transactions individually
 
-### 🔧 Lookup Tables (LUTs)
+### Lookup Tables (LUTs)
 
 The bundler automatically creates and uses **Address Lookup Tables (LUTs)** to:
 - Reduce transaction size (allows more wallets per bundle)
@@ -190,7 +190,7 @@ The bundler automatically creates and uses **Address Lookup Tables (LUTs)** to:
 
 LUTs are created automatically and extended as needed. You can view them on Solana Explorer.
 
-### 💾 File Structure & Key Management
+### File Structure & Key Management
 
 **All wallet keys are saved locally in the `keys/` directory:**
 
@@ -210,20 +210,20 @@ keys/
 ```
 
 **Critical Security Notes:**
-- ✅ The `keys/` folder is **gitignored** by default
-- ✅ All keys are stored **locally only** - never sent anywhere
-- ✅ Keys are saved **immediately** after wallet creation
-- 🔐 **ALL private keys are automatically saved to `archive.txt`** - This includes:
+- The `keys/` folder is **gitignored** by default
+- All keys are stored **locally only** - never sent anywhere
+- Keys are saved **immediately** after wallet creation
+- **ALL private keys are automatically saved to `archive.txt`** - This includes:
   - Bundle wallet keys
   - Holder wallet keys
   - DEV wallet keys
   - **Intermediary wallet keys** (during privacy routing)
   - **Mixing wallet keys** (during cross-chain operations)
-- ⚠️ **If anything fails during cross-chain mixing or intermediary wallet operations, your keys are safely stored in `archive.txt`**
-- ⚠️ **Backup your `keys/` folder regularly!**
-- ⚠️ **Never commit or share your `.env` file or `keys/` folder**
+- **If anything fails during cross-chain mixing or intermediary wallet operations, your keys are safely stored in `archive.txt`**
+- **Backup your `keys/` folder regularly!**
+- **Never commit or share your `.env` file or `keys/` folder**
 
-### 🔄 How Wallets Are Saved
+### How Wallets Are Saved
 
 **During Launch:**
 1. Wallets are created and **immediately saved** to `data.json`
@@ -241,7 +241,7 @@ keys/
 - **Holder Wallets** - Wallets for post-launch trading
 - **Intermediary Wallets** - Privacy routing wallets (if enabled)
 
-### 💰 Recovering Stuck Funds
+### Recovering Stuck Funds
 
 If a launch fails or you need to recover SOL from wallets:
 
@@ -273,9 +273,9 @@ npm run recovery-center
 Interactive menu to recover from specific wallet types.
 
 **What Gets Recovered:**
-- ✅ Native SOL (withdrawable balance)
-- ✅ Token account rent (when closing empty token accounts)
-- ⚠️ Leaves rent-exempt balance (can't withdraw to zero)
+- Native SOL (withdrawable balance)
+- Token account rent (when closing empty token accounts)
+- Leaves rent-exempt balance (can't withdraw to zero)
 
 **Note:** The gather scripts automatically:
 - Check wallet balances
@@ -283,7 +283,7 @@ Interactive menu to recover from specific wallet types.
 - Transfer SOL back to your main funding wallet
 - Show detailed recovery summary
 
-## 🎮 Usage Guide
+## Usage Guide
 
 ### Launching a Token
 
@@ -316,7 +316,7 @@ npm run rapid-sell
 
 Or use the "Sell All" button in the Trading Terminal.
 
-## 🎯 Button Reference Guide
+## Button Reference Guide
 
 ### Launch Token Page
 
@@ -421,7 +421,7 @@ Or use the "Sell All" button in the Trading Terminal.
 - **Security:** Never share or commit this
 - **Used for:** Funding all wallets and receiving recovered SOL
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 trencher-bundler/
@@ -446,7 +446,7 @@ trencher-bundler/
 └── index.ts             # Main launch script
 ```
 
-## ⚙️ Configuration Options
+## Configuration Options
 
 See `.env.example` for all available options. Key settings:
 
@@ -465,7 +465,7 @@ AUTO_GATHER=true                   # Auto gather SOL after rapid sell
 WEBSOCKET_TRACKING_ENABLED=true    # Real-time trade tracking
 ```
 
-## 🔐 Security Best Practices
+## Security Best Practices
 
 1. **Never commit sensitive files:**
    - `.env` (contains private keys)
@@ -484,7 +484,7 @@ WEBSOCKET_TRACKING_ENABLED=true    # Real-time trade tracking
    - Start with 0.1 SOL test launches
    - Verify everything works before larger launches
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Launch Fails / Bundle Doesn't Land
 
@@ -518,11 +518,11 @@ If some bundle buys aren't showing:
 3. Check browser console for errors
 4. Verify ports 3001 (API) and 5173 (frontend) are available
 
-## 🗺️ Roadmap
+## Roadmap
 
 We're constantly improving Trencher Bundler. Here's what's on the horizon:
 
-### 🔜 Upcoming Features
+### Upcoming Features
 
 - **Multi-Bundle P&L Tracking** - Track profit/loss across multiple simultaneous launches with detailed analytics and reporting
 
@@ -540,25 +540,25 @@ We're constantly improving Trencher Bundler. Here's what's on the horizon:
 
 Got a feature request? [Open an issue](https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard/issues) or reach out on [Telegram](https://t.me/dogtoshi_x).
 
-## 📝 License
+## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-## 🤝 Contributing
+## Contributing
 
 Contributions welcome! Please open an issue or pull request.
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 This software is provided "as is" without warranty. Use at your own risk. Always test with small amounts first. The authors are not responsible for any losses.
 
-## 📞 Support & Links
+## Support & Links
 
-- 🌐 **Website:** [trencherbundler.fun](https://trencherbundler.fun)
-- 🐦 **Twitter:** [@trencherbundler_x](https://x.com/trencherbundler_x)
-- 💬 **Telegram:** [@dogtoshi_x](https://t.me/dogtoshi_x)
-- 📧 **Issues:** [GitHub Issues](https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard/issues)
-- 📖 **Documentation:** Check this README and `.env.example` comments
+- **Website:** [trencherbundler.fun](https://trencherbundler.fun)
+- **Twitter:** [@trencherbundler_x](https://x.com/trencherbundler_x)
+- **Telegram:** [@dogtoshi_x](https://t.me/dogtoshi_x)
+- **Issues:** [GitHub Issues](https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard/issues)
+- **Documentation:** Check this README and `.env.example` comments
 
 ---
 
