@@ -179,6 +179,12 @@ show-keys.js
 image/createdlogos/
 logs/
 
+# Allow README documentation images
+!docs/images/
+!docs/images/*.png
+!docs/images/*.jpg
+!docs/images/*.jpeg
+
 # ============================================================
 # 🔒 EXTRA SECURITY - NEVER COMMIT THESE
 # ============================================================
