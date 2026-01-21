@@ -1719,7 +1719,7 @@ export default function HolderWallets() {
       {/* Custom Confirmation Modal */}
       {confirmationModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-gray-900/95 via-gray-900/90 to-gray-950/95 backdrop-blur-xl rounded-xl p-6 border border-gray-700/50 shadow-2xl max-w-md w-full animate-in fade-in zoom-in duration-200">
+          <div className="bg-gradient-to-br from-gray-900/95 via-gray-900/90 to-gray-950/95 backdrop-blur-xl rounded-xl p-6 border border-gray-700/50 shadow-2xl max-w-md w-full transform transition-all">
             <div className="flex items-start gap-4 mb-4">
               {confirmationModal.type === 'danger' && (
                 <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center border border-red-500/50">
