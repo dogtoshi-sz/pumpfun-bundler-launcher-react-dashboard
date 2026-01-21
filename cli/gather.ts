@@ -1,7 +1,8 @@
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
-import { readJson, retrieveEnvVariable, sleep } from "../utils"
+import dotenv from "dotenv"
+import { readJson, sleep } from "../utils"
 import { ComputeBudgetProgram, Connection, Keypair, SystemProgram, Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js"
 import { TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
 import { SPL_ACCOUNT_LAYOUT, TokenAccount } from "@raydium-io/raydium-sdk";
@@ -10,14 +11,23 @@ import { execute } from "../executor/legacy";
 import { BUYER_WALLET, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "../constants";
 import { completeRunTracking, getLatestRecord } from "../lib/profit-loss-tracker";
 
+// Ensure .env is loaded
+dotenv.config();
+
 export const solanaConnection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT, commitment: "processed"
 })
 
-const rpcUrl = retrieveEnvVariable("RPC_ENDPOINT");
-const mainKpStr = retrieveEnvVariable('PRIVATE_KEY');
-const connection = new Connection(rpcUrl, { commitment: "processed" });
-const mainKp = Keypair.fromSecretKey(base58.decode(mainKpStr))
+// Use PRIVATE_KEY from constants (already loaded via dotenv)
+const connection = new Connection(RPC_ENDPOINT, { commitment: "processed" });
+
+// Validate PRIVATE_KEY before proceeding
+if (!PRIVATE_KEY) {
+  console.error("❌ PRIVATE_KEY is not set in .env file");
+  console.error("   Please add your master wallet private key to .env");
+  process.exit(1);
+}
+const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
 
 const main = async () => {
   const walletsData = readJson()
@@ -291,6 +301,12 @@ const main = async () => {
       const accountInfo = await connection.getAccountInfo(kp.publicKey)
       // Removed delays - processing in parallel now
       
+      // Check if account actually exists on-chain
+      if (!accountInfo) {
+        console.log(`[${index + 1}/${total}]   ⚠️  Wallet account does not exist on-chain (never funded/initialized), skipping`)
+        return // Skip this wallet entirely
+      }
+      
       const tokenAccounts = await connection.getTokenAccountsByOwner(kp.publicKey, {
         programId: TOKEN_PROGRAM_ID,
       }, "confirmed")
@@ -373,8 +389,8 @@ const main = async () => {
         }
       }
 
-      // Transfer SOL - ALWAYS check balance, even if accountInfo is null
-      const solBal = await connection.getBalance(kp.publicKey)
+      // Transfer SOL - Account existence already verified above
+      const solBal = await connection.getBalance(kp.publicKey, "confirmed")
       console.log(`[${index + 1}/${total}]   💰 Current SOL balance: ${(solBal / 1e9).toFixed(6)} SOL`)
       
       let transferAmount = 0
@@ -384,7 +400,7 @@ const main = async () => {
       const ADDITIONAL_BUFFER = 10_000 // Small additional buffer for safety
       const MIN_FEE_RESERVE = MIN_RENT_EXEMPT + ADDITIONAL_BUFFER // ~0.0009 SOL total
       
-      // For ALL wallets (including DEV), only leave rent-exempt balance (can't drain to zero)
+      // For ALL wallets (including DEV), only leave rent-exempt balance (can't withdraw to zero)
       // Gather maximum SOL - only leave what's required for rent exemption
       transferAmount = solBal > MIN_FEE_RESERVE ? solBal - MIN_FEE_RESERVE : 0
       if (transferAmount <= 0) {
@@ -452,6 +468,9 @@ const main = async () => {
               
               console.log(`[${index + 1}/${total}]   🔄 Retrying with ${(transferAmount / 1e9).toFixed(6)} SOL (leaving ${(RETRY_FEE_RESERVE / 1e9).toFixed(6)} SOL for rent exemption)`)
               await sleep(1000)
+            } else if (errorMsg.includes('no record of a prior credit') || errorMsg.includes('AccountNotFound')) {
+              console.log(`[${index + 1}/${total}]   ❌ Account does not exist on-chain (never funded/initialized). Skipping this wallet.`)
+              break // Stop retrying - account doesn't exist
             } else {
               console.log(`[${index + 1}/${total}]   ⚠️ Transfer attempt ${transferAttempts}/${maxTransferAttempts} failed: ${errorMsg}`)
               await sleep(2000)

@@ -16,20 +16,21 @@ const connection = new Connection(RPC_ENDPOINT, {
 interface WarmConfig {
   walletsPerBatch: number // How many wallets to warm in parallel
   tradesPerWallet: number // Total trades per wallet
-  minBuyAmount: number // Minimum SOL to spend per trade (SUPER TINY - e.g., 0.0005)
-  maxBuyAmount: number // Maximum SOL to spend per trade (SUPER TINY - e.g., 0.001)
+  minBuyAmount: number // Minimum SOL to spend per trade (SUPER TINY - e.g., 0.0002)
+  maxBuyAmount: number // Maximum SOL to spend per trade (SUPER TINY - e.g., 0.0003)
   minIntervalSeconds: number // Minimum wait between trades (e.g., 10)
   maxIntervalSeconds: number // Maximum wait between trades (e.g., 60)
   priorityFee: 'none' | 'low' | 'medium' | 'high' // Priority fee level ('none' = cheapest)
   useJupiter: boolean // Use Jupiter swap (works with any token, no referrer needed)
   useTrendingTokens: boolean // Use trending tokens from API instead of static list
+  tradingPattern?: 'sequential' | 'randomized' | 'accumulate' // Trading pattern strategy
 }
 
 const DEFAULT_CONFIG: WarmConfig = {
   walletsPerBatch: 2, // Process 2 wallets at a time to avoid rate limits
   tradesPerWallet: 2, // Just 2 trades per wallet (enough to show activity)
-  minBuyAmount: 0.002, // 0.002 SOL minimum (~$0.28) - Minimum Jupiter accepts
-  maxBuyAmount: 0.003, // 0.003 SOL maximum (~$0.42) - Small but works
+  minBuyAmount: 0.0002, // 0.0002 SOL minimum (ultra-small for cheap warming)
+  maxBuyAmount: 0.0003, // 0.0003 SOL maximum (ultra-small for cheap warming)
   minIntervalSeconds: 10, // 10 seconds minimum between trades
   maxIntervalSeconds: 60, // 1 minute maximum between trades
   priorityFee: 'none', // No priority fee for warming (saves SOL)
@@ -140,53 +141,151 @@ async function warmWallet(
   
   console.log(`   💰 Balance: ${balanceSol.toFixed(4)} SOL (estimated need: ${estimatedRequired.toFixed(4)} SOL)`)
   console.log(`   📊 Target: ${config.tradesPerWallet} trades`)
+  console.log(`   🎲 Pattern: ${config.tradingPattern || 'sequential'}`)
   
-  for (let i = 0; i < config.tradesPerWallet; i++) {
+  // Track tokens we've bought but not sold yet (for randomized/accumulate patterns)
+  const heldTokens: Array<{ mint: string; buyTx: string }> = []
+  
+  // Generate pattern based on trading pattern type
+  const pattern = config.tradingPattern || 'sequential'
+  
+  // For randomized: create a pattern like [buy, buy, sell, buy, sell, sell] based on tradesPerWallet
+  let tradePlan: Array<'buy' | 'sell'> = []
+  if (pattern === 'randomized') {
+    // Create a balanced pattern: roughly half buys, half sells
+    const numBuys = Math.ceil(config.tradesPerWallet / 2)
+    const numSells = config.tradesPerWallet - numBuys
+    tradePlan = Array(numBuys).fill('buy').concat(Array(numSells).fill('sell'))
+    // Shuffle the pattern for randomness (but ensure we have tokens before selling)
+    for (let i = tradePlan.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [tradePlan[i], tradePlan[j]] = [tradePlan[j], tradePlan[i]]
+    }
+    // Ensure we always have at least one buy before first sell
+    if (tradePlan[0] === 'sell' && numBuys > 0) {
+      const firstBuy = tradePlan.indexOf('buy')
+      if (firstBuy > 0) {
+        [tradePlan[0], tradePlan[firstBuy]] = [tradePlan[firstBuy], tradePlan[0]]
+      }
+    }
+    console.log(`   🎲 Randomized pattern: ${tradePlan.join(' → ')}`)
+  } else if (pattern === 'accumulate') {
+    // Buy all first, then sell all
+    tradePlan = Array(Math.ceil(config.tradesPerWallet / 2)).fill('buy').concat(Array(Math.floor(config.tradesPerWallet / 2)).fill('sell'))
+    console.log(`   📦 Accumulate pattern: ${tradePlan.join(' → ')}`)
+  } else {
+    // Sequential: alternate buy/sell
+    for (let i = 0; i < config.tradesPerWallet; i++) {
+      tradePlan.push(i % 2 === 0 ? 'buy' : 'sell')
+    }
+  }
+  
+  for (let i = 0; i < tradePlan.length; i++) {
+    const action = tradePlan[i]
     // Pick a random token
     if (tokenList.length === 0) {
       console.log(`   ⚠️  No tokens available. Please add tokens to keys/warmup-tokens.json`)
       break
     }
     
-    const randomToken = tokenList[Math.floor(Math.random() * tokenList.length)]
-    
-    // Random buy amount
-    const buyAmount = config.minBuyAmount + 
-      Math.random() * (config.maxBuyAmount - config.minBuyAmount)
-    
-    try {
-      console.log(`   [${i + 1}/${config.tradesPerWallet}] Buying ${buyAmount.toFixed(4)} SOL of token ${randomToken.substring(0, 8)}...`)
+    if (action === 'buy') {
+      // Buy action
+      const randomToken = tokenList[Math.floor(Math.random() * tokenList.length)]
+      const buyAmount = config.minBuyAmount + 
+        Math.random() * (config.maxBuyAmount - config.minBuyAmount)
       
-      // Buy tokens
-      const buyResult = await buyTokenSimple(
-        walletPrivateKey,
-        randomToken,
-        buyAmount,
-        undefined, // No referrer needed when using Jupiter
-        config.useJupiter,
-        config.priorityFee
-      )
+      try {
+        console.log(`   [${i + 1}/${tradePlan.length}] 🛒 Buying ${buyAmount.toFixed(4)} SOL of token ${randomToken.substring(0, 8)}...`)
+        
+        const buyResult = await buyTokenSimple(
+          walletPrivateKey,
+          randomToken,
+          buyAmount,
+          undefined, // No referrer needed when using Jupiter
+          config.useJupiter,
+          config.priorityFee
+        )
+        
+        console.log(`   ✅ Buy successful: ${buyResult.txUrl}`)
+        heldTokens.push({ mint: randomToken, buyTx: buyResult.txUrl })
+        successCount++
+        
+        // Wait before next action (random 5-30 seconds)
+        if (i < tradePlan.length - 1) {
+          const delay = 5 + Math.random() * 25
+          console.log(`   ⏳ Waiting ${delay.toFixed(1)}s before next action...`)
+          await sleep(delay * 1000)
+        }
+      } catch (error: any) {
+        failedCount++
+        const errorMsg = `Buy ${i + 1} failed: ${error.message}`
+        console.log(`   ❌ ${errorMsg}`)
+        errors.push(errorMsg)
+        if (i < tradePlan.length - 1) await sleep(10000)
+      }
+    } else if (action === 'sell' && heldTokens.length > 0) {
+      // Sell action - pick a random held token
+      const tokenToSell = heldTokens[Math.floor(Math.random() * heldTokens.length)]
+      const sellPercentage = pattern === 'accumulate' && i === tradePlan.length - 1 ? 100 : (80 + Math.random() * 20)
       
-      console.log(`   ✅ Buy successful: ${buyResult.txUrl}`)
+      try {
+        console.log(`   [${i + 1}/${tradePlan.length}] 💸 Selling ${sellPercentage.toFixed(1)}% of ${tokenToSell.mint.substring(0, 8)}...`)
+        
+        const sellResult = await sellTokenSimple(
+          walletPrivateKey,
+          tokenToSell.mint,
+          sellPercentage,
+          config.priorityFee
+        )
+        
+        console.log(`   ✅ Sell successful: ${sellResult.txUrl}`)
+        // Remove from held tokens if we sold 100%
+        if (sellPercentage >= 100) {
+          const index = heldTokens.findIndex(t => t.mint === tokenToSell.mint)
+          if (index >= 0) heldTokens.splice(index, 1)
+        }
+        successCount++
+        
+        // Wait before next action
+        if (i < tradePlan.length - 1) {
+          const delay = 5 + Math.random() * 25
+          console.log(`   ⏳ Waiting ${delay.toFixed(1)}s before next action...`)
+          await sleep(delay * 1000)
+        }
+      } catch (error: any) {
+        failedCount++
+        const errorMsg = `Sell ${i + 1} failed: ${error.message}`
+        console.log(`   ❌ ${errorMsg}`)
+        errors.push(errorMsg)
+        if (i < tradePlan.length - 1) await sleep(10000)
+      }
+    } else if (action === 'sell' && heldTokens.length === 0) {
+      // Can't sell if we have no tokens - skip this sell action
+      console.log(`   ⚠️  Skipping sell (no tokens held yet)`)
+      // Insert a buy instead
+      const randomToken = tokenList[Math.floor(Math.random() * tokenList.length)]
+      const buyAmount = config.minBuyAmount + 
+        Math.random() * (config.maxBuyAmount - config.minBuyAmount)
       
-      // Wait a bit before selling (random 5-30 seconds)
-      const sellDelay = 5 + Math.random() * 25
-      console.log(`   ⏳ Waiting ${sellDelay.toFixed(1)}s before selling...`)
-      await sleep(sellDelay * 1000)
-      
-      // Sell 100% of tokens (or a random percentage between 80-100%)
-      const sellPercentage = 80 + Math.random() * 20
-      console.log(`   💸 Selling ${sellPercentage.toFixed(1)}% of tokens...`)
-      
-      const sellResult = await sellTokenSimple(
-        walletPrivateKey,
-        randomToken,
-        sellPercentage,
-        config.priorityFee
-      )
-      
-      console.log(`   ✅ Sell successful: ${sellResult.txUrl}`)
-      successCount++
+      try {
+        console.log(`   [${i + 1}/${tradePlan.length}] 🛒 Buying ${buyAmount.toFixed(4)} SOL of token ${randomToken.substring(0, 8)}... (replacing sell)`)
+        const buyResult = await buyTokenSimple(
+          walletPrivateKey,
+          randomToken,
+          buyAmount,
+          undefined,
+          config.useJupiter,
+          config.priorityFee
+        )
+        console.log(`   ✅ Buy successful: ${buyResult.txUrl}`)
+        heldTokens.push({ mint: randomToken, buyTx: buyResult.txUrl })
+        successCount++
+      } catch (error: any) {
+        failedCount++
+        console.log(`   ❌ Buy failed: ${error.message}`)
+        errors.push(`Buy ${i + 1} failed: ${error.message}`)
+      }
+    }
       
       // Update progress
       progress.completedTrades = i + 1

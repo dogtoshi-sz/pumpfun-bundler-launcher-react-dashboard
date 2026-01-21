@@ -15,13 +15,13 @@ const base58 = require('bs58');
 
 class LaunchTracker {
   constructor() {
-    this.dataDir = path.join(__dirname, '..', 'keys', 'tracking-data');
-    this.ensureDataDir();
+    // Tracking data directory removed - not used in public version
+    this.dataDir = null;
     
-    // File paths
-    this.currentSnapshotPath = path.join(this.dataDir, 'current-snapshot.json');
-    this.tradeHistoryPath = path.join(this.dataDir, 'trade-history.json');
-    this.launchHistoryPath = path.join(this.dataDir, 'launch-history.json');
+    // File paths (disabled - tracking-data not used)
+    this.currentSnapshotPath = null;
+    this.tradeHistoryPath = null;
+    this.launchHistoryPath = null;
     
     // In-memory state
     this.currentSnapshot = null;
@@ -32,10 +32,7 @@ class LaunchTracker {
   }
 
   ensureDataDir() {
-    if (!fs.existsSync(this.dataDir)) {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-      console.log(`[LaunchTracker] Created tracking data directory: ${this.dataDir}`);
-    }
+    // Disabled - tracking-data directory not used in public version
   }
 
   // Generate unique launch ID
@@ -358,33 +355,13 @@ class LaunchTracker {
     this.currentSnapshot.completedAt = new Date().toISOString();
     this.currentSnapshot.stats = stats;
 
-    // Load existing history
-    let history = [];
-    if (fs.existsSync(this.launchHistoryPath)) {
-      try {
-        history = JSON.parse(fs.readFileSync(this.launchHistoryPath, 'utf8'));
-      } catch (err) {
-        console.warn('[LaunchTracker] Failed to load history, starting fresh');
-      }
-    }
-
-    // Add to history
-    history.push(this.currentSnapshot);
-
-    // Save history
-    fs.writeFileSync(this.launchHistoryPath, JSON.stringify(history, null, 2));
-    console.log(`[LaunchTracker] ✅ Saved to launch history (${history.length} total launches)`);
-
-    // Also save trades to trade history
-    this.saveTradeHistory();
+    // Disabled - tracking-data not used in public version
+    console.log(`[LaunchTracker] ✅ Launch completed (tracking-data disabled)`);
 
     // Clear current snapshot
     const completedSnapshot = this.currentSnapshot;
     this.currentSnapshot = null;
     this.currentTrades = [];
-    if (fs.existsSync(this.currentSnapshotPath)) {
-      fs.unlinkSync(this.currentSnapshotPath);
-    }
 
     return completedSnapshot;
   }
@@ -393,34 +370,10 @@ class LaunchTracker {
    * Save trades to history file
    */
   saveTradeHistory() {
-    if (!this.currentSnapshot || this.currentSnapshot.trades.length === 0) return;
-
-    const tradeEntry = {
-      launchId: this.currentSnapshot.launchId,
-      mintAddress: this.currentSnapshot.mintAddress,
-      tokenInfo: this.currentSnapshot.tokenInfo,
-      timestamp: this.currentSnapshot.timestamp,
-      trades: this.currentSnapshot.trades
-    };
-
-    let history = [];
-    if (fs.existsSync(this.tradeHistoryPath)) {
-      try {
-        history = JSON.parse(fs.readFileSync(this.tradeHistoryPath, 'utf8'));
-      } catch (err) {
-        console.warn('[LaunchTracker] Failed to load trade history, starting fresh');
-      }
+    // Disabled - tracking-data not used in public version
+    if (this.currentSnapshot && this.currentSnapshot.trades.length > 0) {
+      console.log(`[LaunchTracker] 💾 Trade recorded (tracking-data disabled)`);
     }
-
-    history.push(tradeEntry);
-
-    // Keep last 100 launches worth of trades
-    if (history.length > 100) {
-      history = history.slice(-100);
-    }
-
-    fs.writeFileSync(this.tradeHistoryPath, JSON.stringify(history, null, 2));
-    console.log(`[LaunchTracker] 💾 Saved ${tradeEntry.trades.length} trades to history`);
   }
 
   // ============================================
@@ -445,21 +398,11 @@ class LaunchTracker {
   }
 
   saveCurrentSnapshot() {
-    if (this.currentSnapshot) {
-      fs.writeFileSync(this.currentSnapshotPath, JSON.stringify(this.currentSnapshot, null, 2));
-    }
+    // Disabled - tracking-data not used in public version
   }
 
   loadCurrentSnapshot() {
-    if (fs.existsSync(this.currentSnapshotPath)) {
-      try {
-        this.currentSnapshot = JSON.parse(fs.readFileSync(this.currentSnapshotPath, 'utf8'));
-        this.currentTrades = this.currentSnapshot.trades || [];
-        console.log(`[LaunchTracker] 📂 Loaded existing snapshot: ${this.currentSnapshot.launchId}`);
-      } catch (err) {
-        console.warn('[LaunchTracker] Failed to load snapshot:', err.message);
-      }
-    }
+    // Disabled - tracking-data not used in public version
   }
 
   // ============================================
@@ -471,23 +414,13 @@ class LaunchTracker {
   }
 
   getLaunchHistory(limit = 10) {
-    if (!fs.existsSync(this.launchHistoryPath)) return [];
-    try {
-      const history = JSON.parse(fs.readFileSync(this.launchHistoryPath, 'utf8'));
-      return history.slice(-limit);
-    } catch (err) {
-      return [];
-    }
+    // Disabled - tracking-data not used in public version
+    return [];
   }
 
   getTradeHistory(launchId) {
-    if (!fs.existsSync(this.tradeHistoryPath)) return null;
-    try {
-      const history = JSON.parse(fs.readFileSync(this.tradeHistoryPath, 'utf8'));
-      return history.find(h => h.launchId === launchId) || null;
-    } catch (err) {
-      return null;
-    }
+    // Disabled - tracking-data not used in public version
+    return null;
   }
 
   /**

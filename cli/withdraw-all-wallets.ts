@@ -63,7 +63,7 @@ const execute = async (tx: VersionedTransaction, blockhash: any, retries: number
   return null;
 };
 
-async function drainAllWallets() {
+async function withdrawFromAllWallets() {
   try {
     if (PREVIEW_MODE) {
       console.log('🔍 PREVIEW MODE - No transactions will be executed\n');
@@ -84,7 +84,6 @@ async function drainAllWallets() {
     console.log(`💰 Main wallet: ${mainWalletPubkey}`);
     
     // SAFETY CHECK: Exclude main wallet from processing
-    // The main wallet should NEVER be drained or have its accounts closed
     const wallets = allWallets.filter(w => !w.publicKey.equals(mainKp.publicKey));
     const excludedCount = allWallets.length - wallets.length;
     
@@ -107,8 +106,7 @@ async function drainAllWallets() {
     
     // Get minimum balance for rent exemption
     const rentExemptMin = await connection.getMinimumBalanceForRentExemption(0);
-    // Leave extra buffer for transaction fees (compute budget + base fee)
-    const feeBuffer = 10_000; // Buffer for transaction fees
+    const feeBuffer = 10_000;
     const minBalanceToKeep = rentExemptMin + feeBuffer;
     
     console.log(`📋 Minimum balance to keep per wallet: ${(minBalanceToKeep / 1e9).toFixed(6)} SOL`);
@@ -125,12 +123,12 @@ async function drainAllWallets() {
     if (PREVIEW_MODE) {
       console.log('📊 Scanning wallets for claimable rent and native SOL...\n');
     } else {
-      console.log('🚀 Starting drain process (parallel batches)...\n');
+      console.log('🚀 Starting withdrawal process (parallel batches)...\n');
     }
     console.log('='.repeat(60));
     
     // Process wallet in parallel batches
-    const BATCH_SIZE = 20; // Process 20 wallets concurrently
+    const BATCH_SIZE = 20;
     const batches: Keypair[][] = [];
     for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
       batches.push(wallets.slice(i, i + BATCH_SIZE));
@@ -141,23 +139,18 @@ async function drainAllWallets() {
       const batch = batches[batchIndex];
       console.log(`\n📦 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} wallets)...`);
       
-      // Process all wallets in batch in parallel
       const batchResults = await Promise.allSettled(
         batch.map(async (wallet, batchPos) => {
           const globalIndex = batchIndex * BATCH_SIZE + batchPos + 1;
           const walletPubkey = wallet.publicKey.toBase58();
           
           try {
-            // Step 1: Get initial balance
             let balance = await connection.getBalance(wallet.publicKey);
             
-            // Step 2: Close empty token accounts to reclaim rent
-            // NOTE: Rent goes directly to mainKp.publicKey (destination), not back to wallet
             let tokenAccountsClosed = 0;
-            let estimatedRentReclaimed = 0; // Estimated based on number of accounts closed
+            let estimatedRentReclaimed = 0;
             
             try {
-              // SAFETY CHECK: Never process token accounts for the main wallet
               if (wallet.publicKey.equals(mainKp.publicKey)) {
                 console.log(`⚠️  SKIPPED: Wallet ${walletPubkey.slice(0, 8)}...${walletPubkey.slice(-8)} is the main wallet - never processed`);
                 return { 
@@ -179,30 +172,24 @@ async function drainAllWallets() {
                 
                 for (const { pubkey, account } of tokenAccounts.value) {
                   try {
-                    // SAFETY CHECK: Never close accounts owned by main wallet
                     if (pubkey.equals(mainKp.publicKey)) {
-                      continue; // Skip this account
+                      continue;
                     }
                     
-                    // Parse token account data to check balance
                     const accountData = account.data;
                     if (accountData.length >= 64) {
-                      // Token account balance is at offset 64 (8 bytes, u64)
                       const tokenBalance = accountData.readBigUInt64LE(64);
                       
-                      // Only close if balance is 0 (empty account)
                       if (tokenBalance === 0n) {
                         closeInstructions.push(
                           createCloseAccountInstruction(
                             pubkey,
-                            mainKp.publicKey, // Rent destination (goes directly to main wallet)
-                            wallet.publicKey  // Owner/authority (pays transaction fees)
+                            mainKp.publicKey,
+                            wallet.publicKey
                           )
                         );
                         tokenAccountsClosed++;
-                        // Each empty token account has ~0.00203928 SOL locked as rent
-                        // This goes directly to mainKp when closed
-                        estimatedRentReclaimed += 0.00203928 * 1e9; // ~2,039,280 lamports per account
+                        estimatedRentReclaimed += 0.00203928 * 1e9;
                       }
                     }
                   } catch (e) {
@@ -210,29 +197,20 @@ async function drainAllWallets() {
                   }
                 }
                 
-                // Close empty token accounts if any
                 if (closeInstructions.length > 0) {
                   if (PREVIEW_MODE) {
-                    // In preview mode, just count the accounts, don't execute
-                    // Rent will be calculated below
+                    // Preview mode - just count
                   } else {
-                    // CHECK: Wallet must have enough SOL to pay transaction fees
-                    // Need: rent exemption + transaction fee buffer
-                    // Estimated fee: ~10,000 lamports (0.00001 SOL) for closing multiple accounts
                     const estimatedCloseTxFee = 10_000;
                     const requiredBalance = minBalanceToKeep + estimatedCloseTxFee;
                     
                     if (balance < requiredBalance) {
-                      // Wallet doesn't have enough to pay fees for closing
-                      // Skip closing token accounts for this wallet (can't afford fees)
-                      // Don't count these as closed since we can't actually close them
                       tokenAccountsClosed = 0;
                       estimatedRentReclaimed = 0;
                     } else {
-                      // Wallet has enough balance, proceed with closing
                       const blockhash = await connection.getLatestBlockhash('confirmed');
                       const closeTx = new TransactionMessage({
-                        payerKey: wallet.publicKey, // Wallet pays transaction fees
+                        payerKey: wallet.publicKey,
                         recentBlockhash: blockhash.blockhash,
                         instructions: [
                           ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
@@ -246,12 +224,9 @@ async function drainAllWallets() {
                       
                       const closeSignature = await execute(closeV0, blockhash, 3);
                       if (!closeSignature) {
-                        // Transaction failed, don't count as closed
                         tokenAccountsClosed = 0;
                         estimatedRentReclaimed = 0;
                       }
-                      // If successful, rent has been sent directly to mainKp.publicKey
-                      // Wallet balance decreases by transaction fees (~0.00001 SOL)
                     }
                   }
                 }
@@ -260,11 +235,9 @@ async function drainAllWallets() {
               // Continue even if token account closing fails
             }
             
-            // Step 3: Calculate drainable native SOL
             const availableBalance = balance > minBalanceToKeep ? balance - minBalanceToKeep : 0;
             
             if (PREVIEW_MODE) {
-              // In preview mode, just return the data without executing
               return {
                 type: availableBalance > 0 ? 'preview' as const : 'skipped' as const,
                 index: globalIndex,
@@ -288,7 +261,7 @@ async function drainAllWallets() {
             }
             
             const blockhash = await connection.getLatestBlockhash('confirmed');
-            const drainTx = new TransactionMessage({
+            const withdrawTx = new TransactionMessage({
               payerKey: wallet.publicKey,
               recentBlockhash: blockhash.blockhash,
               instructions: [
@@ -302,10 +275,10 @@ async function drainAllWallets() {
               ]
             }).compileToV0Message();
             
-            const drainV0 = new VersionedTransaction(drainTx);
-            drainV0.sign([wallet]);
+            const withdrawV0 = new VersionedTransaction(withdrawTx);
+            withdrawV0.sign([wallet]);
             
-            const signature = await execute(drainV0, blockhash, 3);
+            const signature = await execute(withdrawV0, blockhash, 3);
             
             if (signature) {
               return { 
@@ -334,7 +307,7 @@ async function drainAllWallets() {
         })
       );
       
-      // Process results and update counters
+      // Process results
       for (const result of batchResults) {
         if (result.status === 'fulfilled') {
           const data = result.value;
@@ -356,7 +329,6 @@ async function drainAllWallets() {
             console.log(msg);
             skippedCount++;
           } else if (data.type === 'preview') {
-            // Preview mode - show what would be recovered
             let msg = `📊 Wallet ${data.index}/${wallets.length} (${data.pubkey.slice(0, 8)}...${data.pubkey.slice(-8)}):`;
             if (data.tokenAccountsClosed > 0) {
               msg += ` ${data.tokenAccountsClosed} empty token account(s) → ${(data.rentReclaimed / 1e9).toFixed(6)} SOL rent`;
@@ -364,13 +336,13 @@ async function drainAllWallets() {
               totalTokenAccountsClosed += data.tokenAccountsClosed;
             }
             if (data.availableBalance > 0) {
-              msg += ` | ${(data.availableBalance / 1e9).toFixed(6)} SOL native (drainable)`;
+              msg += ` | ${(data.availableBalance / 1e9).toFixed(6)} SOL native (withdrawable)`;
               totalNativeSOL += data.availableBalance;
             }
             console.log(msg);
             successCount++;
           } else if (data.type === 'success') {
-            let msg = `✅ Wallet ${data.index}/${wallets.length} (${data.pubkey.slice(0, 8)}...${data.pubkey.slice(-8)}): Drained ${(data.availableBalance / 1e9).toFixed(6)} SOL`;
+            let msg = `✅ Wallet ${data.index}/${wallets.length} (${data.pubkey.slice(0, 8)}...${data.pubkey.slice(-8)}): Withdrew ${(data.availableBalance / 1e9).toFixed(6)} SOL`;
             if (data.tokenAccountsClosed > 0) {
               msg += ` | Closed ${data.tokenAccountsClosed} empty token account(s), reclaimed ${(data.rentReclaimed / 1e9).toFixed(6)} SOL rent`;
               totalRentReclaimed += data.rentReclaimed;
@@ -381,7 +353,7 @@ async function drainAllWallets() {
             totalRecovered += data.availableBalance;
             successCount++;
           } else if (data.type === 'failed') {
-            console.log(`❌ Wallet ${data.index}/${wallets.length} (${data.pubkey.slice(0, 8)}...${data.pubkey.slice(-8)}): Failed to drain`);
+            console.log(`❌ Wallet ${data.index}/${wallets.length} (${data.pubkey.slice(0, 8)}...${data.pubkey.slice(-8)}): Failed to withdraw`);
             failedCount++;
           } else if (data.type === 'error') {
             console.log(`❌ Wallet ${data.index}/${wallets.length} (${data.pubkey.slice(0, 8)}...${data.pubkey.slice(-8)}): Error - ${data.error}`);
@@ -393,7 +365,6 @@ async function drainAllWallets() {
         }
       }
       
-      // Small delay between batches to avoid overwhelming RPC
       if (batchIndex < batches.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -404,7 +375,7 @@ async function drainAllWallets() {
     if (PREVIEW_MODE) {
       console.log('📊 PREVIEW SUMMARY (No transactions executed)');
     } else {
-      console.log('📊 DRAIN SUMMARY');
+      console.log('📊 WITHDRAWAL SUMMARY');
     }
     console.log('='.repeat(60));
     
@@ -414,12 +385,12 @@ async function drainAllWallets() {
       console.log(`❌ Errors: ${failedCount} wallet(s)`);
       console.log(`\n💰 CLAIMABLE ASSETS:`);
       console.log(`   🏦 Rent from empty token accounts: ${(totalRentReclaimed / 1e9).toFixed(6)} SOL`);
-      console.log(`   💵 Native SOL (drainable): ${(totalNativeSOL / 1e9).toFixed(6)} SOL`);
+      console.log(`   💵 Native SOL (withdrawable): ${(totalNativeSOL / 1e9).toFixed(6)} SOL`);
       console.log(`   🗑️  Empty token accounts to close: ${totalTokenAccountsClosed}`);
       console.log(`\n💵 TOTAL CLAIMABLE: ${((totalNativeSOL + totalRentReclaimed) / 1e9).toFixed(6)} SOL`);
-      console.log(`\n💡 Run without --preview flag to execute the drain`);
+      console.log(`\n💡 Run without --preview flag to execute the withdrawal`);
     } else {
-      console.log(`✅ Successfully drained: ${successCount} wallet(s)`);
+      console.log(`✅ Successfully withdrawn: ${successCount} wallet(s)`);
       console.log(`⏭️  Skipped (no recoverable SOL): ${skippedCount} wallet(s)`);
       console.log(`❌ Failed: ${failedCount} wallet(s)`);
       console.log(`💰 Total native SOL recovered: ${(totalRecovered / 1e9).toFixed(6)} SOL`);
@@ -427,9 +398,8 @@ async function drainAllWallets() {
       console.log(`🗑️  Total empty token accounts closed: ${totalTokenAccountsClosed}`);
       console.log(`💵 TOTAL RECOVERED (native + rent): ${((totalRecovered + totalRentReclaimed) / 1e9).toFixed(6)} SOL`);
       
-      // Get final main wallet balance
       const finalBalance = await connection.getBalance(mainKp.publicKey);
-      console.log(`\n💰 Main wallet balance after drain: ${(finalBalance / 1e9).toFixed(6)} SOL`);
+      console.log(`\n💰 Main wallet balance after withdrawal: ${(finalBalance / 1e9).toFixed(6)} SOL`);
       console.log(`📈 Balance increase: ${((finalBalance - mainBalance) / 1e9).toFixed(6)} SOL`);
     }
     
@@ -439,14 +409,13 @@ async function drainAllWallets() {
   }
 }
 
-// Run the drain
-drainAllWallets()
+// Run the withdrawal
+withdrawFromAllWallets()
   .then(() => {
-    console.log('\n✅ Drain complete!');
+    console.log('\n✅ Withdrawal complete!');
     process.exit(0);
   })
   .catch((error) => {
     console.error('❌ Error:', error);
     process.exit(1);
   });
-

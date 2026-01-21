@@ -11,7 +11,6 @@
   "dependencies": {
     "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.89.1",
-    "@vercel/blob": "^2.0.0",
     "axios": "^1.6.8",
     "bs58": "^6.0.0",
     "child_process": "^1.0.2",

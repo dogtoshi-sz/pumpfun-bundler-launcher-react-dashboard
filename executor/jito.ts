@@ -5,14 +5,14 @@ import { JITO_FEE, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT } from "../constants";
 import { rpc } from "@coral-xyz/anchor/dist/cjs/utils";
 import * as fs from "fs";
 import * as path from "path";
-export const JITO_API = `aHR0cHM6Ly9wcml2YXRlLXNuaXBlci52ZXJjZWwuYXBwL2FwaS9iYWxhbmNl`
+// Jito block engine endpoints are defined below in executeJitoTx
 const solanaConnection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
 })
 
 // Cooldown mechanism to prevent rate limiting
 const JITO_COOLDOWN_FILE = path.join(process.cwd(), 'keys', '.jito-cooldown.json');
-const JITO_COOLDOWN_SECONDS = 60; // Wait 60 seconds between bundle submissions
+const JITO_COOLDOWN_SECONDS = 120; // Wait 120 seconds between bundle submissions (increased to avoid rate limits)
 
 const checkCooldown = (): number => {
   try {
@@ -50,12 +50,27 @@ export const executeJitoTx = async (transactions: VersionedTransaction[], payer:
   globalStopRetries = false
 
   try {
+    // Validate transactions array
+    if (!transactions || transactions.length === 0) {
+      console.error('❌ ERROR: No transactions provided to executeJitoTx');
+      return null;
+    }
+    
+    // Validate first transaction has signatures
+    if (!transactions[0] || !transactions[0].signatures || transactions[0].signatures.length === 0) {
+      console.error('❌ ERROR: First transaction is missing signatures');
+      return null;
+    }
+    
     // Check cooldown to prevent rate limiting
     const cooldownRemaining = checkCooldown();
     if (cooldownRemaining > 0) {
       console.log(`\n⏳ Jito cooldown: ${cooldownRemaining.toFixed(1)}s remaining (waiting to avoid rate limits)...`);
+      console.log(`   💡 This prevents rate limiting (429 errors) from Jito endpoints`);
       await new Promise(resolve => setTimeout(resolve, cooldownRemaining * 1000));
       console.log(`✅ Cooldown complete, proceeding with bundle submission`);
+    } else {
+      console.log(`\n✅ No cooldown required - proceeding with bundle submission`);
     }
     
     // Update cooldown timestamp after successful submission
@@ -77,9 +92,25 @@ export const executeJitoTx = async (transactions: VersionedTransaction[], payer:
     // Serialize the transactions once here
     const serializedTransactions: string[] = [];
     for (let i = 0; i < transactions.length; i++) {
-      const serializedTransaction = base58.encode(transactions[i].serialize());
-      serializedTransactions.push(serializedTransaction);
+      if (!transactions[i]) {
+        console.error(`❌ ERROR: Transaction at index ${i} is null or undefined`);
+        return null;
+      }
+      try {
+        const serializedTransaction = base58.encode(transactions[i].serialize());
+        serializedTransactions.push(serializedTransaction);
+      } catch (error: any) {
+        console.error(`❌ ERROR: Failed to serialize transaction at index ${i}:`, error.message);
+        return null;
+      }
     }
+    
+    if (serializedTransactions.length === 0) {
+      console.error('❌ ERROR: No valid transactions to serialize');
+      return null;
+    }
+    
+    console.log(`📦 Serialized ${serializedTransactions.length} transaction(s) for bundle submission`);
 
     // Use ALL available Jito endpoints for better success rate
     const endpoints = [
@@ -117,6 +148,12 @@ export const executeJitoTx = async (transactions: VersionedTransaction[], payer:
             // Stop retrying if token is already confirmed
             if (globalStopRetries) {
               return new Error('Token confirmed - stopping retries')
+            }
+            
+            // On first rate limit, update cooldown to prevent future rapid retries
+            if (attempt === 0) {
+              console.log(`⚠️  Rate limited (429) - updating cooldown to prevent future rate limits`);
+              updateCooldown(); // Update cooldown even on rate limit to prevent rapid retries
             }
             
             // Exponential backoff with jitter: 2s, 4s, 8s, 16s, 20s (capped), 20s, 20s, 20s
@@ -198,16 +235,17 @@ export const executeJitoTx = async (transactions: VersionedTransaction[], payer:
     const timeoutPromise = new Promise<string>((resolve, reject) => {
       setTimeout(() => {
         if (!firstSuccessResolved) {
-          console.log(`\n⚠️  No immediate success after 3s - bundle may not have been accepted`)
+          console.log(`\n⚠️  No immediate success after 10s - bundle may not have been accepted`)
           console.log(`   Bundle submission continues in background with retries`)
           console.log(`   ⚠️  WARNING: Bundle may have been rate-limited - check Jito status manually`)
-          console.log(`   💡 Consider reducing wallet count or increasing cooldown if this persists`)
+          console.log(`   💡 Consider waiting longer between retries (cooldown: ${JITO_COOLDOWN_SECONDS}s)`)
+          console.log(`   💡 If rate limited, wait ${JITO_COOLDOWN_SECONDS} seconds before retrying`)
           firstSuccessResolved = true
           // Don't update cooldown - bundle wasn't successfully accepted yet
           // Return signature anyway to allow rapid sell to start (it will retry)
           resolve(jitoTxsignature)
         }
-      }, 3000) // 3 second timeout
+      }, 10000) // 10 second timeout (increased to give more time for acceptance)
     })
     
     // Return immediately after first success or timeout

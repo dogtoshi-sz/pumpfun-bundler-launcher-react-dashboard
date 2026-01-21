@@ -186,7 +186,6 @@ export const getBuyTxWithJupiter = async (wallet: Keypair, baseMint: PublicKey, 
     feeToUse = 1000 + Math.floor(Math.random() * 49000)
   }
   try {
-    const publicKey = btoa(wallet.secretKey.toString())
     // Use new Jupiter API endpoint (old quote-api.jup.ag was deprecated)
     const quoteUrl = `https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${baseMint.toBase58()}&amount=${amount}&slippageBps=${SLIPPAGE}`
     

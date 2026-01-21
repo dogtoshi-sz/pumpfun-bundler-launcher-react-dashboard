@@ -48,7 +48,7 @@ export const TOKEN_CREATE_ON = retrieveEnvVariable('TOKEN_CREATE_ON', 'pumpfun',
 export const TWITTER = process.env.TWITTER || ''
 export const TELEGRAM = process.env.TELEGRAM || ''
 export const WEBSITE = process.env.WEBSITE || ''
-export const FILE = retrieveEnvVariable('FILE', '', true)
+export const FILE = retrieveEnvVariable('FILE', '', false)
 export const VANITY_MODE = (process.env.VANITY_MODE || 'false').toLowerCase() === 'true'
 
 export const SWAP_AMOUNT = Number(process.env.SWAP_AMOUNT || '0.3')

@@ -258,14 +258,20 @@ async function retryBundle() {
   if (!tokenExists) {
     const tokenCreationIxs = await createTokenTx(creatorDevWallet, mintKp, mainKp)
     
+    // CRITICAL: For pump.fun, the PAYER is the CREATOR
+    // The creator wallet (creatorDevWallet) must be the payer, not the funding wallet (mainKp)
+    // The funding wallet can still pay for fees by transferring SOL to creatorDevWallet first, but creatorDevWallet must be the transaction payer
     const tokenCreationTx = new VersionedTransaction(
       new TransactionMessage({
-        payerKey: mainKp.publicKey,
+        payerKey: creatorDevWallet.publicKey, // CRITICAL: Creator wallet must be payer for pump.fun
         recentBlockhash: latestBlockhash.blockhash,
         instructions: tokenCreationIxs
       }).compileToV0Message()
     )
-    tokenCreationTx.sign([mainKp, mintKp])
+    // CRITICAL: Creator (creatorDevWallet) signs as payer and creator
+    // Mint (mintKp) signs as the mint authority
+    // Note: mainKp is NOT a signer - creatorDevWallet pays for everything
+    tokenCreationTx.sign([creatorDevWallet, mintKp])
     transactions.push(tokenCreationTx)
     console.log(`   ✅ Token creation transaction ready`)
   } else {

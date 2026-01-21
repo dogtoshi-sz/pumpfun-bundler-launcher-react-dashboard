@@ -1,4 +1,4 @@
-import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction, ComputeBudgetProgram, TransactionInstruction } from "@solana/web3.js"
+import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction, ComputeBudgetProgram, TransactionInstruction, SystemProgram, AddressLookupTableAccount } from "@solana/web3.js"
 import base58 from "bs58"
 import { makeBuyIx } from "../src/main"
 import { getSellTxWithJupiter, getBuyTxWithJupiter } from "../utils/swapOnlyAmm"
@@ -12,9 +12,69 @@ import { AnchorProvider } from "@coral-xyz/anchor"
 const getRpcEndpoint = () => process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com'
 const getRpcWebSocketEndpoint = () => process.env.RPC_WEBSOCKET_ENDPOINT || 'wss://api.mainnet-beta.solana.com'
 
+// Helius tip wallets (required for Helius Sender - minimum 200,000 lamports)
+// https://www.helius.dev/docs/sending-transactions/sender
+const HELIUS_TIP_WALLETS = [
+  "5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn",
+  "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE",
+  "9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta",
+  "wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF",
+  "D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ",
+  "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD",
+  "3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT",
+  "4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey",
+  "4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or",
+  "2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ",
+  "D1Mc6j9xQWgR1o1Z7yU5nVVXFQiAYx7FG9AW1aVfwrUM"
+]
+const HELIUS_MIN_TIP = 200_000 // Minimum tip required: 200,000 lamports (0.0002 SOL)
+
+// Add Helius tip to transaction (required for Helius Sender)
+const addHeliusTip = async (transaction: VersionedTransaction, wallet: Keypair): Promise<VersionedTransaction> => {
+  try {
+    const connection = getConnection()
+    
+    // Get Address Lookup Tables from the transaction
+    const altAccounts: AddressLookupTableAccount[] = []
+    for (const lookup of transaction.message.addressTableLookups) {
+      try {
+        const alt = await connection.getAddressLookupTable(lookup.accountKey)
+        if (alt.value) {
+          altAccounts.push(alt.value)
+        }
+      } catch (e) {
+        // Skip if ALT fetch fails
+      }
+    }
+    
+    // Decompile the transaction message
+    const decompiledMessage = TransactionMessage.decompile(transaction.message, {
+      addressLookupTableAccounts: altAccounts,
+    })
+    
+    // Add Helius tip instruction (required minimum: 200,000 lamports)
+    const tipAccount = new PublicKey(HELIUS_TIP_WALLETS[Math.floor(Math.random() * HELIUS_TIP_WALLETS.length)])
+    const tipIx = SystemProgram.transfer({
+      fromPubkey: wallet.publicKey,
+      toPubkey: tipAccount,
+      lamports: HELIUS_MIN_TIP, // Use minimum required tip
+    })
+    decompiledMessage.instructions.push(tipIx)
+    
+    // Recompile and sign
+    const newTx = new VersionedTransaction(decompiledMessage.compileToV0Message(altAccounts))
+    newTx.sign([wallet])
+    
+    return newTx
+  } catch (error: any) {
+    console.warn(`[Helius Tip] Failed to add tip, using original tx: ${error.message}`)
+    return transaction
+  }
+}
+
 // Helius Sender endpoint for ultra-low latency transaction submission
 // Sends to BOTH validators AND Jito simultaneously for maximum inclusion speed
-// Note: Helius Sender may require API key - if fails, fallback to regular RPC
+// Note: Helius Sender requires minimum 200,000 lamports tip to one of their tip wallets
 const getHeliusSenderEndpoint = () => {
   const apiKey = process.env.HELIUS_API_KEY || process.env.RPC_ENDPOINT?.match(/api-key=([^&]+)/)?.[1]
   if (apiKey) {
@@ -201,7 +261,8 @@ export const buyTokenSimple = async (
   solAmount: number,
   referrerPrivateKey?: string, // Optional: if provided, use this as referrer (must be token creator for pump.fun)
   useJupiter: boolean = false, // If true, use Jupiter swap instead of pump.fun SDK (works with any token)
-  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low'/'normal' (random 0.000025-0.0001 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
+  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'low', // Priority fee level: 'none' (0 SOL), 'low'/'normal' (random 0.000025-0.0001 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
+  skipHeliusSender: boolean = false // If true, skip Helius Sender and use regular RPC (saves 0.0002 SOL per tx for wallet warming)
 ): Promise<{ signature: string; txUrl: string }> => {
   try {
     const connection = getConnection()
@@ -212,7 +273,7 @@ export const buyTokenSimple = async (
     if (useJupiter) {
       console.log(`Using Jupiter swap for buy (works with any token) - Priority: ${priorityFee}`)
       const buyAmountLamports = Math.floor(solAmount * 1e9)
-      const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('./constants/constants')
+      const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('../constants/constants')
       let priorityFeeLamports: number
       if (priorityFee === 'ultra') {
         priorityFeeLamports = PRIORITY_FEE_LAMPORTS_ULTRA
@@ -235,21 +296,33 @@ export const buyTokenSimple = async (
         throw new Error('Failed to get buy transaction from Jupiter')
       }
       
-      // Send via Helius Sender for ultra-low latency (dual routing: validators + Jito)
-      // If Helius Sender fails, fallback to regular RPC send
+      // Send transaction (skip Helius Sender for wallet warming to save 0.0002 SOL per tx)
       let signature: string
-      try {
-        signature = await sendViaHeliusSender(tx)
-        console.log(`[Buy] ⚡ Sent via Helius Sender: ${signature}`)
-      } catch (heliusError: any) {
-        console.warn(`[Buy] ⚠️ Helius Sender failed: ${heliusError.message}`)
-        console.log(`[Buy] Falling back to regular RPC send...`)
-        // Fallback to regular RPC send
+      if (skipHeliusSender) {
+        // Skip Helius Sender - use regular RPC (cheaper for wallet warming)
         signature = await connection.sendTransaction(tx, {
           skipPreflight: false,
           maxRetries: 3
         })
-        console.log(`[Buy] ✅ Sent via regular RPC: ${signature}`)
+        console.log(`[Buy] 💰 Sent via regular RPC (no Helius tip): ${signature}`)
+      } else {
+        // Send via Helius Sender for ultra-low latency (dual routing: validators + Jito)
+        // NOTE: Helius Sender requires minimum 200,000 lamports tip to one of their tip wallets
+        // Add tip proactively to avoid retry delay
+        const txWithTip = await addHeliusTip(tx, walletKp)
+        try {
+          signature = await sendViaHeliusSender(txWithTip)
+          console.log(`[Buy] ⚡ Sent via Helius Sender (with tip): ${signature}`)
+        } catch (heliusError: any) {
+          // If Helius Sender fails, fallback to regular RPC send
+          console.warn(`[Buy] ⚠️ Helius Sender failed: ${heliusError.message}`)
+          console.log(`[Buy] Falling back to regular RPC send...`)
+          signature = await connection.sendTransaction(txWithTip, {
+            skipPreflight: false,
+            maxRetries: 3
+          })
+          console.log(`[Buy] ✅ Sent via regular RPC: ${signature}`)
+        }
       }
       
       // Wait for confirmation and VERIFY transaction succeeded
@@ -372,20 +445,34 @@ export const buyTokenSimple = async (
         const tx = new VersionedTransaction(msg)
         tx.sign([walletKp])
 
-        // Send via Helius Sender for ultra-low latency
-        // If Helius Sender fails, fallback to regular RPC send
-        try {
-          signature = await sendViaHeliusSender(tx)
-          console.log(`[Buy] ⚡ Sent via Helius Sender (attempt ${attempt}/${maxRetries}): ${signature}`)
-        } catch (heliusError: any) {
-          console.warn(`[Buy] ⚠️ Helius Sender failed: ${heliusError.message}`)
-          console.log(`[Buy] Falling back to regular RPC send...`)
-          // Fallback to regular RPC send
+        // Send transaction (skip Helius Sender for wallet warming to save 0.0002 SOL per tx)
+        if (skipHeliusSender) {
+          // Skip Helius Sender - use regular RPC (cheaper for wallet warming)
           signature = await connection.sendTransaction(tx, {
             skipPreflight: false,
             maxRetries: 3
           })
-          console.log(`[Buy] ✅ Sent via regular RPC (attempt ${attempt}/${maxRetries}): ${signature}`)
+          console.log(`[Buy] 💰 Sent via regular RPC (no Helius tip, attempt ${attempt}/${maxRetries}): ${signature}`)
+        } else {
+          // Add Helius tip before sending (required for Helius Sender - minimum 200,000 lamports)
+          // NOTE: Helius Sender requires minimum 200,000 lamports tip to one of their tip wallets
+          const txWithTip = await addHeliusTip(tx, walletKp)
+
+          // Send via Helius Sender for ultra-low latency
+          // If Helius Sender fails, fallback to regular RPC send
+          try {
+            signature = await sendViaHeliusSender(txWithTip)
+            console.log(`[Buy] ⚡ Sent via Helius Sender (with tip, attempt ${attempt}/${maxRetries}): ${signature}`)
+          } catch (heliusError: any) {
+            console.warn(`[Buy] ⚠️ Helius Sender failed: ${heliusError.message}`)
+            console.log(`[Buy] Falling back to regular RPC send...`)
+            // Fallback to regular RPC send (txWithTip still has the tip, which is fine for regular RPC too)
+            signature = await connection.sendTransaction(txWithTip, {
+              skipPreflight: false,
+              maxRetries: 3
+            })
+            console.log(`[Buy] ✅ Sent via regular RPC (attempt ${attempt}/${maxRetries}): ${signature}`)
+          }
         }
         
         // Wait for confirmation and check if it succeeded
@@ -497,7 +584,8 @@ export const sellTokenSimple = async (
   walletPrivateKey: string,
   mintAddress: string,
   percentage: number = 100, // Percentage of tokens to sell (default 100%)
-  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'low' // Priority fee level: 'none' (0 SOL), 'low'/'normal' (random 0.000025-0.0001 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
+  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'low', // Priority fee level: 'none' (0 SOL), 'low'/'normal' (random 0.000025-0.0001 SOL), 'high' (0.005 SOL), 'ultra' (0.01 SOL)
+  skipHeliusSender: boolean = false // If true, skip Helius Sender and use regular RPC (saves 0.0002 SOL per tx for wallet warming)
 ): Promise<{ signature: string; txUrl: string }> => {
   try {
     const connection = getConnection()
@@ -564,7 +652,7 @@ export const sellTokenSimple = async (
     }
     
     // Get priority fee lamports based on selection
-    const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('./constants/constants')
+    const { PRIORITY_FEE_LAMPORTS_ULTRA, PRIORITY_FEE_LAMPORTS_HIGH, PRIORITY_FEE_LAMPORTS_MEDIUM, PRIORITY_FEE_LAMPORTS_LOW, PRIORITY_FEE_LAMPORTS_NONE } = require('../constants/constants')
     let priorityFeeLamports: number
     if (priorityFee === 'ultra') {
       priorityFeeLamports = PRIORITY_FEE_LAMPORTS_ULTRA
@@ -645,21 +733,37 @@ export const sellTokenSimple = async (
       console.log(`[Sell] ✅ Got sell transaction from Jupiter for ${mintAddress.substring(0, 8)}...`)
     }
     
-    // Send via Helius Sender for ultra-low latency (dual routing: validators + Jito)
-    // If Helius Sender fails, fallback to regular RPC send
+    // Send transaction (skip Helius Sender for wallet warming to save 0.0002 SOL per tx)
     let signature: string
-    try {
-      signature = await sendViaHeliusSender(sellTx)
-      console.log(`[Sell] ⚡ Sent via Helius Sender: ${signature}`)
-    } catch (heliusError: any) {
-      console.warn(`[Sell] ⚠️ Helius Sender failed: ${heliusError.message}`)
-      console.log(`[Sell] Falling back to regular RPC send...`)
-      // Fallback to regular RPC send
+    if (skipHeliusSender) {
+      // Skip Helius Sender - use regular RPC (cheaper for wallet warming)
       signature = await connection.sendTransaction(sellTx, {
         skipPreflight: false,
         maxRetries: 3
       })
-      console.log(`[Sell] ✅ Sent via regular RPC: ${signature}`)
+      console.log(`[Sell] 💰 Sent via regular RPC (no Helius tip): ${signature}`)
+    } else {
+      // Send via Helius Sender for ultra-low latency (dual routing: validators + Jito)
+      // If Helius Sender fails, fallback to regular RPC send
+      // NOTE: Helius Sender requires minimum 200,000 lamports tip to one of their tip wallets
+      try {
+        // Add Helius tip proactively (Helius Sender requires minimum 200,000 lamports tip)
+        // NOTE: Helius Sender requires minimum 200,000 lamports tip to one of their tip wallets
+        // Add tip proactively to avoid retry delay
+        const txWithTip = await addHeliusTip(sellTx, walletKp)
+        // Try Helius Sender first
+        signature = await sendViaHeliusSender(txWithTip)
+        console.log(`[Sell] ⚡ Sent via Helius Sender (with tip): ${signature}`)
+      } catch (heliusError: any) {
+        // If Helius Sender fails, fallback to regular RPC send
+        console.warn(`[Sell] ⚠️ Helius Sender failed: ${heliusError.message}`)
+        console.log(`[Sell] Falling back to regular RPC send...`)
+        signature = await connection.sendTransaction(sellTx, {
+          skipPreflight: false,
+          maxRetries: 3
+        })
+        console.log(`[Sell] ✅ Sent via regular RPC: ${signature}`)
+      }
     }
     
     // Wait for fast confirmation (~400ms) for GMGN indexing
@@ -767,4 +871,181 @@ export const getWalletTokenBalance = async (
     return { balance: 0, hasTokens: false }
   }
 }
+
+
+// ============================================================================
+// BATCH SELL FUNCTIONS - Instant parallel sells from multiple wallets
+// ============================================================================
+
+interface BatchSellResult {
+  success: boolean
+  wallet: string
+  signature?: string
+  error?: string
+  tokensHeld?: number
+}
+
+// Get wallet data from current-run.json
+const getCurrentRunWallets = (): {
+  mintAddress: string | null
+  devWallet: { address: string; privateKey: string } | null
+  bundleWallets: Array<{ address: string; privateKey: string }>
+  holderWallets: Array<{ address: string; privateKey: string }>
+} => {
+  const fs = require('fs')
+  const path = require('path')
+  
+  const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json')
+  
+  if (!fs.existsSync(currentRunPath)) {
+    console.log('[BatchSell] No current-run.json found')
+    return { mintAddress: null, devWallet: null, bundleWallets: [], holderWallets: [] }
+  }
+  
+  const data = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'))
+  const mintAddress = data.mintAddress || null
+  
+  // Get DEV wallet
+  let devWallet: { address: string; privateKey: string } | null = null
+  if (data.creatorDevWalletKey) {
+    const kp = Keypair.fromSecretKey(base58.decode(data.creatorDevWalletKey))
+    devWallet = { address: kp.publicKey.toBase58(), privateKey: data.creatorDevWalletKey }
+  }
+  
+  // Get bundle wallets
+  const bundleWallets: Array<{ address: string; privateKey: string }> = []
+  if (data.bundleWalletKeys && Array.isArray(data.bundleWalletKeys)) {
+    for (const key of data.bundleWalletKeys) {
+      const kp = Keypair.fromSecretKey(base58.decode(key))
+      bundleWallets.push({ address: kp.publicKey.toBase58(), privateKey: key })
+    }
+  }
+  
+  // Get holder wallets
+  const holderWallets: Array<{ address: string; privateKey: string }> = []
+  if (data.holderWalletKeys && Array.isArray(data.holderWalletKeys)) {
+    for (const key of data.holderWalletKeys) {
+      const kp = Keypair.fromSecretKey(base58.decode(key))
+      holderWallets.push({ address: kp.publicKey.toBase58(), privateKey: key })
+    }
+  }
+  
+  return { mintAddress, devWallet, bundleWallets, holderWallets }
+}
+
+// Batch sell from multiple wallets in PARALLEL (instant!)
+export const batchSell = async (
+  walletType: 'all' | 'bundles' | 'holders',
+  percentage: number = 100,
+  priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'high'
+): Promise<{ results: BatchSellResult[]; successful: number; failed: number; elapsed: number }> => {
+  const startTime = Date.now()
+  console.log(`\nBATCH SELL - ${walletType.toUpperCase()} (${percentage}%)`)
+  console.log(`Priority: ${priorityFee.toUpperCase()}`)
+  
+  const { mintAddress, devWallet, bundleWallets, holderWallets } = getCurrentRunWallets()
+  
+  if (!mintAddress) {
+    console.log('[BatchSell] No mint address found in current-run.json')
+    return { results: [], successful: 0, failed: 0, elapsed: 0 }
+  }
+  
+  console.log(`Mint: ${mintAddress}`)
+  
+  // Build wallet list based on type
+  let walletsToSell: Array<{ address: string; privateKey: string; label: string }> = []
+  
+  // DEV wallet only included in 'all'
+  if (walletType === 'all' && devWallet) {
+    walletsToSell.push({ ...devWallet, label: 'DEV' })
+  }
+  
+  // Bundle wallets for 'all' or 'bundles'
+  if (walletType === 'all' || walletType === 'bundles') {
+    bundleWallets.forEach((w, i) => {
+      walletsToSell.push({ ...w, label: `Bundle ${i + 1}` })
+    })
+  }
+  
+  if (walletType === 'all' || walletType === 'holders') {
+    holderWallets.forEach((w, i) => {
+      walletsToSell.push({ ...w, label: `Holder ${i + 1}` })
+    })
+  }
+  
+  if (walletsToSell.length === 0) {
+    console.log('[BatchSell] No wallets found to sell from')
+    return { results: [], successful: 0, failed: 0, elapsed: 0 }
+  }
+  
+  console.log(`\nSelling from ${walletsToSell.length} wallets in PARALLEL...`)
+  
+  // Check which wallets have tokens first
+  const balanceChecks = await Promise.all(
+    walletsToSell.map(async (wallet) => {
+      const balance = await getWalletTokenBalance(wallet.privateKey, mintAddress)
+      return { ...wallet, hasTokens: balance.hasTokens, tokensHeld: balance.balance }
+    })
+  )
+  
+  const walletsWithTokens = balanceChecks.filter(w => w.hasTokens)
+  const walletsWithoutTokens = balanceChecks.filter(w => !w.hasTokens)
+  
+  console.log(`${walletsWithTokens.length} wallets have tokens`)
+  console.log(`${walletsWithoutTokens.length} wallets skipped (no tokens)`)
+  
+  if (walletsWithTokens.length === 0) {
+    console.log('[BatchSell] No wallets have tokens to sell')
+    const elapsed = Date.now() - startTime
+    return { 
+      results: walletsWithoutTokens.map(w => ({ success: false, wallet: w.address, error: 'No tokens', tokensHeld: 0 })), 
+      successful: 0, failed: 0, elapsed 
+    }
+  }
+  
+  // Execute all sells in PARALLEL
+  console.log(`\nFIRING ${walletsWithTokens.length} SELLS IN PARALLEL...`)
+  
+  const sellPromises = walletsWithTokens.map(async (wallet) => {
+    try {
+      console.log(`[${wallet.label}] Selling ${percentage}% from ${wallet.address.substring(0, 8)}...`)
+      const result = await sellTokenSimple(wallet.privateKey, mintAddress, percentage, priorityFee)
+      console.log(`[${wallet.label}] SUCCESS: ${result.signature?.substring(0, 16)}...`)
+      return { success: true, wallet: wallet.address, signature: result.signature, tokensHeld: wallet.tokensHeld } as BatchSellResult
+    } catch (error: any) {
+      console.log(`[${wallet.label}] FAILED: ${error.message}`)
+      return { success: false, wallet: wallet.address, error: error.message, tokensHeld: wallet.tokensHeld } as BatchSellResult
+    }
+  })
+  
+  const results = await Promise.all(sellPromises)
+  
+  const skippedResults: BatchSellResult[] = walletsWithoutTokens.map(w => ({
+    success: false, wallet: w.address, error: 'No tokens to sell', tokensHeld: 0
+  }))
+  
+  const allResults = [...results, ...skippedResults]
+  const successful = results.filter(r => r.success).length
+  const failed = results.filter(r => !r.success).length
+  const elapsed = Date.now() - startTime
+  
+  console.log(`\nBATCH SELL COMPLETE!`)
+  console.log(`   Successful: ${successful}`)
+  console.log(`   Failed: ${failed}`)
+  console.log(`   Skipped: ${walletsWithoutTokens.length}`)
+  console.log(`   Time: ${elapsed}ms`)
+  
+  return { results: allResults, successful, failed, elapsed }
+}
+
+// Convenience exports
+export const batchSellAll = (percentage: number = 100, priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'high') => 
+  batchSell('all', percentage, priorityFee)
+
+export const batchSellBundles = (percentage: number = 100, priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'high') => 
+  batchSell('bundles', percentage, priorityFee)
+
+export const batchSellHolders = (percentage: number = 100, priorityFee: 'none' | 'low' | 'medium' | 'normal' | 'high' | 'ultra' = 'high') => 
+  batchSell('holders', percentage, priorityFee)
+
 

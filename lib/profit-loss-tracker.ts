@@ -9,7 +9,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Connection, PublicKey } from '@solana/web3.js';
 
-const PROFIT_LOSS_FILE = path.join(process.cwd(), 'keys', 'profit-loss.json');
+const PNL_DIR = path.join(process.cwd(), 'keys', 'pnl');
+const PROFIT_LOSS_FILE = path.join(PNL_DIR, 'profit-loss.json');
 
 export interface LaunchSettings {
   // Wallet configuration
@@ -68,9 +69,8 @@ export interface ProfitLossData {
  * Initialize profit/loss data file if it doesn't exist
  */
 function initializeDataFile(): void {
-  const dir = path.dirname(PROFIT_LOSS_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(PNL_DIR)) {
+    fs.mkdirSync(PNL_DIR, { recursive: true });
   }
 
   if (!fs.existsSync(PROFIT_LOSS_FILE)) {

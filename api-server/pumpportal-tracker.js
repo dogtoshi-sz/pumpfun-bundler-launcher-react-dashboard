@@ -12,8 +12,12 @@ class PumpPortalTracker {
     this.ws = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 10;
+    this.maxReconnectAttempts = Infinity; // NEVER stop trying to reconnect
     this.reconnectDelay = 3000;
+    this.maxReconnectDelay = 30000; // Cap at 30 seconds
+    this.lastPongTime = Date.now();
+    this.pingInterval = null;
+    this.healthCheckInterval = null;
     
     // Track subscriptions - IMPORTANT: Only use ONE connection
     this.subscribedTokens = new Set();
@@ -60,6 +64,13 @@ class PumpPortalTracker {
     this.autoSellEnabled = false; // Global toggle
     this.autoSellListeners = []; // Listeners for auto-sell events
     
+    // FRONT-RUN PROTECTION: Real-time tracking for instant synchronous checks
+    this.externalGrossBuyVolume = 0; // GROSS external buys (not net - ignores sells)
+    this.externalGrossBuyTrades = []; // Array of { solAmount, timestamp } for time-windowed tracking
+    this.frontRunWindowMs = 30000; // 30 second window for front-run detection
+    this.frontRunBlocked = false; // Flag set immediately when threshold exceeded (synchronous check)
+    this.frontRunThreshold = 0; // Threshold in SOL (set by launch process)
+    
     // MEV Protection settings
     this.mevProtection = {
       enabled: true,
@@ -70,10 +81,15 @@ class PumpPortalTracker {
     this.firstExternalTradeTime = null;
     this.externalTraderHistory = new Map();
     this.pendingSellTriggers = new Map();
+    this.cooldownRecheckScheduled = false; // Track if we've scheduled a re-check after cooldown
     
     // Config persistence
     this.configDir = path.join(__dirname, '..', 'keys');
-    this.autoSellConfigPath = path.join(this.configDir, 'auto-sell-config.json');
+    this.autoSellConfigPath = path.join(this.configDir, 'trade-configs', 'auto-sell-config.json');
+    
+    // DEDUPLICATION: Track which wallet+mint+type combinations have been recorded
+    // Format: "mint:wallet:type" (e.g., "ABC123:XYZ789:buy")
+    this.recordedTrades = new Set();
     
     // Load saved settings
     this.loadAutoSellConfig();
@@ -278,8 +294,53 @@ class PumpPortalTracker {
     }
     this.pendingSellTriggers.clear();
     
+    // Reset front-run protection state
+    this.externalGrossBuyVolume = 0;
+    this.externalGrossBuyTrades = [];
+    this.frontRunBlocked = false;
+    this.frontRunThreshold = 0;
+    
     console.log('[PumpPortal AutoSell] Reset all states');
     return this.getAutoSellConfig();
+  }
+  
+  // ============================================
+  // FRONT-RUN PROTECTION: Synchronous methods
+  // ============================================
+  
+  // Set front-run threshold (called before launch)
+  setFrontRunThreshold(threshold) {
+    this.frontRunThreshold = threshold || 0;
+    this.frontRunBlocked = false; // Reset flag when threshold is set
+    this.externalGrossBuyVolume = 0; // Reset volume tracking
+    this.externalGrossBuyTrades = []; // Reset trade history
+    if (threshold > 0) {
+      console.log(`[PumpPortal FrontRun] 🛡️  Front-run protection enabled: threshold = ${threshold} SOL (30s window)`);
+    } else {
+      console.log(`[PumpPortal FrontRun] ⚠️  Front-run protection disabled (threshold = 0)`);
+    }
+  }
+  
+  // Synchronous check: Is front-run blocked? (instant, no async)
+  isFrontRunBlocked() {
+    // Also check current volume in case flag wasn't set yet (race condition protection)
+    if (this.frontRunThreshold > 0 && this.externalGrossBuyVolume >= this.frontRunThreshold) {
+      if (!this.frontRunBlocked) {
+        this.frontRunBlocked = true; // Set flag now
+      }
+      return true;
+    }
+    return this.frontRunBlocked;
+  }
+  
+  // Get current external gross buy volume (for logging)
+  getExternalGrossBuyVolume() {
+    // Clean up old trades
+    const now = Date.now();
+    const cutoffTime = now - this.frontRunWindowMs;
+    this.externalGrossBuyTrades = this.externalGrossBuyTrades.filter(t => t.timestamp >= cutoffTime);
+    this.externalGrossBuyVolume = this.externalGrossBuyTrades.reduce((sum, t) => sum + t.solAmount, 0);
+    return this.externalGrossBuyVolume;
   }
   
   setMevProtection(settings) {
@@ -308,6 +369,35 @@ class PumpPortalTracker {
     
     const now = Date.now();
     const traderAddr = trade.fullTrader?.toLowerCase();
+    
+    // ============================================
+    // FRONT-RUN PROTECTION: Track GROSS external buys in real-time
+    // ============================================
+    // This runs IMMEDIATELY when a trade is detected (WebSocket real-time)
+    // Sets a flag that can be checked synchronously (no async delay)
+    if (trade.type === 'buy' && trade.solAmount > 0) {
+      // Add to time-windowed tracking
+      this.externalGrossBuyTrades.push({
+        solAmount: trade.solAmount,
+        timestamp: now
+      });
+      
+      // Remove trades outside the time window
+      const cutoffTime = now - this.frontRunWindowMs;
+      this.externalGrossBuyTrades = this.externalGrossBuyTrades.filter(t => t.timestamp >= cutoffTime);
+      
+      // Recalculate gross buy volume (sum of all buys in window)
+      this.externalGrossBuyVolume = this.externalGrossBuyTrades.reduce((sum, t) => sum + t.solAmount, 0);
+      
+      // IMMEDIATELY set flag if threshold exceeded (synchronous, no delay)
+      if (this.frontRunThreshold > 0 && this.externalGrossBuyVolume >= this.frontRunThreshold) {
+        if (!this.frontRunBlocked) {
+          this.frontRunBlocked = true;
+          console.log(`[PumpPortal FrontRun] 🚨 BLOCKED: External GROSS buys = ${this.externalGrossBuyVolume.toFixed(4)} SOL >= ${this.frontRunThreshold} SOL threshold`);
+          console.log(`[PumpPortal FrontRun] ⚡ Flag set IMMEDIATELY - all holder wallet buys will be skipped`);
+        }
+      }
+    }
     
     if (!this.firstExternalTradeTime) {
       this.firstExternalTradeTime = now;
@@ -350,6 +440,24 @@ class PumpPortalTracker {
     if (this.mevProtection.enabled) {
       const timeSinceFirst = (now - this.firstExternalTradeTime) / 1000;
       if (timeSinceFirst < this.mevProtection.launchCooldownSec) {
+        // Check if any threshold would have been reached (for logging)
+        for (const [walletAddr, config] of this.autoSellConfig) {
+          if (config.enabled && !config.triggered && this.externalNetVolume >= config.threshold && config.threshold > 0) {
+            console.log(`[PumpPortal AutoSell] ⏸️  Threshold reached (${this.externalNetVolume.toFixed(4)} SOL >= ${config.threshold} SOL) but BLOCKED by MEV cooldown (${(this.mevProtection.launchCooldownSec - timeSinceFirst).toFixed(1)}s remaining)`);
+          }
+        }
+        
+        // Schedule a re-check after cooldown expires (if not already scheduled)
+        if (!this.cooldownRecheckScheduled) {
+          const cooldownRemaining = (this.mevProtection.launchCooldownSec - timeSinceFirst) * 1000;
+          this.cooldownRecheckScheduled = true;
+          setTimeout(() => {
+            this.cooldownRecheckScheduled = false;
+            // Re-check thresholds after cooldown expires
+            this.checkAutoSellThresholds();
+          }, cooldownRemaining + 100); // Add 100ms buffer
+        }
+        
         this.notifyAutoSellListeners({
           type: 'volumeUpdate',
           externalNetVolume: this.externalNetVolume,
@@ -361,13 +469,37 @@ class PumpPortalTracker {
       }
     }
     
+    // Check thresholds (extracted to separate method so it can be called after cooldown)
+    this.checkAutoSellThresholds();
+    
+    this.notifyAutoSellListeners({
+      type: 'volumeUpdate',
+      externalNetVolume: this.externalNetVolume,
+      trade: trade,
+    });
+  }
+  
+  // Check auto-sell thresholds (can be called independently after cooldown expires)
+  checkAutoSellThresholds() {
+    if (!this.autoSellEnabled || !this.currentMintAddress) return;
+    
+    // MEV Protection: Launch cooldown check
+    if (this.mevProtection.enabled && this.firstExternalTradeTime) {
+      const now = Date.now();
+      const timeSinceFirst = (now - this.firstExternalTradeTime) / 1000;
+      if (timeSinceFirst < this.mevProtection.launchCooldownSec) {
+        // Still in cooldown - don't check yet
+        return;
+      }
+    }
+    
     // Check thresholds
     for (const [walletAddr, config] of this.autoSellConfig) {
       if (!config.enabled || config.triggered) continue;
       if (this.pendingSellTriggers.has(walletAddr)) continue;
       
       if (this.externalNetVolume >= config.threshold && config.threshold > 0) {
-        console.log(`[PumpPortal AutoSell] 🎯 Threshold REACHED for ${walletAddr.slice(0, 8)}...`);
+        console.log(`[PumpPortal AutoSell] 🎯 Threshold REACHED for ${walletAddr.slice(0, 8)}... (${this.externalNetVolume.toFixed(4)} SOL >= ${config.threshold} SOL)`);
         
         if (this.mevProtection.enabled && this.mevProtection.confirmationDelaySec > 0) {
           const delayMs = this.mevProtection.confirmationDelaySec * 1000;
@@ -395,12 +527,6 @@ class PumpPortalTracker {
         }
       }
     }
-    
-    this.notifyAutoSellListeners({
-      type: 'volumeUpdate',
-      externalNetVolume: this.externalNetVolume,
-      trade: trade,
-    });
   }
   
   async triggerAutoSell(walletAddress, config) {
@@ -601,6 +727,19 @@ class PumpPortalTracker {
       // Always reload wallets
       this.loadOurWallets(data);
       
+      // Map and apply auto-sell configs from launch form if available
+      // This ensures configs are connected to wallets even if they weren't applied during creation
+      const autoSellConfigPath = path.join(__dirname, '..', 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+      if (fs.existsSync(autoSellConfigPath)) {
+        const configData = JSON.parse(fs.readFileSync(autoSellConfigPath, 'utf8'));
+        const walletAddresses = {
+          holderWalletAddresses: data.holderWalletAddresses || [],
+          bundleWalletAddresses: data.bundleWalletAddresses || [],
+          devWalletAddress: data.devWalletAddress || data.devWallet || data.creatorWalletAddress
+        };
+        this.mapAndApplyAutoSellConfigs(configData, walletAddresses);
+      }
+      
       // Recalculate P&L with new wallet list
       this.recalculateProfitsFromCache();
       
@@ -618,6 +757,115 @@ class PumpPortalTracker {
       }
     } catch (e) {
       console.warn('[PumpPortal] Error reloading:', e.message);
+    }
+  }
+  
+  // Map and apply auto-sell configs from launch form
+  // This function maps wallet IDs (like "wallet-1", "bundle-1") to actual addresses
+  // and applies the configs to the auto-sell system
+  mapAndApplyAutoSellConfigs(configData, walletAddresses) {
+    let appliedCount = 0;
+    const { holderWalletAddresses = [], bundleWalletAddresses = [], devWalletAddress = null } = walletAddresses;
+    
+    // Map holder wallet configs
+    if (configData.holderWalletAutoSellConfigs) {
+      for (const [walletId, config] of Object.entries(configData.holderWalletAutoSellConfigs)) {
+        if (!config.enabled || parseFloat(config.threshold) <= 0) continue;
+        
+        let walletAddress = null;
+        
+        // Check if walletId is already an address (for warmed wallets)
+        if (walletId.length > 40) {
+          walletAddress = walletId;
+        } else if (walletId.startsWith('wallet-')) {
+          // Fresh wallet by index (wallet-1, wallet-2, etc.)
+          const index = parseInt(walletId.replace('wallet-', '')) - 1;
+          if (index >= 0 && index < holderWalletAddresses.length) {
+            walletAddress = holderWalletAddresses[index];
+          }
+        } else if (walletId.startsWith('holder-new-')) {
+          // Additional holder wallet
+          const index = parseInt(walletId.replace('holder-new-', '')) - 1;
+          if (index >= 0 && index < holderWalletAddresses.length) {
+            walletAddress = holderWalletAddresses[index];
+          }
+        }
+        
+        if (walletAddress) {
+          this.configureAutoSell(walletAddress, config.threshold, config.enabled);
+          appliedCount++;
+          console.log(`[PumpPortal AutoSell] ✅ Mapped ${walletId} → ${walletAddress.slice(0, 8)}... (threshold: ${config.threshold} SOL)`);
+        } else {
+          console.warn(`[PumpPortal AutoSell] ⚠️  Could not map wallet ID: ${walletId}`);
+        }
+      }
+    }
+    
+    // Map bundle wallet configs
+    if (configData.bundleWalletAutoSellConfigs) {
+      for (const [walletId, config] of Object.entries(configData.bundleWalletAutoSellConfigs)) {
+        if (!config.enabled || parseFloat(config.threshold) <= 0) continue;
+        
+        let walletAddress = null;
+        
+        // Check if walletId is already an address (for warmed wallets)
+        if (walletId.length > 40) {
+          walletAddress = walletId;
+        } else if (walletId.startsWith('bundle-')) {
+          // Bundle wallet by index
+          const index = parseInt(walletId.replace('bundle-', '')) - 1;
+          if (index >= 0 && index < bundleWalletAddresses.length) {
+            walletAddress = bundleWalletAddresses[index];
+          }
+        }
+        
+        if (walletAddress) {
+          this.configureAutoSell(walletAddress, config.threshold, config.enabled);
+          appliedCount++;
+          console.log(`[PumpPortal AutoSell] ✅ Mapped ${walletId} → ${walletAddress.slice(0, 8)}... (threshold: ${config.threshold} SOL)`);
+        } else {
+          console.warn(`[PumpPortal AutoSell] ⚠️  Could not map bundle wallet ID: ${walletId}`);
+        }
+      }
+    }
+    
+    // Apply DEV wallet config
+    if (configData.devAutoSellConfig && devWalletAddress) {
+      const devConfig = configData.devAutoSellConfig;
+      if (devConfig.enabled && parseFloat(devConfig.threshold) > 0) {
+        this.configureAutoSell(devWalletAddress, devConfig.threshold, devConfig.enabled);
+        appliedCount++;
+        console.log(`[PumpPortal AutoSell] ✅ Mapped DEV wallet → ${devWalletAddress.slice(0, 8)}... (threshold: ${devConfig.threshold} SOL)`);
+      }
+    }
+    
+    return appliedCount;
+  }
+  
+  // Apply auto-sell configs from launch form (launch-auto-sell-config.json)
+  // Can be called with explicit wallet addresses (for immediate application) or from currentRunData (for delayed application)
+  applyLaunchAutoSellConfigs(currentRunData, explicitAddresses = null) {
+    try {
+      const autoSellConfigPath = path.join(__dirname, '..', 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+      if (!fs.existsSync(autoSellConfigPath)) return;
+      
+      const configData = JSON.parse(fs.readFileSync(autoSellConfigPath, 'utf8'));
+      
+      // Map wallet IDs/indices to actual addresses
+      // Use explicit addresses if provided (for immediate application), otherwise use currentRunData
+      const walletAddresses = {
+        holderWalletAddresses: explicitAddresses?.holderWalletAddresses || currentRunData?.holderWalletAddresses || [],
+        bundleWalletAddresses: explicitAddresses?.bundleWalletAddresses || currentRunData?.bundleWalletAddresses || [],
+        devWalletAddress: explicitAddresses?.devWalletAddress || currentRunData?.devWalletAddress || currentRunData?.devWallet || currentRunData?.creatorWalletAddress
+      };
+      
+      const appliedCount = this.mapAndApplyAutoSellConfigs(configData, walletAddresses);
+      
+      if (appliedCount > 0) {
+        console.log(`[PumpPortal AutoSell] ✅ Applied ${appliedCount} auto-sell config(s) from launch form`);
+      }
+    } catch (e) {
+      console.warn('[PumpPortal AutoSell] Failed to apply launch auto-sell configs:', e.message);
     }
   }
   
@@ -982,6 +1230,13 @@ class PumpPortalTracker {
       console.log('[PumpPortal] ✅ Connected to PumpPortal WebSocket');
       this.isConnected = true;
       this.reconnectAttempts = 0;
+      this.lastPongTime = Date.now();
+
+      // Start ping/pong keepalive
+      this.startPingPong();
+      
+      // Start health check
+      this.startHealthCheck();
 
       // Re-subscribe to any tokens we were tracking
       for (const mint of this.subscribedTokens) {
@@ -990,6 +1245,10 @@ class PumpPortalTracker {
       for (const account of this.subscribedAccounts) {
         this.sendSubscribe('subscribeAccountTrade', [account]);
       }
+    });
+    
+    this.ws.on('pong', () => {
+      this.lastPongTime = Date.now();
     });
 
     this.ws.on('message', (data) => {
@@ -1009,16 +1268,60 @@ class PumpPortalTracker {
       console.log('[PumpPortal] WebSocket closed');
       this.isConnected = false;
       
-      // Reconnect with backoff
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        this.reconnectAttempts++;
-        const delay = this.reconnectDelay * this.reconnectAttempts;
-        console.log(`[PumpPortal] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-        setTimeout(() => this.connect(), delay);
-      } else {
-        console.error('[PumpPortal] ❌ Max reconnection attempts reached');
-      }
+      // Stop ping/pong and health check
+      this.stopPingPong();
+      this.stopHealthCheck();
+      
+      // ALWAYS reconnect with capped exponential backoff
+      this.reconnectAttempts++;
+      const delay = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), this.maxReconnectDelay);
+      console.log(`[PumpPortal] Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${this.reconnectAttempts})...`);
+      setTimeout(() => this.connect(), delay);
     });
+  }
+  
+  // Ping/pong keepalive to detect dead connections
+  startPingPong() {
+    this.stopPingPong(); // Clear any existing interval
+    
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.ping();
+        
+        // Check if we got a pong recently (within 30 seconds)
+        const timeSinceLastPong = Date.now() - this.lastPongTime;
+        if (timeSinceLastPong > 30000) {
+          console.warn('[PumpPortal] ⚠️ No pong received in 30s, reconnecting...');
+          this.ws.terminate();
+        }
+      }
+    }, 15000); // Ping every 15 seconds
+  }
+  
+  stopPingPong() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+  
+  // Health check to ensure we're connected
+  startHealthCheck() {
+    this.stopHealthCheck(); // Clear any existing interval
+    
+    this.healthCheckInterval = setInterval(() => {
+      if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        console.warn('[PumpPortal] ⚠️ Health check failed, reconnecting...');
+        this.connect();
+      }
+    }, 60000); // Check every 60 seconds
+  }
+  
+  stopHealthCheck() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
   }
 
   // Send subscribe message (internal)
@@ -1048,6 +1351,19 @@ class PumpPortalTracker {
     // Add to our tracking set
     this.subscribedTokens.add(mintAddress);
     this.currentMintAddress = mintAddress;
+    
+    // Clear deduplication set for fresh tracking
+    // Keep entries for current mint, clear others
+    const keysToKeep = [];
+    for (const key of this.recordedTrades) {
+      if (key.startsWith(mintAddress + ':')) {
+        keysToKeep.push(key);
+      }
+    }
+    this.recordedTrades.clear();
+    for (const key of keysToKeep) {
+      this.recordedTrades.add(key);
+    }
 
     // Initialize cache for this mint - load from disk first!
     if (!this.tradeCache.has(mintAddress)) {
@@ -1145,11 +1461,60 @@ class PumpPortalTracker {
     
     // Get SOL amount from API - check multiple possible field names
     const apiSolAmount = solAmount || sol_amount || amount || sol || 0;
+    
+    // Debug: Log raw PumpPortal data if amount seems suspiciously low for a buy
+    if (txType === 'buy' && apiSolAmount > 0 && apiSolAmount < 0.1) {
+      console.log(`[PumpPortal] ⚠️  Low SOL amount detected. Raw trade data:`, JSON.stringify({
+        solAmount,
+        sol_amount,
+        amount,
+        sol,
+        buy,
+        sell,
+        tokenAmount,
+        txType,
+        signature: signature?.slice(0, 12),
+        trader: traderPublicKey?.slice(0, 8)
+      }, null, 2));
+    }
 
     // Skip non-trade events for now
     if (txType !== 'buy' && txType !== 'sell') {
       console.log(`[PumpPortal] 📋 Event: ${txType} for ${mint?.slice(0, 8)}...`);
       return;
+    }
+    
+    // DEDUPLICATION: Use FULL signature to prevent duplicate trades (same transaction)
+    // This allows multiple buys/sells from the same wallet to be tracked correctly
+    // Only skip if we've seen this EXACT signature before (same transaction)
+    const fullSignature = signature || null;
+    const dedupeKey = fullSignature ? `${mint}:${fullSignature}` : `${mint}:${traderPublicKey?.toLowerCase()}:${txType}:${timestamp || Date.now()}:${Math.random()}`;
+    
+    // Only skip if we've seen this EXACT signature (prevent double-processing same transaction)
+    // Different transactions from same wallet will have different signatures = all tracked ✅
+    if (fullSignature && this.recordedTrades.has(dedupeKey)) {
+      // Already recorded this exact transaction (same signature) - skip duplicate
+      console.log(`[PumpPortal] ⏭️  Skipping duplicate transaction (signature: ${fullSignature.slice(0, 12)}...)`);
+      return;
+    }
+    
+    // Mark this transaction as recorded
+    this.recordedTrades.add(dedupeKey);
+    
+    // Prevent memory leak: Clean up old entries periodically (keep ALL for current mint, trim others)
+    // IMPORTANT: Keep ALL signatures for current mint to prevent duplicates
+    // Only clean up entries from OTHER mints (old tokens we're not tracking anymore)
+    if (this.recordedTrades.size > 20000) {
+      const currentMintKeys = Array.from(this.recordedTrades).filter(k => k.startsWith(`${mint}:`));
+      const otherMintKeys = Array.from(this.recordedTrades).filter(k => !k.startsWith(`${mint}:`));
+      
+      this.recordedTrades.clear();
+      // Keep ALL entries for current mint (prevent any duplicates)
+      currentMintKeys.forEach(k => this.recordedTrades.add(k));
+      // Keep only recent entries for other mints (last 5000 to save memory)
+      otherMintKeys.slice(-5000).forEach(k => this.recordedTrades.add(k));
+      
+      console.log(`[PumpPortal] 🧹 Cleaned up recordedTrades: kept ${currentMintKeys.length} for current mint, ${Math.min(otherMintKeys.length, 5000)} for others`);
     }
 
     // Calculate token amount (PumpPortal uses 'buy' and 'sell' fields)
@@ -1216,9 +1581,10 @@ class PumpPortalTracker {
     }
 
     // Format trade object for frontend
+    // IMPORTANT: Store FULL signature (not truncated) for proper deduplication
     const formattedTrade = {
-      signature: signature?.slice(0, 8) + '...',
-      fullSignature: signature,
+      signature: signature ? (signature.length > 8 ? signature.slice(0, 8) + '...' : signature) : 'unknown',
+      fullSignature: signature || null, // Store FULL signature for deduplication
       mintAddress: mint,
       type: txType,  // Already "buy" or "sell" - no parsing needed!
       trader: traderPublicKey?.slice(0, 4) + '...' + traderPublicKey?.slice(-4),
@@ -1280,17 +1646,45 @@ class PumpPortalTracker {
     
     // Get the full signature for this trade (handle both field names)
     const tradeSig = trade.fullSignature || trade.signature;
-    if (!tradeSig) {
-      console.warn('[PumpPortal] Trade has no signature, skipping:', trade);
+    const tradeTrader = trade.fullTrader?.toLowerCase();
+    const tradeAmount = trade.solAmount || 0;
+    const tradeTimestamp = trade.timestamp || Date.now();
+    const tradeType = trade.type;
+    
+    // ENHANCED DEDUPLICATION: Check by signature first, then by wallet+amount+timestamp
+    // This prevents duplicates even when signature format differs (e.g., real vs synthetic)
+    const isDuplicate = cache.some(t => {
+      // Check by signature (most reliable - exact match)
+      if (tradeSig) {
+        const existingSig = t.fullSignature || t.signature;
+        if (existingSig && existingSig === tradeSig) {
+          return true;
+        }
+      }
+      
+      // Check by wallet + amount + type + timestamp window (2 minutes)
+      // This catches duplicates even if signature format differs (real vs synthetic)
+      if (tradeTrader && tradeAmount > 0) {
+        const existingTrader = t.fullTrader?.toLowerCase();
+        const existingAmount = t.solAmount || 0;
+        const existingType = t.type;
+        const existingTimestamp = t.timestamp || 0;
+        
+        if (existingTrader === tradeTrader && 
+            existingType === tradeType &&
+            Math.abs(existingAmount - tradeAmount) < 0.01 && // Same amount (within 0.01 SOL tolerance)
+            Math.abs(existingTimestamp - tradeTimestamp) < 120000) { // Within 2 minutes
+          return true;
+        }
+      }
+      
+      return false;
+    });
+    
+    if (isDuplicate) {
+      // Silent return - duplicate already exists
       return;
     }
-    
-    // Avoid duplicates (check both fullSignature and signature fields)
-    const exists = cache.some(t => {
-      const existingSig = t.fullSignature || t.signature;
-      return existingSig === tradeSig;
-    });
-    if (exists) return;
     
     // Add to beginning (newest first)
     cache.unshift(trade);
@@ -1303,6 +1697,8 @@ class PumpPortalTracker {
     // Persist to disk (debounced)
     this.scheduleSaveToFile(mint);
   }
+  
+  // Bundle buys are now tracked exclusively via PumpPortal WebSocket
   
   // Debounce file saves (save at most every 2 seconds per mint)
   scheduleSaveToFile(mint) {
@@ -1399,9 +1795,20 @@ class PumpPortalTracker {
     };
   }
   
-  // Get trade stats for a mint
-  getTradeStats(mint) {
-    const trades = this.getTrades(mint);
+  // Get trade stats for a mint (optionally filtered by time window)
+  getTradeStats(mint, maxAgeSeconds = null) {
+    let trades = this.getTrades(mint);
+    
+    // Filter by time window if specified
+    if (maxAgeSeconds && maxAgeSeconds > 0) {
+      const now = Date.now();
+      const cutoffTime = now - (maxAgeSeconds * 1000);
+      trades = trades.filter(t => {
+        const tradeTime = t.timestamp || (t.age ? now - (t.age * 60000) : now);
+        return tradeTime >= cutoffTime;
+      });
+    }
+    
     return this.calculateTradeStats(trades);
   }
   
@@ -1668,6 +2075,9 @@ class PumpPortalTracker {
 
   // Disconnect
   disconnect() {
+    this.stopPingPong();
+    this.stopHealthCheck();
+    
     if (this.ws) {
       this.ws.close();
       this.ws = null;

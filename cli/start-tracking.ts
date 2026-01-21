@@ -14,11 +14,11 @@ import { PRIVATE_KEY, WEBSOCKET_ULTRA_FAST_MODE, AUTO_RAPID_SELL, AUTO_SELL_50_P
 let websocketTracker;
 if (WEBSOCKET_ULTRA_FAST_MODE) {
   console.log('🚀 Using ULTRA-FAST mode (sub-500ms reaction time)');
-  const { UltraFastWebSocketTracker } = require('./api-server/websocket-tracker-ultra-fast');
+  const { UltraFastWebSocketTracker } = require('../api-server/websocket-tracker-ultra-fast');
   websocketTracker = new UltraFastWebSocketTracker();
 } else {
   console.log('📊 Using STANDARD mode (reliable transaction fetching)');
-  websocketTracker = require('./api-server/websocket-tracker');
+  websocketTracker = require('../api-server/websocket-tracker');
 }
 
 async function startTracking() {

@@ -10,8 +10,6 @@ const base58 = require('bs58').default || require('bs58');
 const { Keypair, Connection, PublicKey, LAMPORTS_PER_SOL, SystemProgram, TransactionMessage, VersionedTransaction } = require('@solana/web3.js');
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } = require('@solana/spl-token');
 const WebSocket = require('ws');
-const liveTradesTracker = require('./live-trades-tracker');
-const quickNodeWebhook = require('./quicknode-webhook-handler');
 const pumpPortalTracker = require('./pumpportal-tracker');
 const { debugLogger } = require('./debug-logger');
 
@@ -275,10 +273,16 @@ const psdLogoApi = require('./psd-logo-api');
 app.use('/api/psd', psdLogoApi);
 app.use('/api/logo', psdLogoApi);
 
-// Browser-based signing routes (for production - keys stay in browser)
-const browserSigningRoutes = require('./routes/browser-signing');
-app.use('/api/wallets', browserSigningRoutes);
-app.use('/api/bundles', browserSigningRoutes);
+// 🕯️ Real-time candle chart API routes
+try {
+  // Candles API removed - using Birdeye charts instead to avoid rate limits
+  console.log('[API Server] 📊 Candle chart routes enabled');
+} catch (err) {
+  console.log('[API Server] ⚠️ Candle chart routes not available:', err.message);
+}
+
+// Browser-based signing routes removed for local-only version
+// (Production routes not needed for local development)
 
 // ============================================================================
 // GEMINI AI IMAGE GENERATION (Nano Banana)
@@ -635,75 +639,28 @@ app.get('/api/settings', (req, res) => {
   }
 });
 
-// Upload image file - uploads to Vercel Blob and returns URL
+// Upload image file - saves locally for preview/launch
+// Note: Pump.fun SDK handles IPFS upload automatically when launching tokens
 app.post('/api/upload-image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No image file provided' });
     }
     
-    // Check if Vercel Blob token is configured
-    const blobToken = process.env.BLOB1_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN;
+    // Save locally - the pump.fun SDK will handle IPFS upload automatically on launch
+    // This is just for preview and storing the file path
+    const relativePath = `./image/${req.file.filename}`;
+    console.log('[Upload Image] [ok] Image saved locally:', relativePath);
+    console.log('[Upload Image] Note: Pump.fun SDK will upload to IPFS automatically when launching token');
     
-    if (blobToken) {
-      // Upload to Vercel Blob
-      try {
-        const { put } = await import('@vercel/blob');
-        const fs = require('fs');
-        
-        // Read file buffer
-        const fileBuffer = fs.readFileSync(req.file.path);
-        const file = new File([fileBuffer], req.file.filename, { type: req.file.mimetype });
-        
-        // Generate unique filename
-        const timestamp = Date.now();
-        const randomStr = Math.random().toString(36).substring(2, 9);
-        const extension = req.file.filename.split('.').pop() || 'png';
-        const filename = `website-logo-${timestamp}-${randomStr}.${extension}`;
-        
-        // Upload to Vercel Blob
-        const blob = await put(filename, file, {
-          access: 'public',
-          addRandomSuffix: false,
-          token: blobToken,
-        });
-        
-        // Delete local file after upload
-        fs.unlinkSync(req.file.path);
-        
-        console.log('[Upload Image] ✅ Uploaded to Vercel Blob:', blob.url);
-        
-        return res.json({ 
-          success: true, 
-          url: blob.url,
-          filePath: blob.url, // For backward compatibility
-          filename: filename,
-          message: 'Image uploaded to Vercel Blob successfully' 
-        });
-      } catch (blobError) {
-        console.error('[Upload Image] ❌ Vercel Blob upload failed:', blobError.message);
-        // Fall back to local file path
-        const relativePath = `./image/${req.file.filename}`;
-        return res.json({ 
-          success: true, 
-          filePath: relativePath,
-          filename: req.file.filename,
-          message: 'Image saved locally (Vercel Blob upload failed)' 
-        });
-      }
-    } else {
-      // No Vercel Blob token - use local file path
-      console.warn('[Upload Image] ⚠️ BLOB1_READ_WRITE_TOKEN not configured, using local file path');
-      const relativePath = `./image/${req.file.filename}`;
-      return res.json({ 
-        success: true, 
-        filePath: relativePath,
-        filename: req.file.filename,
-        message: 'Image saved locally (Vercel Blob not configured)' 
-      });
-    }
+    return res.json({ 
+      success: true, 
+      filePath: relativePath,
+      filename: req.file.filename,
+      message: 'Image saved locally. Will be uploaded to IPFS automatically when launching token via pump.fun SDK.' 
+    });
   } catch (error) {
-    console.error('[Upload Image] ❌ Error:', error);
+    console.error('[Upload Image] [x] Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -891,6 +848,18 @@ app.post('/api/relaunch-token', async (req, res) => {
     nextPump.status = 'used';
     fs.writeFileSync(pumpAddressesPath, JSON.stringify(pumpAddresses, null, 2));
     
+    // Preserve auto-sell configs from previous launch if they exist
+    const autoSellConfigPath = path.join(projectRoot, 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+    let preservedAutoSellConfigs = null;
+    if (fs.existsSync(autoSellConfigPath)) {
+      try {
+        preservedAutoSellConfigs = JSON.parse(fs.readFileSync(autoSellConfigPath, 'utf8'));
+        console.log(`[Relaunch] 💾 Preserving auto-sell configs from previous launch`);
+      } catch (e) {
+        console.warn(`[Relaunch] ⚠️  Could not read auto-sell configs: ${e.message}`);
+      }
+    }
+    
     // Create warmed-wallets-for-launch.json from the previous run's wallet keys
     // This tells index.ts to use these specific wallets instead of generating new ones
     const warmedWalletsForLaunch = {
@@ -905,6 +874,14 @@ app.post('/api/relaunch-token', async (req, res) => {
       previousMint: previousRun.mintAddress,
       newMint: newMintAddress
     };
+    
+    // Preserve auto-sell configs for relaunch (they'll be applied when wallets are loaded)
+    if (preservedAutoSellConfigs) {
+      // Keep the launch-auto-sell-config.json file so it gets applied during launch
+      console.log(`[Relaunch] ✅ Auto-sell configs preserved - will be applied to wallets during launch`);
+    } else {
+      console.log(`[Relaunch] ℹ️  No auto-sell configs found from previous launch`);
+    }
     
     const warmedWalletsPath = path.join(projectRoot, 'keys', 'warmed-wallets-for-launch.json');
     fs.writeFileSync(warmedWalletsPath, JSON.stringify(warmedWalletsForLaunch, null, 2));
@@ -1063,8 +1040,53 @@ app.post('/api/launch-token', async (req, res) => {
       holderWalletAutoBuyAddresses, 
       holderWalletAutoBuyIndices, 
       holderWalletAutoBuyDelays, 
-      frontRunThreshold 
+      frontRunThreshold,
+      // Auto-sell configurations from launch form
+      holderWalletAutoSellConfigs,
+      bundleWalletAutoSellConfigs,
+      devAutoSellConfig
     } = req.body || {};
+    
+    // Log auto-sell configs if provided
+    if (holderWalletAutoSellConfigs || bundleWalletAutoSellConfigs || devAutoSellConfig) {
+      const holderCount = holderWalletAutoSellConfigs ? Object.keys(holderWalletAutoSellConfigs).length : 0;
+      const bundleCount = bundleWalletAutoSellConfigs ? Object.keys(bundleWalletAutoSellConfigs).length : 0;
+      const devEnabled = devAutoSellConfig && devAutoSellConfig.enabled && parseFloat(devAutoSellConfig.threshold) > 0;
+      console.log(`[Launch] 💰 Auto-sell configs from launch form:`);
+      if (holderCount > 0) console.log(`   Holder wallets: ${holderCount} configured`);
+      if (bundleCount > 0) console.log(`   Bundle wallets: ${bundleCount} configured`);
+      if (devEnabled) console.log(`   DEV wallet: enabled (threshold: ${devAutoSellConfig.threshold} SOL)`);
+    }
+    
+    // ============================================
+    // SAVE AUTO-SELL CONFIGURATIONS FROM LAUNCH FORM (BEFORE WALLETS)
+    // ============================================
+    // ARCHITECTURE: Configs are saved BEFORE wallets are created
+    // - For warmed wallets: walletId is the actual address (we know it upfront)
+    // - For fresh wallets: walletId is an index like "wallet-1", "bundle-1"
+    // When wallets are created, these configs are automatically mapped to actual addresses
+    // This ensures configs are ready BEFORE launch starts
+    if (holderWalletAutoSellConfigs || bundleWalletAutoSellConfigs || devAutoSellConfig) {
+      const autoSellConfigPath = path.join(projectRoot, 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+      const autoSellData = {
+        holderWalletAutoSellConfigs: holderWalletAutoSellConfigs || null,
+        bundleWalletAutoSellConfigs: bundleWalletAutoSellConfigs || null,
+        devAutoSellConfig: devAutoSellConfig || null,
+        createdAt: new Date().toISOString(),
+        // Note: walletIds in configs can be:
+        // - Actual addresses (for warmed wallets): "GB9dx5G1..."
+        // - Index strings (for fresh wallets): "wallet-1", "bundle-1", etc.
+        // These will be mapped to actual addresses when wallets are created
+      };
+      fs.writeFileSync(autoSellConfigPath, JSON.stringify(autoSellData, null, 2));
+      console.log(`[Launch] 💾 Saved auto-sell configs to launch-auto-sell-config.json (will be mapped to wallets when created)`);
+    } else {
+      // Clear auto-sell config if not provided
+      const autoSellConfigPath = path.join(projectRoot, 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+      if (fs.existsSync(autoSellConfigPath)) {
+        fs.unlinkSync(autoSellConfigPath);
+      }
+    }
     
     // Determine if any warmed wallets are being used (legacy compat + new per-type)
     const anyWarmedUsed = useWarmedWallets || useWarmedDevWallet || useWarmedBundleWallets || useWarmedHolderWallets;
@@ -1182,6 +1204,28 @@ app.post('/api/launch-token', async (req, res) => {
       if (frontRunThreshold > 0) {
         console.log(`   🛡️ Front-run protection: enabled (threshold: ${frontRunThreshold} SOL)`);
       }
+      
+      // Map and apply auto-sell configs for warmed wallets IMMEDIATELY (we know the addresses)
+      // Configs are already saved to launch-auto-sell-config.json, now we map them to addresses
+      if (holderWalletAutoSellConfigs || bundleWalletAutoSellConfigs || devAutoSellConfig) {
+        try {
+          const autoSellConfigPath = path.join(projectRoot, 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+          if (fs.existsSync(autoSellConfigPath)) {
+            const configData = JSON.parse(fs.readFileSync(autoSellConfigPath, 'utf8'));
+            const walletAddresses = {
+              holderWalletAddresses: holderWalletAddresses || [],
+              bundleWalletAddresses: bundleWalletAddresses || [],
+              devWalletAddress: creatorWalletAddress || null
+            };
+            const appliedCount = pumpPortalTracker.mapAndApplyAutoSellConfigs(configData, walletAddresses);
+            if (appliedCount > 0) {
+              console.log(`[Launch] ✅ Mapped and applied auto-sell configs for ${appliedCount} warmed wallet(s)`);
+            }
+          }
+        } catch (error) {
+          console.warn(`[Launch] ⚠️  Could not map auto-sell configs for warmed wallets: ${error.message}`);
+        }
+      }
     } else {
       // Clear warmed wallets file if not using them
       // warmedWalletsPath already declared above
@@ -1195,7 +1239,7 @@ app.post('/api/launch-token', async (req, res) => {
       // Use indices (for fresh wallets) or addresses (if provided for some reason)
       if ((holderWalletAutoBuyIndices && holderWalletAutoBuyIndices.length > 0) || 
           (holderWalletAutoBuyAddresses && holderWalletAutoBuyAddresses.length > 0)) {
-        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'fresh-auto-buy-config.json');
+        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'trade-configs', 'fresh-auto-buy-config.json');
         const freshAutoBuyData = {
           holderWalletAutoBuyIndices: holderWalletAutoBuyIndices || [], // Wallet indices (1, 2, 3, etc.)
           holderWalletAutoBuyAddresses: holderWalletAutoBuyAddresses || [], // Fallback: addresses if provided
@@ -1214,7 +1258,7 @@ app.post('/api/launch-token', async (req, res) => {
         }
       } else {
         // Clear fresh auto-buy config if not using it
-        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'fresh-auto-buy-config.json');
+        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'trade-configs', 'fresh-auto-buy-config.json');
         if (fs.existsSync(freshAutoBuyPath)) {
           fs.unlinkSync(freshAutoBuyPath);
         }
@@ -1508,9 +1552,9 @@ app.post('/api/rapid-launch', async (req, res) => {
 
     console.log(`[Rapid Launch] Token: ${launchEnv.TOKEN_NAME} ($${launchEnv.TOKEN_SYMBOL})`);
 
-    // Execute quick-launch.ts with overridden environment
+    // Execute quick-launch.ts with overridden environment (now in cli/ directory)
     const { spawn } = require('child_process');
-    const childProcess = spawn('npx', ['ts-node', 'quick-launch.ts'], {
+    const childProcess = spawn('npx', ['ts-node', 'cli/quick-launch.ts'], {
       cwd: projectRoot,
       shell: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1624,9 +1668,9 @@ app.post('/api/quick-launch-token', async (req, res) => {
       global.launchProgressListeners = [];
     }
     
-    // Execute quick-launch.ts in background with auto-confirm
+    // Execute quick-launch.ts in background with auto-confirm (now in cli/ directory)
     const { spawn } = require('child_process');
-    const childProcess = spawn('npx', ['ts-node', 'quick-launch.ts'], {
+    const childProcess = spawn('npx', ['ts-node', 'cli/quick-launch.ts'], {
       cwd: projectRoot,
       shell: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1675,6 +1719,9 @@ app.post('/api/quick-launch-token', async (req, res) => {
         // Immediately subscribe to the token via PumpPortal
         try {
           pumpPortalTracker.subscribeToToken(detectedMintAddress);
+          
+          // Candle aggregator removed - using Birdeye charts instead
+          // (removed to avoid rate limits)
           
           // Also reload wallets from current-run.json (it might not be written yet, but try)
           setTimeout(() => {
@@ -1846,6 +1893,141 @@ app.get('/api/next-pump-address', (req, res) => {
   }
 });
 
+// ==================== VANITY ADDRESS GENERATOR ====================
+
+// Track running vanity generator process
+let vanityGeneratorProcess = null;
+
+// Get vanity address pool status
+app.get('/api/vanity-pool-status', (req, res) => {
+  try {
+    const projectRoot = path.join(__dirname, '..');
+    const pumpAddressesPath = path.join(projectRoot, 'keys', 'pump-addresses.json');
+    
+    let available = 0;
+    let total = 0;
+    
+    if (fs.existsSync(pumpAddressesPath)) {
+      try {
+        const addresses = JSON.parse(fs.readFileSync(pumpAddressesPath, 'utf-8'));
+        total = addresses.length;
+        available = addresses.filter(addr => addr.status === 'available' && !addr.used).length;
+      } catch (parseError) {
+        console.error('[Vanity Pool] Error parsing pump-addresses.json:', parseError);
+      }
+    }
+    
+    res.json({
+      success: true,
+      available,
+      total,
+      generating: vanityGeneratorProcess !== null && !vanityGeneratorProcess.killed
+    });
+  } catch (error) {
+    console.error('[Vanity Pool] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Start vanity generator
+app.post('/api/vanity-generator/start', (req, res) => {
+  try {
+    // Check if already running
+    if (vanityGeneratorProcess !== null && !vanityGeneratorProcess.killed) {
+      return res.json({ success: true, message: 'Generator already running' });
+    }
+    
+    const projectRoot = path.join(__dirname, '..');
+    const generatorPath = path.join(projectRoot, 'cli', 'generate-pump-addresses.ts');
+    
+    // Check if generator script exists
+    if (!fs.existsSync(generatorPath)) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Vanity generator script not found. Make sure cli/generate-pump-addresses.ts exists.' 
+      });
+    }
+    
+    // Start the generator using ts-node
+    const { spawn } = require('child_process');
+    vanityGeneratorProcess = spawn('npx', ['ts-node', 'cli/generate-pump-addresses.ts'], {
+      cwd: projectRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true
+    });
+    
+    vanityGeneratorProcess.stdout.on('data', (data) => {
+      console.log('[Vanity Generator]', data.toString().trim());
+    });
+    
+    vanityGeneratorProcess.stderr.on('data', (data) => {
+      console.error('[Vanity Generator Error]', data.toString().trim());
+    });
+    
+    vanityGeneratorProcess.on('close', (code) => {
+      console.log(`[Vanity Generator] Process exited with code ${code}`);
+      vanityGeneratorProcess = null;
+    });
+    
+    vanityGeneratorProcess.on('error', (error) => {
+      console.error('[Vanity Generator] Failed to start:', error);
+      vanityGeneratorProcess = null;
+    });
+    
+    res.json({ success: true, message: 'Vanity generator started' });
+  } catch (error) {
+    console.error('[Vanity Generator Start] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Stop vanity generator
+app.post('/api/vanity-generator/stop', (req, res) => {
+  try {
+    if (vanityGeneratorProcess === null || vanityGeneratorProcess.killed) {
+      return res.json({ success: true, message: 'Generator not running' });
+    }
+    
+    // Kill the process
+    vanityGeneratorProcess.kill('SIGTERM');
+    
+    // Force kill after timeout if still running
+    setTimeout(() => {
+      if (vanityGeneratorProcess && !vanityGeneratorProcess.killed) {
+        vanityGeneratorProcess.kill('SIGKILL');
+      }
+    }, 5000);
+    
+    res.json({ success: true, message: 'Vanity generator stopped' });
+  } catch (error) {
+    console.error('[Vanity Generator Stop] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Generate random address preview (for when user selects "Random" mode)
+app.post('/api/generate-random-address', (req, res) => {
+  try {
+    // Generate a new random keypair
+    const keypair = Keypair.generate();
+    const address = keypair.publicKey.toBase58();
+    
+    // Store temporarily (will be used at launch if random mode is still selected)
+    // Note: This is just a preview - actual address used at launch may differ
+    res.json({
+      success: true,
+      address: address,
+      source: 'Random (pre-generated)',
+      isPreview: true
+    });
+  } catch (error) {
+    console.error('[Generate Random Address] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== END VANITY ADDRESS GENERATOR ====================
+
 // Balance cache to reduce RPC calls
 const balanceCache = new Map(); // key: `${address}_${mintAddress}` -> { solBalance, tokenBalance, timestamp }
 const CACHE_TTL = 3000; // 3 seconds cache
@@ -1855,6 +2037,12 @@ function invalidateBalanceCache(address, mintAddress) {
   const cacheKey = `${address}_${mintAddress}`;
   balanceCache.delete(cacheKey);
   // Removed verbose logging - only log errors
+}
+
+// Clear all balance caches (used after batch operations)
+function invalidateAllBalanceCaches() {
+  balanceCache.clear();
+  console.log('[Cache] Cleared all balance caches');
 }
 
 // Batch fetch balances (more efficient than individual calls)
@@ -2048,9 +2236,33 @@ app.get('/api/holder-wallets', async (req, res) => {
     // Use batch fetching for efficiency (mintAddress can be null - will just fetch SOL balances)
     const wallets = await batchFetchBalances(allWalletKeys, mintAddress);
     
-    // Add wallet type tags
+    // Add wallet type tags and auto-buy/auto-sell status
+    const holderWalletAutoBuyAddresses = [];
+    if (fs.existsSync(currentRunPath)) {
+      const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+      holderWalletAutoBuyAddresses.push(...(currentRun.holderWalletAutoBuyAddresses || []));
+    }
+    
+    // Also check warmed-wallets.json for auto-buy addresses (if using warmed wallets)
+    const warmedWalletsPath = path.join(__dirname, '..', 'keys', 'warmed-wallets.json');
+    if (fs.existsSync(warmedWalletsPath)) {
+      try {
+        const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'));
+        if (warmedData.holderWalletAutoBuyAddresses && warmedData.holderWalletAutoBuyAddresses.length > 0) {
+          holderWalletAutoBuyAddresses.push(...warmedData.holderWalletAutoBuyAddresses);
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    }
+    
+    // Normalize addresses to lowercase for comparison
+    const autoBuyAddressesSet = new Set(holderWalletAutoBuyAddresses.map(addr => addr.toLowerCase()));
+    
     wallets.forEach((wallet, index) => {
       wallet.type = walletTypes[index] || 'unknown';
+      // Add auto-buy status
+      wallet.hasAutoBuy = autoBuyAddressesSet.has(wallet.address.toLowerCase());
       // SECURITY: NEVER return private keys in API response
       // wallet.privateKey = allWalletKeys[index]; // REMOVED - SECURITY RISK
     });
@@ -2255,6 +2467,22 @@ app.post('/api/holder-wallet/buy', async (req, res) => {
       // Invalidate cache after buy
       invalidateBalanceCache(resolvedWalletAddress, mintAddress);
       
+      // INJECT TRADE INTO PUMPPORTAL (guaranteed tracking)
+      try {
+        pumpPortalTracker.injectTrade({
+          signature: result.signature,
+          mint: mintAddress,
+          traderPublicKey: resolvedWalletAddress,
+          txType: 'buy',
+          solAmount: parseFloat(solAmount),
+          tokenAmount: result.tokensBought || 0,
+          source: 'manual-buy'
+        });
+        console.log(`[Buy] ✅ Trade recorded in PumpPortal`);
+      } catch (injectError) {
+        console.warn(`[Buy] ⚠️ Failed to record trade: ${injectError.message}`);
+      }
+      
       res.json({ success: true, result });
     } catch (error) {
       console.error('[Buy] Error:', error);
@@ -2342,25 +2570,9 @@ app.post('/api/holder-wallet/sell', async (req, res) => {
       // Invalidate cache after sell
       invalidateBalanceCache(resolvedWalletAddress, mintAddress);
       
-      // Inject Jupiter sell into PumpPortal tracker (since PumpPortal only tracks bonding curve trades)
-      // Note: Jupiter sells don't appear on PumpPortal WebSocket, so we need to inject them manually
-      if (result && result.signature) {
-        try {
-          pumpPortalTracker.injectTrade({
-            signature: result.signature,
-            mint: mintAddress,
-            traderPublicKey: resolvedWalletAddress,
-            txType: 'sell',
-            solAmount: result.solReceived || 0, // SOL received from Jupiter quote
-            tokenAmount: result.tokensSold || 0, // Tokens sold
-            timestamp: Date.now(),
-            source: 'jupiter',
-          });
-          console.log(`[Sell] 💉 Injected Jupiter sell into tracker: ${result.solReceived?.toFixed(4) || 0} SOL, ${result.tokensSold?.toFixed(2) || 0} tokens`);
-        } catch (e) {
-          console.warn(`[Sell] Could not inject sell to tracker: ${e.message}`);
-        }
-      }
+      // NOTE: Don't manually inject trades here - PumpPortal catches them with correct SOL amounts
+      // The trading-terminal returns only { signature, txUrl }, not solReceived/tokensSold
+      // PumpPortal WebSocket will detect this trade and record it properly
       
       res.json({ success: true, result });
     } catch (error) {
@@ -2369,6 +2581,67 @@ app.post('/api/holder-wallet/sell', async (req, res) => {
     }
   } catch (error) {
     console.error('[Sell] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================================================
+// BATCH SELL ENDPOINTS - Instant parallel sells (no process spawn!)
+// ============================================================================
+
+// Batch sell ALL wallets (DEV + Bundle + Holder) - INSTANT!
+app.post('/api/batch-sell', async (req, res) => {
+  try {
+    const { percentage = 100, priorityFee = 'high' } = req.body;
+    const { callTradingFunction } = require('./call-trading-function');
+    
+    console.log(`[BatchSell] 🚀 SELL ALL wallets - ${percentage}% with ${priorityFee} priority`);
+    const result = await callTradingFunction('batchSellAll', percentage, priorityFee);
+    
+    // Invalidate all caches
+    invalidateAllBalanceCaches();
+    
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[BatchSell] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Batch sell BUNDLE wallets only (DEV + Bundles) - INSTANT!
+app.post('/api/batch-sell-bundles', async (req, res) => {
+  try {
+    const { percentage = 100, priorityFee = 'high' } = req.body;
+    const { callTradingFunction } = require('./call-trading-function');
+    
+    console.log(`[BatchSell] 🚀 SELL BUNDLES - ${percentage}% with ${priorityFee} priority`);
+    const result = await callTradingFunction('batchSellBundles', percentage, priorityFee);
+    
+    // Invalidate all caches
+    invalidateAllBalanceCaches();
+    
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[BatchSell] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Batch sell HOLDER wallets only - INSTANT!
+app.post('/api/batch-sell-holders', async (req, res) => {
+  try {
+    const { percentage = 100, priorityFee = 'high' } = req.body;
+    const { callTradingFunction } = require('./call-trading-function');
+    
+    console.log(`[BatchSell] 🚀 SELL HOLDERS - ${percentage}% with ${priorityFee} priority`);
+    const result = await callTradingFunction('batchSellHolders', percentage, priorityFee);
+    
+    // Invalidate all caches
+    invalidateAllBalanceCaches();
+    
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('[BatchSell] Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -2522,69 +2795,55 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
       });
     }
     
-    console.log(`[Sell All] 🎯 Found ${tokensWithBalance} token(s) with balance, selling each one...`);
+    console.log(`[Sell All] 🚀 Found ${tokensWithBalance} token(s) with balance, selling ALL in PARALLEL with HIGH priority (Helius Sender)...`);
     
-    // Now sell each token with balance
-    for (let i = 0; i < tokensToSell.length; i++) {
-      const { mintAddress, uiAmount, rawAmount, pubkey } = tokensToSell[i];
-      
+    // Sell ALL tokens in PARALLEL (like batch sell) - instant execution
+    const sellPromises = tokensToSell.map(async ({ mintAddress, uiAmount, rawAmount, pubkey }, index) => {
       try {
-        console.log(`[Sell All] [${i + 1}/${tokensWithBalance}] Selling ${mintAddress.substring(0, 8)}... (balance: ${uiAmount})`);
+        console.log(`[Sell All] [${index + 1}/${tokensWithBalance}] 🚀 Selling ${mintAddress.substring(0, 8)}... (balance: ${uiAmount}) in parallel...`);
         
-        // Use the balance we already know - no need to re-check
-        let currentBalance = uiAmount;
-        
-        // Sell 99% to leave dust and avoid edge cases
-        const sellPercentage = 99;
-        
-        console.log(`[Sell All] Selling 99% of ${mintAddress.substring(0, 8)}... (balance: ${uiAmount})`);
-        
-        // Sell 99% with low priority fee
-        try {
-          const result = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 99, 'low');
-          if (result && result.signature) {
-            results.push({ mint: mintAddress, success: true, result });
-            console.log(`[Sell All] ✅ Successfully sold ${mintAddress.substring(0, 8)}... - Tx: ${result.signature}`);
-          } else {
-            throw new Error('No signature returned from sell transaction');
-          }
-        } catch (sellError) {
-          console.error(`[Sell All] ❌ Failed to sell ${mintAddress.substring(0, 8)}...:`, sellError.message);
-          throw sellError; // Re-throw to be caught by outer catch
+        // Sell 99% with HIGH priority (uses Helius Sender for instant execution)
+        const result = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 99, 'high');
+        if (result && result.signature) {
+          console.log(`[Sell All] ✅ [${index + 1}/${tokensWithBalance}] Sold ${mintAddress.substring(0, 8)}... - Tx: ${result.signature}`);
+          // Invalidate cache
+          invalidateBalanceCache(walletAddress, mintAddress);
+          return { mint: mintAddress, success: true, result };
+        } else {
+          throw new Error('No signature returned from sell transaction');
         }
-        
-        // Invalidate cache
-        invalidateBalanceCache(walletAddress, mintAddress);
-        
-        // Small delay between sells
-        if (i < tokensToSell.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      } catch (error) {
-        const errorMsg = error.message || 'Unknown error';
+      } catch (sellError) {
+        const errorMsg = sellError.message || 'Unknown error';
         
         // Check if it's a "no liquidity" error - these tokens are dead/rugged
         if (errorMsg.includes('No Jupiter route') || errorMsg.includes('no route') || errorMsg.includes('Could not find')) {
-          console.log(`[Sell All] ⏭️ Skipping ${mintAddress.substring(0, 8)}... (no liquidity - token may be dead)`);
-          results.push({ mint: mintAddress, success: false, error: 'No liquidity (dead token)', skipped: true });
+          console.log(`[Sell All] ⏭️ [${index + 1}/${tokensWithBalance}] Skipping ${mintAddress.substring(0, 8)}... (no liquidity - token may be dead)`);
+          return { mint: mintAddress, success: false, error: 'No liquidity (dead token)', skipped: true };
         } else if (errorMsg.includes('too small') || errorMsg.includes('Amount to sell') || errorMsg.includes('No tokens')) {
-          // Try one more time with 100%
+          // Try one more time with 100% and high priority
           try {
-            console.log(`[Sell All] Retrying with 100% for ${mintAddress.substring(0, 8)}...`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            const retryResult = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 100, 'low');
-            results.push({ mint: mintAddress, success: true, result: retryResult, retried: true });
-            invalidateBalanceCache(walletAddress, mintAddress);
+            console.log(`[Sell All] [${index + 1}/${tokensWithBalance}] Retrying with 100% for ${mintAddress.substring(0, 8)}...`);
+            const retryResult = await callTradingFunction('sellTokenSimple', wallet.privateKey, mintAddress, 100, 'high');
+            if (retryResult && retryResult.signature) {
+              invalidateBalanceCache(walletAddress, mintAddress);
+              return { mint: mintAddress, success: true, result: retryResult, retried: true };
+            } else {
+              throw new Error('No signature returned from retry');
+            }
           } catch (retryError) {
-            console.error(`[Sell All] ❌ Retry failed for ${mintAddress.substring(0, 8)}...:`, retryError.message);
-            results.push({ mint: mintAddress, success: false, error: retryError.message });
+            console.error(`[Sell All] ❌ [${index + 1}/${tokensWithBalance}] Retry failed for ${mintAddress.substring(0, 8)}...:`, retryError.message);
+            return { mint: mintAddress, success: false, error: retryError.message };
           }
         } else {
-          console.error(`[Sell All] ❌ Failed to sell ${mintAddress.substring(0, 8)}...:`, errorMsg);
-          results.push({ mint: mintAddress, success: false, error: errorMsg });
+          console.error(`[Sell All] ❌ [${index + 1}/${tokensWithBalance}] Failed to sell ${mintAddress.substring(0, 8)}...:`, errorMsg);
+          return { mint: mintAddress, success: false, error: errorMsg };
         }
       }
-    }
+    });
+    
+    // Wait for all sells to complete in parallel
+    const sellResults = await Promise.all(sellPromises);
+    results.push(...sellResults);
     
     // Update wallet balance after selling
     try {
@@ -2610,6 +2869,191 @@ app.post('/api/warming-wallets/sell-all-tokens', async (req, res) => {
   } catch (error) {
     console.error('[Sell All Tokens] Error:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to sell all tokens' });
+  }
+});
+
+// Close all empty token accounts from a wallet (recover rent)
+app.post('/api/warming-wallets/close-empty-accounts', async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    
+    if (!walletAddress) {
+      return res.status(400).json({ success: false, error: 'Wallet address is required' });
+    }
+    
+    // Load wallet from warmed wallets to get private key
+    const { loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
+    const wallets = loadWarmedWallets();
+    const wallet = wallets.find(w => w.address === walletAddress);
+    
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found in warmed wallets' });
+    }
+    
+    if (!wallet.privateKey) {
+      return res.status(400).json({ success: false, error: 'Private key not found for this wallet' });
+    }
+    
+    const { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction } = require('@solana/web3.js');
+    const { TOKEN_PROGRAM_ID, createCloseAccountInstruction } = require('@solana/spl-token');
+    // Use top-level base58 import (handles bs58 v6 export format)
+    
+    const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey));
+    
+    // Get RPC endpoint
+    const RPC_ENDPOINT = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const RPC_WEBSOCKET_ENDPOINT = process.env.RPC_WEBSOCKET_ENDPOINT || '';
+    const connection = new Connection(RPC_ENDPOINT, {
+      wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+      commitment: 'confirmed'
+    });
+    
+    console.log(`[Close Accounts] Finding empty token accounts for ${walletAddress.substring(0, 8)}...`);
+    
+    // Get all token accounts (both Token and Token-2022)
+    const tokenAccounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+      programId: TOKEN_PROGRAM_ID
+    });
+    
+    // Token-2022 program ID
+    const TOKEN_2022_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+    let token2022Accounts = { value: [] };
+    try {
+      token2022Accounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+        programId: TOKEN_2022_ID
+      });
+    } catch (e) {
+      // Token-2022 query failed, ignore
+    }
+    
+    const allTokenAccounts = [...tokenAccounts.value, ...token2022Accounts.value];
+    
+    if (allTokenAccounts.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'No token accounts found',
+        closed: 0,
+        rentRecovered: 0
+      });
+    }
+    
+    console.log(`[Close Accounts] Found ${allTokenAccounts.length} token account(s)`);
+    
+    let closedCount = 0;
+    let totalRentRecovered = 0;
+    const results = [];
+    
+    // Process each token account
+    for (const tokenAccountInfo of allTokenAccounts) {
+      const tokenAccount = tokenAccountInfo.pubkey;
+      const rawAccountData = tokenAccountInfo.account.data;
+      const accountProgramId = tokenAccountInfo.account.owner;
+      const isToken2022 = accountProgramId.equals(TOKEN_2022_ID);
+      
+      try {
+        // Check if account still exists and get balance
+        const accountInfo = await connection.getAccountInfo(tokenAccount);
+        if (!accountInfo) {
+          continue; // Account already closed
+        }
+        
+        const lamportsOnAccount = accountInfo.lamports;
+        
+        // Read balance from raw account data
+        if (rawAccountData.length < 72) {
+          continue; // Invalid account data
+        }
+        
+        const balanceBigInt = rawAccountData.readBigUInt64LE(64);
+        const balance = Number(balanceBigInt);
+        
+        // Read owner/authority
+        const ownerBytes = rawAccountData.slice(32, 64);
+        const accountOwner = new PublicKey(ownerBytes);
+        
+        // Only close if balance is 0 and owner matches wallet
+        if (balance > 0) {
+          console.log(`[Close Accounts] Skipping ${tokenAccount.toBase58()} - has ${balance} tokens`);
+          continue;
+        }
+        
+        if (!accountOwner.equals(walletKp.publicKey)) {
+          console.log(`[Close Accounts] Skipping ${tokenAccount.toBase58()} - owner mismatch`);
+          continue;
+        }
+        
+        // Close the account
+        const programIdForClose = isToken2022 ? TOKEN_2022_ID : TOKEN_PROGRAM_ID;
+        const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+        
+        const closeMsg = new TransactionMessage({
+          payerKey: walletKp.publicKey,
+          recentBlockhash: latestBlockhash.blockhash,
+          instructions: [
+            createCloseAccountInstruction(
+              tokenAccount,
+              walletKp.publicKey,
+              accountOwner,
+              [],
+              programIdForClose
+            )
+          ]
+        }).compileToV0Message();
+        
+        const closeTx = new VersionedTransaction(closeMsg);
+        closeTx.sign([walletKp]);
+        
+        try {
+          const closeSig = await connection.sendTransaction(closeTx, { skipPreflight: false, maxRetries: 3 });
+          await connection.confirmTransaction(closeSig, 'confirmed');
+          
+          closedCount++;
+          totalRentRecovered += lamportsOnAccount;
+          results.push({ 
+            account: tokenAccount.toBase58(), 
+            success: true, 
+            rent: lamportsOnAccount / 1e9,
+            signature: closeSig
+          });
+          console.log(`[Close Accounts] ✅ Closed ${tokenAccount.toBase58()}: ${(lamportsOnAccount / 1e9).toFixed(6)} SOL`);
+        } catch (closeError) {
+          const errorMsg = closeError.message || String(closeError);
+          if (errorMsg.includes('InvalidAccountData') || errorMsg.includes('AccountNotInitialized')) {
+            console.log(`[Close Accounts] ℹ️ ${tokenAccount.toBase58()} already closed`);
+            continue;
+          }
+          results.push({ 
+            account: tokenAccount.toBase58(), 
+            success: false, 
+            error: errorMsg
+          });
+          console.log(`[Close Accounts] ❌ Failed to close ${tokenAccount.toBase58()}: ${errorMsg}`);
+        }
+        
+        // Small delay between closes
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.log(`[Close Accounts] ⚠️ Error processing ${tokenAccount.toBase58()}: ${error.message}`);
+        results.push({ 
+          account: tokenAccount.toBase58(), 
+          success: false, 
+          error: error.message
+        });
+      }
+    }
+    
+    console.log(`[Close Accounts] Complete: ${closedCount} closed, ${(totalRentRecovered / 1e9).toFixed(6)} SOL rent recovered`);
+    
+    res.json({
+      success: true,
+      message: `Closed ${closedCount} empty token account(s), recovered ${(totalRentRecovered / 1e9).toFixed(6)} SOL rent`,
+      closed: closedCount,
+      rentRecovered: totalRentRecovered / 1e9,
+      results
+    });
+  } catch (error) {
+    console.error('[Close Empty Accounts] Error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to close empty token accounts' });
   }
 });
 
@@ -2765,7 +3209,7 @@ app.get('/api/current-run', (req, res) => {
 // Get profit/loss tracking data
 app.get('/api/profit-loss', (req, res) => {
   try {
-    const profitLossPath = path.join(__dirname, '..', 'keys', 'profit-loss.json');
+    const profitLossPath = path.join(__dirname, '..', 'keys', 'pnl', 'profit-loss.json');
     
     if (!fs.existsSync(profitLossPath)) {
       return res.json({ 
@@ -2994,26 +3438,32 @@ app.get('/api/launch-wallet-info', async (req, res) => {
       }
     }
     
-    // Calculate bundle SOL needed (subtract existing balances)
-    let bundleSolNeeded = 0;
+    // Calculate bundle SOL needed (subtract existing balances for funding, but track total spending)
+    let bundleSolNeeded = 0; // What needs to be transferred
+    let bundleTotalSpending = 0; // Total SOL that will be spent on buys
     let bundleExistingBalance = 0;
     for (let i = 0; i < bundleAmounts.length; i++) {
-      const required = bundleAmounts[i] + 0.01; // amount + buffer
+      const buyAmount = bundleAmounts[i];
+      const required = buyAmount + 0.01; // amount + buffer
       const existing = warmedBundleBalances[i] || 0;
       bundleExistingBalance += existing;
       const needed = Math.max(0, required - existing);
       bundleSolNeeded += needed;
+      bundleTotalSpending += buyAmount; // Track total spending regardless of existing balance
     }
     
-    // Calculate holder SOL needed (subtract existing balances)
-    let holderSolNeeded = 0;
+    // Calculate holder SOL needed (subtract existing balances for funding, but track total spending)
+    let holderSolNeeded = 0; // What needs to be transferred
+    let holderTotalSpending = 0; // Total SOL that will be spent on buys
     let holderExistingBalance = 0;
     for (let i = 0; i < holderAmounts.length; i++) {
-      const required = holderAmounts[i] + 0.01; // amount + buffer
+      const buyAmount = holderAmounts[i];
+      const required = buyAmount + 0.01; // amount + buffer
       const existing = warmedHolderBalances[i] || 0;
       holderExistingBalance += existing;
       const needed = Math.max(0, required - existing);
       holderSolNeeded += needed;
+      holderTotalSpending += buyAmount; // Track total spending regardless of existing balance
     }
     
     // Creator/DEV wallet funding: if auto-created OR if existing wallet needs funding
@@ -3036,7 +3486,7 @@ app.get('/api/launch-wallet-info', async (req, res) => {
       // IMPORTANT: When USE_FUNDING_AS_BUYER=false and no warmed wallet selected,
       // we need to fund the DEV wallet fully, even if it exists from a previous launch
       // This ensures the wallet has enough SOL for the buyer amount
-      // The wallet might have been used/drained in previous launches
+      // The wallet might have been used in previous launches
       if (effectiveCreatorBalance < creatorRequiredAmount) {
         // Need to top up the wallet to cover the buy + buffer
         creatorDevSolNeeded = creatorRequiredAmount - effectiveCreatorBalance;
@@ -3064,24 +3514,36 @@ app.get('/api/launch-wallet-info', async (req, res) => {
     }
     
     // IMPORTANT: Account for DEV buy amount in the total calculation
+    // The "Total SOL Required" should show TOTAL SOL that will be SPENT, not just what needs to be transferred
     // 
     // Case 1: USE_FUNDING_AS_BUYER=true → DEV wallet IS funding wallet
-    //   - devBuyCost = 0 (buy comes from funding wallet's existing balance, not additional funding)
-    //   - The "Total SOL Required" should reflect what we need to FUND, not what we already have
+    //   - devBuyCost = buyerAmount (buy comes from funding wallet, but still counts as spending)
     //
     // Case 2: Separate DEV wallet needs funding (creatorDevSolNeeded > 0)
     //   - devBuyCost = 0 (already included in creatorDevSolNeeded)
     //
     // Case 3: Separate DEV wallet has enough balance (creatorDevSolNeeded = 0)
-    //   - devBuyCost = 0 (no additional funding needed from master wallet)
+    //   - devBuyCost = buyerAmount (wallet has balance, but buy still counts as spending)
     //
-    const devBuyCost = 0; // DEV buy cost is already in funding wallet or creatorDevSolNeeded
+    let devBuyCost = 0;
+    if (useFundingAsBuyer || creatorDevWallet.isFundingWallet) {
+      // DEV wallet is funding wallet - buy amount still counts as spending
+      devBuyCost = buyerAmount;
+    } else if (creatorDevSolNeeded === 0 && effectiveCreatorBalance >= creatorRequiredAmount) {
+      // Separate DEV wallet has enough balance - buy amount still counts as spending
+      devBuyCost = buyerAmount;
+    }
+    // If creatorDevSolNeeded > 0, the buy amount is already included in creatorDevSolNeeded
     
     const jitoFee = parseFloat(env.JITO_FEE || '0.001');
     const lutFee = 0.002; // LUT creation rent (~0.001-0.002 SOL actual cost, using 0.002 as safe estimate)
     const buffer = 0.04; // Buffer for fees
     
-    const totalSolNeeded = bundleSolNeeded + holderSolNeeded + creatorDevSolNeeded + devBuyCost + jitoFee + lutFee + buffer;
+    // Total SOL needed to TRANSFER (for funding wallets)
+    const totalSolNeeded = bundleSolNeeded + holderSolNeeded + creatorDevSolNeeded + jitoFee + lutFee + buffer;
+    
+    // Total SOL that will be SPENT (including all buy amounts, regardless of wallet funding)
+    const totalSolSpending = bundleTotalSpending + holderTotalSpending + buyerAmount + jitoFee + lutFee + buffer;
     
     // Helper function to shorten private key for display
     const shortenPrivateKey = (key) => {
@@ -3129,7 +3591,9 @@ app.get('/api/launch-wallet-info', async (req, res) => {
           jitoFee: jitoFee,
           lutFee: lutFee,
           buffer: buffer,
-          total: totalSolNeeded,
+          total: totalSolSpending, // Show total SPENDING, not just transfers needed
+          totalNeededToTransfer: totalSolNeeded, // What actually needs to be transferred
+          totalSpending: totalSolSpending, // Total SOL that will be spent
           totalExistingBalance: bundleExistingBalance + holderExistingBalance + effectiveCreatorBalance
         },
         buyerAmount: buyerAmount,
@@ -3203,305 +3667,15 @@ app.get('/api/deployer-wallet', async (req, res) => {
   }
 });
 
-// ============================================
-// MARKETING API ENDPOINTS
-// ============================================
+// NOTE: Marketing API endpoints removed for simplified public version
+// Removed: /api/marketing/* (website updates, telegram auth, group creation, twitter automation)
 
-// Website Update Endpoint
-app.post('/api/marketing/website/update', async (req, res) => {
-  try {
-    console.log('[Marketing] Website update request received');
-    const { vercelSiteUrl, secret, tokenConfig } = req.body;
-    
-    // Sanitize tokenConfig for logging (truncate base64 image data)
-    const sanitizeForLog = (config) => {
-      if (!config) return config;
-      const sanitized = { ...config };
-      if (sanitized.logoUrl && sanitized.logoUrl.startsWith('data:image/')) {
-        sanitized.logoUrl = sanitized.logoUrl.substring(0, 50) + '... (base64 data, truncated)';
-      }
-      if (sanitized.tokenImageUrl && sanitized.tokenImageUrl.startsWith('data:image/')) {
-        sanitized.tokenImageUrl = sanitized.tokenImageUrl.substring(0, 50) + '... (base64 data, truncated)';
-      }
-      return sanitized;
-    };
-    
-    // Log sanitized config (only in development)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[Marketing] Token config (sanitized):', JSON.stringify(sanitizeForLog(tokenConfig), null, 2));
-    }
-    
-    if (!vercelSiteUrl) {
-      return res.status(400).json({ success: false, error: 'Website URL is required' });
-    }
-    
-    if (!tokenConfig) {
-      return res.status(400).json({ success: false, error: 'Token config is required' });
-    }
-    
-    // Check if DATABASE_URL is configured
-    // Reload .env to ensure we have the latest value (like Nodematrix - Next.js auto-reloads .env)
-    const rootEnvPath = path.join(__dirname, '..', '.env');
-    if (fs.existsSync(rootEnvPath)) {
-      require('dotenv').config({ path: rootEnvPath, override: true });
-    }
-    
-    const databaseUrl = process.env.DATABASE_URL || process.env.RAILWAY_DATABASE_URL;
-    if (!databaseUrl) {
-      console.error('[Marketing] ❌ DATABASE_URL not configured');
-      console.error('[Marketing] Checked root .env at:', rootEnvPath);
-      console.error('[Marketing] Available DATABASE env vars:', Object.keys(process.env).filter(k => k.includes('DATABASE')));
-      return res.status(400).json({ 
-        success: false, 
-        error: 'DATABASE_URL not configured. Please set DATABASE_URL in your .env file with your PostgreSQL connection string.' 
-      });
-    }
-    
-    console.log('[Marketing] Using DATABASE_URL:', databaseUrl.replace(/:[^:@]+@/, ':****@')); // Mask password
-    console.log('[Marketing] DATABASE_URL host:', databaseUrl.match(/@([^:]+)/)?.[1] || 'unknown');
-    
-    // Note: secret is optional and NOT used for direct database saves
-    // It's only for Vercel API authentication (if using Vercel deployment method)
-    // For direct PostgreSQL saves, we don't need a secret
-    if (secret) {
-      console.log('[Marketing] ℹ️  Secret provided (not used for direct DB saves)');
-    }
-    
-    // CRITICAL: Ensure DATABASE_URL is set in process.env before loading TypeScript module
-    // This matches how Nodematrix (Next.js) works - Next.js auto-loads .env into process.env
-    process.env.DATABASE_URL = databaseUrl;
-    process.env.RAILWAY_DATABASE_URL = databaseUrl;
-    
-    // If logoUrl or tokenImageUrl is a base64 data URL, upload it to Vercel Blob first
-    const { put } = require('@vercel/blob');
-    const blobToken = process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB1_READ_WRITE_TOKEN;
-    
-    const uploadBase64ToBlob = async (base64DataUrl, filename) => {
-      if (!base64DataUrl || !base64DataUrl.startsWith('data:image/')) {
-        return base64DataUrl; // Not a base64 data URL, return as-is
-      }
-      
-      if (!blobToken) {
-        console.warn('[Marketing] ⚠️ BLOB_READ_WRITE_TOKEN not set, cannot upload base64 image to Vercel Blob');
-        return null; // Return null instead of base64 to avoid database spam
-      }
-      
-      try {
-        // Extract mime type and base64 data
-        const matches = base64DataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
-        if (!matches) {
-          console.warn('[Marketing] ⚠️ Invalid base64 data URL format');
-          return null;
-        }
-        
-        const mimeType = matches[1];
-        const base64Data = matches[2];
-        const buffer = Buffer.from(base64Data, 'base64');
-        
-        // Upload to Vercel Blob
-        const blob = await put(filename, buffer, {
-          access: 'public',
-          addRandomSuffix: true,
-          contentType: `image/${mimeType}`,
-          token: blobToken,
-        });
-        
-        console.log(`[Marketing] ✅ Uploaded base64 image to Vercel Blob: ${blob.url}`);
-        return blob.url;
-      } catch (error) {
-        console.error('[Marketing] ❌ Failed to upload base64 image to Vercel Blob:', error.message);
-        return null; // Return null instead of base64 to avoid database spam
-      }
-    };
-    
-    // Process logoUrl and tokenImageUrl
-    if (tokenConfig.logoUrl && tokenConfig.logoUrl.startsWith('data:image/')) {
-      const filename = `logo-${Date.now()}.${tokenConfig.logoUrl.match(/data:image\/(\w+);/)?.[1] || 'png'}`;
-      tokenConfig.logoUrl = await uploadBase64ToBlob(tokenConfig.logoUrl, filename);
-    }
-    
-    if (tokenConfig.tokenImageUrl && tokenConfig.tokenImageUrl.startsWith('data:image/')) {
-      const filename = `token-image-${Date.now()}.${tokenConfig.tokenImageUrl.match(/data:image\/(\w+);/)?.[1] || 'png'}`;
-      tokenConfig.tokenImageUrl = await uploadBase64ToBlob(tokenConfig.tokenImageUrl, filename);
-    }
-    
-    // Import and use website update module (TypeScript)
-    // The module will read from process.env.DATABASE_URL (like Nodematrix does)
-    const { updateWebsiteConfig } = require(projectPath('marketing', 'website', 'website-update.ts'));
-    const result = await updateWebsiteConfig({
-      siteUrl: vercelSiteUrl,
-      secret: secret || '', // Optional, not used for DB saves
-      tokenConfig: tokenConfig,
-    });
-    
-    if (result.success) {
-      console.log('[Marketing] ✅ Website config updated:', result.site_url);
-      res.json({
-        success: true,
-        site_url: result.site_url,
-        message: 'Website configuration updated successfully',
-      });
-    } else {
-      console.error('[Marketing] ❌ Website update failed:', result.error);
-      res.status(500).json({
-        success: false,
-        error: result.error || 'Failed to update website configuration',
-      });
-    }
-  } catch (error) {
-    // Sanitize error message to avoid logging base64 images
-    const sanitizedMessage = error.message && error.message.length > 500 
-      ? error.message.substring(0, 500) + '... (truncated)' 
-      : error.message;
-    console.error('[Marketing] ❌ Website update error:', sanitizedMessage);
-    
-    // Provide helpful error message
-    let errorMessage = sanitizedMessage || 'Unknown error';
-    if (error.message && error.message.includes('DATABASE_URL')) {
-      errorMessage = 'DATABASE_URL not configured. Please set DATABASE_URL in your .env file.';
-    } else if (error.message && error.message.includes('ECONNRESET')) {
-      errorMessage = 'Database connection failed. Check your DATABASE_URL and ensure the database is accessible. See console for details.';
-    } else if (error.message && error.message.includes('ENOTFOUND')) {
-      errorMessage = 'Database host not found. Make sure you\'re using the PUBLIC Railway database URL (not .internal).';
-    }
-    
-    res.status(500).json({ 
-      success: false, 
-      error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? undefined : undefined // Don't include stack trace to avoid base64 spam
-    });
-  }
-});
-
-// Telegram Verification Endpoints
-app.post('/api/marketing/telegram/send-code', async (req, res) => {
-  try {
-    console.log('[Marketing] Telegram send code request received');
-    const { api_id, api_hash, phone } = req.body;
-    
-    if (!api_id || !api_hash || !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Telegram API credentials are required (api_id, api_hash, phone)' 
-      });
-    }
-    
-    // Import and use Telegram verification wrapper
-    console.log('[Marketing] Calling sendTelegramVerificationCode...');
-    const { sendTelegramVerificationCode } = require(projectPath('marketing', 'telegram', 'telegram-verification.ts'));
-    const result = await sendTelegramVerificationCode({
-      api_id,
-      api_hash,
-      phone,
-    });
-    
-    console.log('[Marketing] Verification result:', JSON.stringify(result, null, 2));
-    res.json(result);
-  } catch (error) {
-    console.error('[Marketing] Telegram send code error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Unknown error' });
-  }
-});
-
-app.post('/api/marketing/telegram/verify-code', async (req, res) => {
-  try {
-    console.log('[Marketing] Telegram verify code request received');
-    const { api_id, api_hash, phone, code, phone_code_hash, password } = req.body;
-    
-    if (!api_id || !api_hash || !phone || !code) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'api_id, api_hash, phone, and code are required' 
-      });
-    }
-    
-    // Import and use Telegram verification wrapper
-    const { verifyTelegramCode } = require(projectPath('marketing', 'telegram', 'telegram-verification.ts'));
-    const result = await verifyTelegramCode({
-      api_id,
-      api_hash,
-      phone,
-      code,
-      phone_code_hash,
-      password,
-    });
-    
-    res.json(result);
-  } catch (error) {
-    console.error('[Marketing] Telegram verify code error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Unknown error' });
-  }
-});
-
-app.post('/api/marketing/telegram/check-status', async (req, res) => {
-  try {
-    console.log('[Marketing] Telegram check status request received');
-    const { api_id, api_hash, phone } = req.body;
-    
-    if (!api_id || !api_hash || !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Telegram API credentials are required (api_id, api_hash, phone)' 
-      });
-    }
-    
-    // Import and use Telegram verification wrapper
-    const { checkTelegramStatus } = require(projectPath('marketing', 'telegram', 'telegram-verification.ts'));
-    const result = await checkTelegramStatus({
-      api_id,
-      api_hash,
-      phone,
-    });
-    
-    res.json(result);
-  } catch (error) {
-    console.error('[Marketing] Telegram check status error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Unknown error' });
-  }
-});
-
-// Telegram Create Group Endpoint
-app.post('/api/marketing/telegram/create-group', async (req, res) => {
-  try {
-    console.log('[Marketing] Telegram create group request received');
-    const { config, scripted_conversations = [] } = req.body;
-    
-    if (!config || !config.telegram_api_id || !config.telegram_api_hash || !config.telegram_phone) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Telegram API credentials are required (api_id, api_hash, phone)' 
-      });
-    }
-    
-    // Import and use Telegram wrapper (TypeScript)
-    const { createTelegramGroup } = require(projectPath('marketing', 'telegram', 'telegram-wrapper.ts'));
-    const result = await createTelegramGroup({
-      config: config,
-      scripted_conversations: scripted_conversations,
-    });
-    
-    if (result.success) {
-      res.json({
-        success: true,
-        group_chat_id: result.group_chat_id,
-        channel_chat_id: result.channel_chat_id,
-        telegram_link: result.telegram_link,
-        message: result.message || 'Telegram group/channel created successfully',
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: result.error || 'Failed to create Telegram group/channel',
-      });
-    }
-  } catch (error) {
-    // Sanitize error message to avoid logging base64 images
-    const sanitizedMessage = error.message && error.message.length > 500 
-      ? error.message.substring(0, 500) + '... (truncated)' 
-      : error.message;
-    console.error('[Marketing] Telegram create group error:', sanitizedMessage);
-    res.status(500).json({ success: false, error: sanitizedMessage || 'Unknown error' });
-  }
+// Stub for any remaining marketing endpoint references
+const MARKETING_DISABLED = true;
+const marketingDisabledResponse = (res) => res.status(200).json({ 
+  success: false, 
+  disabled: true,
+  message: 'Marketing features are not available in this version.' 
 });
 
 // Wallet Warming Endpoints - SIMPLIFIED SYSTEM
@@ -3595,23 +3769,35 @@ app.post('/api/warming-wallets/preview', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Private key is required' });
     }
     
-    // Decode private key to get address
-    const bs58 = require('bs58');
+    // Validate private key format (same validation as add endpoint)
+    // Use top-level base58 import (handles bs58 v6 export format)
     const { Keypair, Connection } = require('@solana/web3.js');
     
     let keypair;
     try {
-      const decoded = bs58.decode(privateKey.trim());
+      const trimmedKey = privateKey.trim();
+      
+      // Basic validation for private key format and length
+      if (trimmedKey.length < 80 || trimmedKey.length > 200) {
+        return res.status(400).json({ success: false, error: `Invalid private key length. Expected 80-200 characters, got ${trimmedKey.length}.` });
+      }
+      
+      const decoded = base58.decode(trimmedKey);
+      if (decoded.length !== 64) {
+        return res.status(400).json({ success: false, error: `Invalid private key format. Decoded key is ${decoded.length} bytes, expected 64 bytes.` });
+      }
+      
       keypair = Keypair.fromSecretKey(decoded);
+      const testAddress = keypair.publicKey.toBase58();
+      
+      if (!testAddress || testAddress.length < 32) {
+        return res.status(400).json({ success: false, error: 'Failed to derive valid wallet address from private key' });
+      }
     } catch (decodeError) {
-      return res.status(400).json({ success: false, error: 'Invalid private key format' });
+      return res.status(400).json({ success: false, error: `Invalid private key format: ${decodeError.message || 'Failed to decode base58 key'}` });
     }
     
     const address = keypair.publicKey.toBase58();
-    
-    if (!address || address.length < 32) {
-      return res.status(400).json({ success: false, error: 'Failed to derive wallet address from private key' });
-    }
     
     // Get SOL balance
     const rpcUrl = process.env.HELIUS_RPC_URL || process.env.RPC_URL || process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
@@ -3644,6 +3830,37 @@ app.post('/api/warming-wallets/add', async (req, res) => {
     const { privateKey, tags } = req.body;
     if (!privateKey) {
       return res.status(400).json({ success: false, error: 'Private key is required' });
+    }
+    
+    // Validate private key format first
+    // Use top-level base58 import (handles bs58 v6 export format)
+    const { Keypair } = require('@solana/web3.js');
+    
+    let keypair;
+    try {
+      const trimmedKey = privateKey.trim();
+      // Check if it's a valid base58 string
+      if (trimmedKey.length < 80 || trimmedKey.length > 200) {
+        return res.status(400).json({ success: false, error: 'Invalid private key length. Should be 80-200 characters (base58 format)' });
+      }
+      
+      const decoded = base58.decode(trimmedKey);
+      if (decoded.length !== 64) {
+        return res.status(400).json({ success: false, error: 'Invalid private key format. Decoded length should be 64 bytes' });
+      }
+      
+      keypair = Keypair.fromSecretKey(decoded);
+      const testAddress = keypair.publicKey.toBase58();
+      
+      if (!testAddress || testAddress.length < 32) {
+        return res.status(400).json({ success: false, error: 'Failed to derive valid wallet address from private key' });
+      }
+    } catch (decodeError) {
+      console.error('[Warming] Private key decode error:', decodeError.message);
+      return res.status(400).json({ 
+        success: false, 
+        error: `Invalid private key format: ${decodeError.message}. Make sure it's a valid base58-encoded Solana private key.` 
+      });
     }
     
     const { addWarmingWallet, loadWarmedWallets } = require(projectPath('src', 'wallet-warming-manager.ts'));
@@ -4161,16 +4378,24 @@ app.post('/api/warm-wallets/start', async (req, res) => {
     const warmConfig = {
       walletsPerBatch: config?.walletsPerBatch || 2,
       tradesPerWallet: config?.tradesPerWallet || 2, // Just 2 trades is enough to show activity
-      minBuyAmount: config?.minBuyAmount || 0.002, // 0.002 SOL ≈ $0.28 (minimum Jupiter accepts)
-      maxBuyAmount: config?.maxBuyAmount || 0.003, // 0.003 SOL ≈ $0.42 (small but works)
+      minBuyAmount: config?.minBuyAmount || 0.0002, // 0.0002 SOL (ultra-small, may need to verify Jupiter accepts)
+      maxBuyAmount: config?.maxBuyAmount || 0.0003, // 0.0003 SOL (ultra-small for cheap warming)
+      tradingPattern: config?.tradingPattern || 'sequential', // 'sequential', 'randomized', 'accumulate'
       minIntervalSeconds: config?.minIntervalSeconds || 10,
       maxIntervalSeconds: config?.maxIntervalSeconds || 60,
       priorityFee: config?.priorityFee || 'none', // No priority fee for warming (saves ~0.003 SOL per round trip)
       useJupiter: true,
       useTrendingTokens: config?.useTrendingTokens !== false, // Default to true
       fundingAmount: config?.fundingAmount || 0.015, // Enough for 2 trades + fees
-      skipFunding: config?.skipFunding || false // Skip funding for wallets with existing balance
+      skipFunding: config?.skipFunding || false, // Skip funding for wallets with existing balance
+      closeTokenAccounts: config?.closeTokenAccounts !== undefined ? config.closeTokenAccounts : true, // Default: close accounts to recover rent. Set false for cheap mode (sells 99.9%, keeps dust)
+      tradingPattern: config?.tradingPattern || 'sequential' // 'sequential', 'randomized', 'accumulate'
     };
+    
+    // Ensure tradingPattern is set (default to sequential if not provided)
+    if (!warmConfig.tradingPattern) {
+      warmConfig.tradingPattern = config?.tradingPattern || 'sequential';
+    }
     
     // Start warming in background
     const warmingPromise = warmWallets(
@@ -4271,28 +4496,8 @@ app.get('/api/warm-wallets/trending-tokens', async (req, res) => {
   }
 });
 
-// ==========================================
-// DUNE ANALYTICS API
-// ==========================================
-
-// Cache for Dune data (default 15 minutes to avoid rate limits)
-// Dune free tier: 2500 credits/month, each query ~10 credits
-// Safe to query ~250 times/month = ~8 times/day
-let duneDataCache = {
-  pumpfunHourlyVolume: null,
-  lastFetch: null,
-  cacheDuration: 15 * 60 * 1000, // 15 minutes default cache
-  rawData: null // Store raw data for different view options
-};
-
-// Dune Query IDs - save different queries on Dune and add their IDs here
-const DUNE_QUERIES = {
-  hourly_14d: '6499319', // Default: hourly volume last 14 days
-  // Add more query IDs here for different time periods if needed
-  // hourly_7d: 'QUERY_ID',
-  // hourly_30d: 'QUERY_ID',
-  // daily: 'QUERY_ID',
-};
+// NOTE: Dune Analytics API removed for simplified public version
+// (Requires paid Dune API key)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AI CONTENT GENERATION ENDPOINTS
@@ -4428,288 +4633,7 @@ app.get('/api/ai/status', (req, res) => {
   });
 });
 
-// Get Pump.fun hourly volume data from Dune
-app.get('/api/dune/pumpfun-volume', async (req, res) => {
-  try {
-    const now = Date.now();
-    const forceRefresh = req.query.refresh === 'true';
-    const executeQuery = req.query.execute === 'true'; // Force query re-execution for fresh data
-    const days = parseInt(req.query.days) || 14; // Filter: show last N days
-    const queryId = req.query.queryId || DUNE_QUERIES.hourly_14d;
-    
-    // Return cached data if still valid (unless force refresh)
-    if (!forceRefresh && !executeQuery && duneDataCache.pumpfunHourlyVolume && duneDataCache.lastFetch && 
-        (now - duneDataCache.lastFetch) < duneDataCache.cacheDuration) {
-      
-      // Re-process cached raw data with new filter settings
-      const processedData = processDuneData(duneDataCache.rawData, days);
-      
-      return res.json({
-        success: true,
-        data: processedData,
-        cached: true,
-        lastFetch: duneDataCache.lastFetch,
-        cacheExpiresIn: Math.round((duneDataCache.cacheDuration - (now - duneDataCache.lastFetch)) / 1000),
-        daysFilter: days
-      });
-    }
-    
-    console.log(`[Dune] Fetching Pump.fun hourly volume data (Query: ${queryId})...`);
-    
-    const duneApiKey = process.env.DUNE_API_KEY;
-    if (!duneApiKey) {
-      return res.status(500).json({ success: false, error: 'DUNE_API_KEY not configured' });
-    }
-    
-    // If execute=true, re-execute the query to get fresh data
-    // NOTE: This uses Dune credits (~10 per execution), so use sparingly
-    if (executeQuery) {
-      console.log(`[Dune] 🔄 Executing query ${queryId} for fresh data...`);
-      
-      // Start execution
-      const execResponse = await fetch(`https://api.dune.com/api/v1/query/${queryId}/execute`, {
-        method: 'POST',
-        headers: {
-          'x-dune-api-key': duneApiKey,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!execResponse.ok) {
-        const errorText = await execResponse.text();
-        console.warn(`[Dune] ⚠️ Execute failed: ${execResponse.status} - ${errorText}`);
-        // Fall back to cached results
-      } else {
-        const execData = await execResponse.json();
-        const executionId = execData.execution_id;
-        console.log(`[Dune] ⏳ Execution started: ${executionId}`);
-        
-        // Poll for completion (max 30 seconds)
-        let attempts = 0;
-        const maxAttempts = 15;
-        while (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-          
-          const statusResponse = await fetch(`https://api.dune.com/api/v1/execution/${executionId}/status`, {
-            headers: { 'x-dune-api-key': duneApiKey }
-          });
-          
-          if (statusResponse.ok) {
-            const statusData = await statusResponse.json();
-            console.log(`[Dune] Status: ${statusData.state} (attempt ${attempts + 1}/${maxAttempts})`);
-            
-            if (statusData.state === 'QUERY_STATE_COMPLETED') {
-              console.log(`[Dune] ✅ Query execution completed!`);
-              break;
-            } else if (statusData.state === 'QUERY_STATE_FAILED') {
-              console.error(`[Dune] ❌ Query execution failed`);
-              break;
-            }
-          }
-          attempts++;
-        }
-        
-        if (attempts >= maxAttempts) {
-          console.warn(`[Dune] ⚠️ Query execution taking too long, using cached results`);
-        }
-      }
-    }
-    
-    // Fetch from Dune API (results endpoint - gets latest execution)
-    const response = await fetch(`https://api.dune.com/api/v1/query/${queryId}/results?limit=2000`, {
-      headers: {
-        'x-dune-api-key': duneApiKey
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Dune API error: ${response.status} ${response.statusText}`);
-    }
-    
-    const duneData = await response.json();
-    
-    // Log execution time to help debug freshness
-    if (duneData.execution_ended_at) {
-      const executionAge = Math.round((now - new Date(duneData.execution_ended_at).getTime()) / 60000);
-      console.log(`[Dune] 📊 Data from execution: ${duneData.execution_ended_at} (${executionAge} minutes ago)`);
-      
-      if (executionAge > 60) {
-        console.warn(`[Dune] ⚠️ Data is ${executionAge} minutes old! Consider using ?execute=true for fresh data`);
-      }
-    }
-    
-    // Log the structure for debugging
-    if (duneData.result && duneData.result.rows && duneData.result.rows.length > 0) {
-      console.log('[Dune] ✅ Received', duneData.result.rows.length, 'rows');
-      console.log('[Dune] Sample row keys:', Object.keys(duneData.result.rows[0]));
-      console.log('[Dune] First row:', JSON.stringify(duneData.result.rows[0]));
-      console.log('[Dune] Last row:', JSON.stringify(duneData.result.rows[duneData.result.rows.length - 1]));
-    } else {
-      console.log('[Dune] ⚠️ No data in response');
-    }
-    
-    // Cache the raw data
-    duneDataCache.rawData = duneData;
-    duneDataCache.lastFetch = now;
-    
-    // Calculate execution age
-    let executionAgeMinutes = null;
-    if (duneData.execution_ended_at) {
-      executionAgeMinutes = Math.round((now - new Date(duneData.execution_ended_at).getTime()) / 60000);
-    }
-    
-    // Process the data
-    const processedData = processDuneData(duneData, days);
-    duneDataCache.pumpfunHourlyVolume = processedData;
-    
-    console.log(`[Dune] ✅ Processed: ${processedData.rawRows} rows, max volume: ${processedData.maxVolume?.toFixed(0)}, current rank: ${processedData.currentRank}/24`);
-    
-    res.json({
-      success: true,
-      data: processedData,
-      cached: false,
-      lastFetch: now,
-      daysFilter: days,
-      executionAge: executionAgeMinutes,
-      executionEndedAt: duneData.execution_ended_at || null
-    });
-    
-  } catch (error) {
-    console.error('[Dune] Error fetching Pump.fun volume:', error);
-    res.status(500).json({ success: false, error: error.message || 'Failed to fetch Dune data' });
-  }
-});
-
-// Process Dune data into hourly aggregates
-function processDuneData(duneData, daysFilter = 14) {
-  const hourlyAggregates = {};
-  for (let i = 0; i < 24; i++) {
-    hourlyAggregates[i] = { totalVolume: 0, count: 0, dataPoints: [] };
-  }
-  
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - daysFilter);
-  
-  let totalProcessed = 0;
-  let skipped = 0;
-  
-  // Also collect raw timeline data (sorted chronologically)
-  const timelineData = [];
-  
-  if (duneData.result && duneData.result.rows) {
-    duneData.result.rows.forEach(row => {
-      // Your query returns: date (timestamp), volume_usd
-      // Handle multiple possible column names
-      const dateField = row.date || row.timestamp || row.block_time || row.time || row.hour;
-      const volumeField = row.volume_usd || row.volume || row.total_volume || row.amount_usd || row.usd_volume || 0;
-      
-      if (!dateField) {
-        skipped++;
-        return;
-      }
-      
-      const date = new Date(dateField);
-      if (isNaN(date.getTime())) {
-        skipped++;
-        return;
-      }
-      
-      // Apply time filter
-      if (date < cutoffDate) {
-        skipped++;
-        return;
-      }
-      
-      const hour = date.getUTCHours();
-      const volume = parseFloat(volumeField) || 0;
-      
-      if (hour >= 0 && hour < 24 && volume > 0) {
-        hourlyAggregates[hour].totalVolume += volume;
-        hourlyAggregates[hour].count++;
-        hourlyAggregates[hour].dataPoints.push({ date: date.toISOString(), volume });
-        
-        // Add to timeline (raw hourly data)
-        timelineData.push({
-          date: date.toISOString(),
-          timestamp: date.getTime(),
-          hour: hour,
-          volume: volume
-        });
-        
-        totalProcessed++;
-      }
-    });
-  }
-  
-  // Sort timeline chronologically (oldest first)
-  timelineData.sort((a, b) => a.timestamp - b.timestamp);
-  
-  console.log(`[Dune] Processing: ${totalProcessed} rows used, ${skipped} skipped (outside ${daysFilter} day window)`);
-  
-  // Calculate averages and create hourly data array
-  const hourlyData = Object.entries(hourlyAggregates).map(([hour, data]) => ({
-    hour: parseInt(hour),
-    avgVolume: data.count > 0 ? data.totalVolume / data.count : 0,
-    totalVolume: data.totalVolume,
-    dataPoints: data.count,
-    minVolume: data.dataPoints.length > 0 ? Math.min(...data.dataPoints.map(d => d.volume)) : 0,
-    maxVolume: data.dataPoints.length > 0 ? Math.max(...data.dataPoints.map(d => d.volume)) : 0
-  }));
-  
-  // Safety: Filter out invalid data
-  const validHourlyData = hourlyData.filter(h => h.avgVolume > 0 && isFinite(h.avgVolume));
-  
-  // Find max/min volume for chart scaling - with safety defaults
-  const maxVolume = validHourlyData.length > 0 
-    ? Math.max(...validHourlyData.map(h => h.avgVolume))
-    : 1000000; // Default 1M if no data
-  const minVolume = validHourlyData.length > 0
-    ? Math.min(...validHourlyData.map(h => h.avgVolume))
-    : 0;
-  
-  // Sort by average volume to find best/worst hours
-  const sortedByVolume = [...hourlyData].sort((a, b) => b.avgVolume - a.avgVolume);
-  const bestHours = sortedByVolume.slice(0, 5).map(h => h.hour);
-  const worstHours = sortedByVolume.slice(-5).map(h => h.hour);
-  
-  // Get current hour (UTC)
-  const currentHour = new Date().getUTCHours();
-  const currentHourData = hourlyData.find(h => h.hour === currentHour);
-  const currentRank = sortedByVolume.findIndex(h => h.hour === currentHour) + 1;
-  
-  // Calculate launch score based on VOLUME (not just rank) - more proportional!
-  // Score 0-100: 100 = best hour (max volume), 0 = worst hour (min volume)
-  // Clamped to 0-100 to handle edge cases (missing data, no volume yet)
-  const currentVolume = currentHourData?.avgVolume || 0;
-  const volumeRange = maxVolume - minVolume;
-  let launchScore = 50; // Default
-  
-  if (volumeRange > 0 && currentVolume > 0) {
-    // Proportional scoring: where does current volume fall in the range?
-    const rawScore = ((currentVolume - minVolume) / volumeRange) * 100;
-    launchScore = Math.round(Math.max(0, Math.min(100, rawScore))); // Clamp 0-100
-  } else if (currentVolume === 0) {
-    // No data for current hour yet - give neutral score
-    launchScore = 50;
-  }
-  
-  return {
-    hourlyData,
-    timelineData, // Raw hourly data points, chronologically sorted
-    maxVolume,
-    minVolume,
-    currentHour,
-    currentHourVolume: currentHourData?.avgVolume || 0,
-    currentRank,
-    launchScore,
-    bestHours,
-    worstHours,
-    recommendation: launchScore >= 70 ? 'GREAT' : launchScore >= 50 ? 'GOOD' : launchScore >= 30 ? 'OKAY' : 'WAIT',
-    rawRows: totalProcessed,
-    queryId: DUNE_QUERIES.hourly_14d,
-    daysFilter
-  };
-}
+// NOTE: Dune Analytics removed for simplified public version
 
 // Add warmed wallets to launch (simple - just add to data.json and current-run.json)
 app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
@@ -4790,6 +4714,7 @@ app.post('/api/warm-wallets/add-to-launch', async (req, res) => {
 
 // Twitter Get Account Info Endpoint
 app.post('/api/marketing/twitter/get-account-info', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Marketing] Twitter get account info request received');
     const { apiKey, apiSecret, accessToken, accessTokenSecret } = req.body;
@@ -4837,6 +4762,7 @@ app.post('/api/marketing/twitter/get-account-info', async (req, res) => {
 
 // Twitter Auto-Post Endpoint
 app.post('/api/marketing/twitter/auto-post', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Marketing] Twitter auto-post request received');
     const { 
@@ -4904,6 +4830,7 @@ app.post('/api/marketing/twitter/auto-post', async (req, res) => {
 
 // Twitter Post Single Tweet Endpoint (for Marketing Widget)
 app.post('/api/marketing/twitter/post-single', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Marketing] Twitter post single tweet request received');
     const { tweet, tokenData, credentials } = req.body;
@@ -5155,6 +5082,7 @@ app.post('/api/twitter/update-profile', async (req, res) => {
 
 // Get messages from Telegram group
 app.post('/api/marketing/telegram/get-messages', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Telegram Messages] Get messages request received');
     const { chat_id, limit, users_only, hours_ago, credentials } = req.body;
@@ -5203,6 +5131,7 @@ app.post('/api/marketing/telegram/get-messages', async (req, res) => {
 
 // Send message to Telegram group
 app.post('/api/marketing/telegram/send-message', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Telegram Messages] Send message request received');
     const { chat_id, text, reply_to_msg_id, credentials } = req.body;
@@ -5256,6 +5185,7 @@ app.post('/api/marketing/telegram/send-message', async (req, res) => {
 
 // Pin message in Telegram group
 app.post('/api/marketing/telegram/pin-message', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Telegram Messages] Pin message request received');
     const { chat_id, message_id, credentials } = req.body;
@@ -5302,6 +5232,7 @@ app.post('/api/marketing/telegram/pin-message', async (req, res) => {
 
 // Delete message from Telegram group
 app.post('/api/marketing/telegram/delete-message', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Telegram Messages] Delete message request received');
     const { chat_id, message_id, credentials } = req.body;
@@ -5348,6 +5279,7 @@ app.post('/api/marketing/telegram/delete-message', async (req, res) => {
 
 // Get Telegram chat info
 app.post('/api/marketing/telegram/get-chat-info', async (req, res) => {
+  if (MARKETING_DISABLED) return marketingDisabledResponse(res);
   try {
     console.log('[Telegram Messages] Get chat info request received');
     const { chat_id } = req.body;
@@ -5391,337 +5323,8 @@ app.post('/api/marketing/telegram/get-chat-info', async (req, res) => {
   }
 });
 
-// ============================================
-// TWITTER ACCOUNT MANAGEMENT ENDPOINTS
-// ============================================
-const TWITTER_ACCOUNTS_DIR = path.join(__dirname, '..', 'keys', 'twitter-accounts');
-if (!fs.existsSync(TWITTER_ACCOUNTS_DIR)) {
-  fs.mkdirSync(TWITTER_ACCOUNTS_DIR, { recursive: true });
-}
-
-// Get all Twitter accounts
-app.get('/api/twitter-accounts', (req, res) => {
-  try {
-    const files = fs.readdirSync(TWITTER_ACCOUNTS_DIR);
-    const accounts = files
-      .filter(file => file.endsWith('.json'))
-      .map(file => {
-        try {
-          const filePath = path.join(TWITTER_ACCOUNTS_DIR, file);
-          const content = fs.readFileSync(filePath, 'utf8');
-          const account = JSON.parse(content);
-          // Don't send full credentials in list
-          return {
-            id: account.id,
-            name: account.name,
-            accountInfo: account.accountInfo,
-            createdAt: account.createdAt,
-          };
-        } catch (e) {
-          console.error(`Failed to read Twitter account ${file}:`, e.message);
-          return null;
-        }
-      })
-      .filter(account => account !== null);
-    
-    res.json({ success: true, accounts });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Get single Twitter account (with full credentials)
-app.get('/api/twitter-accounts/:id', (req, res) => {
-  try {
-    const filePath = path.join(TWITTER_ACCOUNTS_DIR, `${req.params.id}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: 'Account not found' });
-    }
-    
-    const content = fs.readFileSync(filePath, 'utf8');
-    const account = JSON.parse(content);
-    res.json({ success: true, account });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Test Twitter credentials and get account info
-app.post('/api/twitter-accounts/test', async (req, res) => {
-  try {
-    const { apiKey, apiSecret, accessToken, accessTokenSecret } = req.body;
-    
-    if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
-      return res.status(400).json({
-        success: false,
-        error: 'All Twitter credentials required (apiKey, apiSecret, accessToken, accessTokenSecret)',
-      });
-    }
-    
-    // Test credentials by fetching account info
-    const { getTwitterAccountInfo } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
-    const result = await getTwitterAccountInfo({
-      apiKey,
-      apiSecret,
-      accessToken,
-      accessTokenSecret,
-    });
-    
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Add new Twitter account
-app.post('/api/twitter-accounts', async (req, res) => {
-  try {
-    const { name, apiKey, apiSecret, accessToken, accessTokenSecret } = req.body;
-    
-    if (!name || !apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
-      return res.status(400).json({
-        success: false,
-        error: 'Name and all credentials required',
-      });
-    }
-    
-    // Test credentials first
-    const { getTwitterAccountInfo } = require(projectPath('marketing', 'twitter', 'twitter-poster.ts'));
-    const testResult = await getTwitterAccountInfo({
-      apiKey,
-      apiSecret,
-      accessToken,
-      accessTokenSecret,
-    });
-    
-    if (!testResult.success) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid credentials: ${testResult.error}`,
-      });
-    }
-    
-    // Generate unique ID
-    const id = `twitter_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Create account object
-    const account = {
-      id,
-      name,
-      apiKey,
-      apiSecret,
-      accessToken,
-      accessTokenSecret,
-      accountInfo: testResult.account,
-      createdAt: new Date().toISOString(),
-    };
-    
-    // Save to file
-    const filePath = path.join(TWITTER_ACCOUNTS_DIR, `${id}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(account, null, 2));
-    
-    console.log(`[Twitter Accounts] Added account: ${name} (@${testResult.account?.username})`);
-    
-    res.json({
-      success: true,
-      account: {
-        id: account.id,
-        name: account.name,
-        accountInfo: account.accountInfo,
-        createdAt: account.createdAt,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Delete Twitter account
-app.delete('/api/twitter-accounts/:id', (req, res) => {
-  try {
-    const filePath = path.join(TWITTER_ACCOUNTS_DIR, `${req.params.id}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: 'Account not found' });
-    }
-    
-    fs.unlinkSync(filePath);
-    console.log(`[Twitter Accounts] Deleted account: ${req.params.id}`);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ============================================
-// TELEGRAM ACCOUNT MANAGEMENT ENDPOINTS
-// ============================================
-const TELEGRAM_ACCOUNTS_DIR = path.join(__dirname, '..', 'keys', 'telegram-accounts');
-if (!fs.existsSync(TELEGRAM_ACCOUNTS_DIR)) {
-  fs.mkdirSync(TELEGRAM_ACCOUNTS_DIR, { recursive: true });
-}
-
-// Get all Telegram accounts
-app.get('/api/telegram-accounts', (req, res) => {
-  try {
-    const files = fs.readdirSync(TELEGRAM_ACCOUNTS_DIR);
-    const accounts = files
-      .filter(file => file.endsWith('.json'))
-      .map(file => {
-        try {
-          const filePath = path.join(TELEGRAM_ACCOUNTS_DIR, file);
-          const content = fs.readFileSync(filePath, 'utf8');
-          const account = JSON.parse(content);
-          // Don't send full credentials in list
-          return {
-            id: account.id,
-            name: account.name,
-            phone: account.phone,
-            accountInfo: account.accountInfo,
-            createdAt: account.createdAt,
-          };
-        } catch (e) {
-          console.error(`Failed to read Telegram account ${file}:`, e.message);
-          return null;
-        }
-      })
-      .filter(account => account !== null);
-    
-    res.json({ success: true, accounts });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Get single Telegram account (with full credentials)
-app.get('/api/telegram-accounts/:id', (req, res) => {
-  try {
-    const filePath = path.join(TELEGRAM_ACCOUNTS_DIR, `${req.params.id}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: 'Account not found' });
-    }
-    
-    const content = fs.readFileSync(filePath, 'utf8');
-    const account = JSON.parse(content);
-    res.json({ success: true, account });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Test Telegram credentials (gets user info via Telethon)
-app.post('/api/telegram-accounts/test', async (req, res) => {
-  try {
-    const { apiId, apiHash, phone } = req.body;
-    
-    if (!apiId || !apiHash || !phone) {
-      return res.status(400).json({
-        success: false,
-        error: 'All Telegram credentials required (apiId, apiHash, phone)',
-      });
-    }
-    
-    // Test credentials by getting "me" info
-    const { executeTelegramAction } = require(projectPath('marketing', 'telegram', 'telegram_messages_wrapper.ts'));
-    
-    // We'll use a simple get_chat_info call to test connectivity
-    // Note: This requires the account to be authorized already
-    const result = await executeTelegramAction({
-      action: 'get_chat_info',
-      api_id: apiId,
-      api_hash: apiHash,
-      phone: phone,
-      chat_id: 'me', // Special chat_id for own account
-    });
-    
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Add new Telegram account
-app.post('/api/telegram-accounts', async (req, res) => {
-  try {
-    const { name, apiId, apiHash, phone } = req.body;
-    
-    if (!name || !apiId || !apiHash || !phone) {
-      return res.status(400).json({
-        success: false,
-        error: 'Name and all credentials required',
-      });
-    }
-    
-    // Note: Telegram accounts require initial authorization via 2FA code
-    // We'll save the account without testing, as testing requires user interaction
-    
-    // Generate unique ID
-    const id = `telegram_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Create account object
-    const account = {
-      id,
-      name,
-      apiId,
-      apiHash,
-      phone,
-      accountInfo: {
-        phone: phone,
-        note: 'Authorization required on first use',
-      },
-      createdAt: new Date().toISOString(),
-    };
-    
-    // Save to file
-    const filePath = path.join(TELEGRAM_ACCOUNTS_DIR, `${id}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(account, null, 2));
-    
-    console.log(`[Telegram Accounts] Added account: ${name} (${phone})`);
-    
-    res.json({
-      success: true,
-      account: {
-        id: account.id,
-        name: account.name,
-        phone: account.phone,
-        accountInfo: account.accountInfo,
-        createdAt: account.createdAt,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Delete Telegram account
-app.delete('/api/telegram-accounts/:id', (req, res) => {
-  try {
-    const filePath = path.join(TELEGRAM_ACCOUNTS_DIR, `${req.params.id}.json`);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, error: 'Account not found' });
-    }
-    
-    // Read account to get phone for session file cleanup
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const account = JSON.parse(content);
-      
-      // Also try to delete session file
-      const sessionPath = path.join(__dirname, '..', 'marketing', 'telegram', `telegram_session_${account.phone}.session`);
-      if (fs.existsSync(sessionPath)) {
-        fs.unlinkSync(sessionPath);
-        console.log(`[Telegram Accounts] Deleted session file for ${account.phone}`);
-      }
-    } catch (e) {
-      console.warn(`[Telegram Accounts] Could not clean up session file: ${e.message}`);
-    }
-    
-    fs.unlinkSync(filePath);
-    console.log(`[Telegram Accounts] Deleted account: ${req.params.id}`);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+// NOTE: Twitter and Telegram account management endpoints removed for simplified public version
+// Removed endpoints: /api/twitter-accounts/*, /api/telegram-accounts/*
 
 // Token Configuration Save/Load Endpoints
 const TOKEN_CONFIGS_DIR = path.join(__dirname, '..', 'keys', 'token-configs');
@@ -5753,7 +5356,7 @@ app.get('/api/token-configs', (req, res) => {
         }
       })
       .filter(config => config !== null)
-      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)); // Most recent first
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     
     res.json({ success: true, configs });
   } catch (error) {
@@ -5790,10 +5393,8 @@ app.post('/api/token-configs', (req, res) => {
       return res.status(400).json({ success: false, error: 'Name and config are required' });
     }
     
-    // Generate ID from name (sanitize for filename)
     const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now();
     
-    // Prepare config to save (include metadata)
     const configToSave = {
       ...config,
       name: name,
@@ -5825,11 +5426,9 @@ app.put('/api/token-configs/:id', (req, res) => {
       return res.status(404).json({ success: false, error: 'Configuration not found' });
     }
     
-    // Load existing config to preserve metadata
     const existingContent = fs.readFileSync(filePath, 'utf8');
     const existingConfig = JSON.parse(existingContent);
     
-    // Update config
     const configToSave = {
       ...existingConfig,
       ...config,
@@ -5862,6 +5461,204 @@ app.delete('/api/token-configs/:id', (req, res) => {
     res.json({ success: true, message: 'Configuration deleted successfully' });
   } catch (error) {
     console.error('[Token Configs] Error deleting config:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// WALLET PROFILES - Separate from Token Configs
+// ============================================
+const WALLET_PROFILES_DIR = path.join(__dirname, '..', 'keys', 'wallet-profiles');
+if (!fs.existsSync(WALLET_PROFILES_DIR)) {
+  fs.mkdirSync(WALLET_PROFILES_DIR, { recursive: true });
+}
+
+// Get all saved wallet profiles
+app.get('/api/wallet-profiles', (req, res) => {
+  try {
+    const files = fs.readdirSync(WALLET_PROFILES_DIR);
+    const profiles = files
+      .filter(file => file.endsWith('.json'))
+      .map(file => {
+        try {
+          const filePath = path.join(WALLET_PROFILES_DIR, file);
+          const content = fs.readFileSync(filePath, 'utf8');
+          const profile = JSON.parse(content);
+          return {
+            id: file.replace('.json', ''),
+            name: profile.name || 'Unnamed Profile',
+            description: profile.description || '',
+            bundleWalletCount: profile.bundleWalletCount || 0,
+            holderWalletCount: profile.holderWalletCount || 0,
+            createdAt: profile.createdAt || fs.statSync(filePath).mtime.toISOString(),
+            updatedAt: profile.updatedAt || fs.statSync(filePath).mtime.toISOString(),
+          };
+        } catch (error) {
+          console.error(`[Wallet Profiles] Error reading ${file}:`, error.message);
+          return null;
+        }
+      })
+      .filter(profile => profile !== null)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    
+    res.json({ success: true, profiles });
+  } catch (error) {
+    console.error('[Wallet Profiles] Error listing profiles:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get a specific wallet profile
+app.get('/api/wallet-profiles/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(WALLET_PROFILES_DIR, `${id}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Wallet profile not found' });
+    }
+    
+    const content = fs.readFileSync(filePath, 'utf8');
+    const profile = JSON.parse(content);
+    res.json({ success: true, profile });
+  } catch (error) {
+    console.error('[Wallet Profiles] Error loading profile:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Save a new wallet profile
+app.post('/api/wallet-profiles', (req, res) => {
+  try {
+    const { name, profile } = req.body;
+    
+    if (!name || !profile) {
+      return res.status(400).json({ success: false, error: 'Name and profile are required' });
+    }
+    
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now();
+    
+    const profileToSave = {
+      id,
+      name,
+      description: profile.description || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      buyerAmount: profile.buyerAmount || '0',
+      bundleWalletCount: profile.bundleWalletCount || 0,
+      bundleSwapAmounts: profile.bundleSwapAmounts || '',
+      swapAmount: profile.swapAmount || '0.01',
+      useNormalLaunch: profile.useNormalLaunch || false,
+      bundleIntermediaryHops: profile.bundleIntermediaryHops || 2,
+      holderWalletCount: profile.holderWalletCount || 0,
+      holderSwapAmounts: profile.holderSwapAmounts || '',
+      holderWalletAmount: profile.holderWalletAmount || '0.10',
+      autoHolderWalletBuy: profile.autoHolderWalletBuy || false,
+      holderIntermediaryHops: profile.holderIntermediaryHops || 2,
+      useMixingWallets: profile.useMixingWallets !== false,
+      useMultiIntermediarySystem: profile.useMultiIntermediarySystem || false,
+      numIntermediaryHops: profile.numIntermediaryHops || 2,
+      walletSourceConfig: {
+        useWarmedDevWallet: profile.walletSourceConfig?.useWarmedDevWallet || false,
+        useWarmedBundleWallets: profile.walletSourceConfig?.useWarmedBundleWallets || false,
+        useWarmedHolderWallets: profile.walletSourceConfig?.useWarmedHolderWallets || false,
+      },
+      // MEV Protection settings (complete)
+      mevProtection: profile.mevProtection || {
+        enabled: true,
+        confirmationDelaySec: 3,
+        launchCooldownSec: 5,
+        rapidTraderWindowSec: 10,
+      },
+      
+      // Auto-sell global settings
+      autoSellGlobal: profile.autoSellGlobal || {
+        enabled: false,
+        defaultThreshold: 1.0,
+      },
+      
+      // Legacy autoSellConfig (for backward compatibility)
+      autoSellConfig: profile.autoSellConfig || {
+        enabled: profile.autoSellGlobal?.enabled || false,
+        mevProtection: profile.mevProtection || {
+          enabled: true,
+          confirmationDelaySec: 3,
+          launchCooldownSec: 5,
+        },
+        walletThresholds: {},
+      },
+      
+      // Sniper/front-run settings (complete)
+      sniperConfig: {
+        frontRunThreshold: profile.sniperConfig?.frontRunThreshold || 0,
+        holderAutoBuyGroups: profile.sniperConfig?.holderAutoBuyGroups || [],
+        holderAutoBuyConfigs: profile.sniperConfig?.holderAutoBuyConfigs || {},
+        holderAutoSellConfigs: profile.sniperConfig?.holderAutoSellConfigs || {},
+        bundleAutoSellConfigs: profile.sniperConfig?.bundleAutoSellConfigs || {},
+      },
+      
+      // DEV wallet auto-sell
+      devAutoSellConfig: profile.devAutoSellConfig || { threshold: '', enabled: false },
+    };
+    
+    const filePath = path.join(WALLET_PROFILES_DIR, `${id}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(profileToSave, null, 2), 'utf8');
+    
+    console.log(`[Wallet Profiles] Saved profile: ${name} (${id})`);
+    res.json({ success: true, id, message: 'Wallet profile saved successfully' });
+  } catch (error) {
+    console.error('[Wallet Profiles] Error saving profile:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update a wallet profile
+app.put('/api/wallet-profiles/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, profile } = req.body;
+    
+    const filePath = path.join(WALLET_PROFILES_DIR, `${id}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Wallet profile not found' });
+    }
+    
+    const existingContent = fs.readFileSync(filePath, 'utf8');
+    const existingProfile = JSON.parse(existingContent);
+    
+    const profileToSave = {
+      ...existingProfile,
+      ...profile,
+      name: name || existingProfile.name,
+      updatedAt: new Date().toISOString(),
+    };
+    
+    fs.writeFileSync(filePath, JSON.stringify(profileToSave, null, 2), 'utf8');
+    
+    console.log(`[Wallet Profiles] Updated profile: ${id}`);
+    res.json({ success: true, message: 'Wallet profile updated successfully' });
+  } catch (error) {
+    console.error('[Wallet Profiles] Error updating profile:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete a wallet profile
+app.delete('/api/wallet-profiles/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(WALLET_PROFILES_DIR, `${id}.json`);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Wallet profile not found' });
+    }
+    
+    fs.unlinkSync(filePath);
+    console.log(`[Wallet Profiles] Deleted profile: ${id}`);
+    res.json({ success: true, message: 'Wallet profile deleted successfully' });
+  } catch (error) {
+    console.error('[Wallet Profiles] Error deleting profile:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -6085,14 +5882,14 @@ app.get('/api/live-trades', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
   try {
-    // Subscribe to this mint via PumpPortal
+    // Subscribe to PumpPortal for this token
     console.log(`[API] Subscribing to ${mintAddress.slice(0, 8)}... via PumpPortal`);
     pumpPortalTracker.subscribeToToken(mintAddress);
     
     // Add this client as a listener
     pumpPortalTracker.addListener(res);
     
-    // Send initial cached trades immediately (PumpPortal is faster - no historical fetch needed)
+    // Send initial cached trades immediately
     const initialTrades = pumpPortalTracker.getTrades(mintAddress);
     console.log(`[API] Sending ${initialTrades.length} cached trades to client`);
     res.write(`data: ${JSON.stringify({ type: 'initial', trades: initialTrades })}\n\n`);
@@ -6108,78 +5905,23 @@ app.get('/api/live-trades', async (req, res) => {
   }
 });
 
-// Add test wallets for testing (temporary, not saved)
-app.post('/api/live-trades/add-test-wallets', async (req, res) => {
-  try {
-    const { wallets } = req.body;
-    
-    if (!wallets || !Array.isArray(wallets)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'wallets array required' 
-      });
-    }
-    
-    const addedCount = liveTradesTracker.addTestWallets(wallets);
-    
-    res.json({
-      success: true,
-      added: addedCount,
-      totalTestWallets: liveTradesTracker.getTestWallets().length,
-      message: `Added ${addedCount} test wallet(s)`
-    });
-  } catch (error) {
-    console.error('[API] Error adding test wallets:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
+// Test wallet endpoints removed - using PumpPortal only
 
-// Clear test wallets
-app.post('/api/live-trades/clear-test-wallets', async (req, res) => {
-  try {
-    const clearedCount = liveTradesTracker.clearTestWallets();
-    
-    res.json({
-      success: true,
-      cleared: clearedCount,
-      message: `Cleared ${clearedCount} test wallet(s)`
-    });
-  } catch (error) {
-    console.error('[API] Error clearing test wallets:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Get test wallets
+// Get test wallets (deprecated - returns empty)
 app.get('/api/live-trades/test-wallets', async (req, res) => {
-  try {
-    const testWallets = liveTradesTracker.getTestWallets();
-    
-    res.json({
-      success: true,
-      wallets: testWallets,
-      count: testWallets.length
-    });
-  } catch (error) {
-    console.error('[API] Error getting test wallets:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
+  res.json({
+    success: true,
+    wallets: [],
+    count: 0
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTO-SELL ENDPOINTS - Per-wallet threshold-based automatic selling
+// Now using unified TradeManager
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Get auto-sell configuration (now using PumpPortal)
+// Get auto-sell configuration
 app.get('/api/auto-sell/config', (req, res) => {
   try {
     const config = pumpPortalTracker.getAutoSellConfig();
@@ -6190,24 +5932,24 @@ app.get('/api/auto-sell/config', (req, res) => {
   }
 });
 
-// Configure auto-sell for a single wallet (now using PumpPortal)
+// Configure auto-sell for a single wallet
 app.post('/api/auto-sell/configure', (req, res) => {
   try {
-    const { walletAddress, threshold, enabled } = req.body;
+    const { walletAddress, threshold } = req.body;
     
     if (!walletAddress) {
       return res.status(400).json({ success: false, error: 'walletAddress required' });
     }
     
-    const config = pumpPortalTracker.configureAutoSell(walletAddress, threshold, enabled);
-    res.json({ success: true, ...config });
+    pumpPortalTracker.configureAutoSell(walletAddress, threshold);
+    res.json({ success: true, ...pumpPortalTracker.getAutoSellConfig() });
   } catch (error) {
     console.error('[API] Error configuring auto-sell:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Bulk configure auto-sell for multiple wallets (now using PumpPortal)
+// Bulk configure auto-sell for multiple wallets
 app.post('/api/auto-sell/configure-all', (req, res) => {
   try {
     const { wallets, enabled } = req.body;
@@ -6216,7 +5958,10 @@ app.post('/api/auto-sell/configure-all', (req, res) => {
       return res.status(400).json({ success: false, error: 'wallets object required' });
     }
     
-    const config = pumpPortalTracker.setAutoSellConfigs(wallets);
+    // Configure each wallet
+    for (const [addr, config] of Object.entries(wallets)) {
+      pumpPortalTracker.configureAutoSell(addr, config.threshold || 0);
+    }
     if (typeof enabled === 'boolean') {
       pumpPortalTracker.setAutoSellEnabled(enabled);
     }
@@ -6227,60 +5972,84 @@ app.post('/api/auto-sell/configure-all', (req, res) => {
   }
 });
 
-// Enable/disable global auto-sell (now using PumpPortal)
+// Enable/disable global auto-sell
 app.post('/api/auto-sell/toggle', (req, res) => {
   try {
     const { enabled } = req.body;
-    const config = pumpPortalTracker.setAutoSellEnabled(enabled === true);
-    res.json({ success: true, ...config });
+    pumpPortalTracker.setAutoSellEnabled(enabled === true);
+    res.json({ success: true, ...pumpPortalTracker.getAutoSellConfig() });
   } catch (error) {
     console.error('[API] Error toggling auto-sell:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Reset auto-sell state (for new runs) (now using PumpPortal)
+// Reset auto-sell state (for new runs)
 app.post('/api/auto-sell/reset', (req, res) => {
   try {
-    const config = pumpPortalTracker.resetAutoSell();
-    res.json({ success: true, ...config });
+    pumpPortalTracker.resetAutoSell();
+    res.json({ success: true, ...pumpPortalTracker.getAutoSellConfig() });
   } catch (error) {
     console.error('[API] Error resetting auto-sell:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Configure MEV protection settings (now using PumpPortal)
+// Manually trigger threshold check (for debugging/testing)
+app.post('/api/auto-sell/check-thresholds', (req, res) => {
+  try {
+    console.log('[API] 🔍 Manual threshold check triggered');
+    pumpPortalTracker.checkAutoSellThresholds();
+    
+    const config = pumpPortalTracker.getAutoSellConfig();
+    res.json({ 
+      success: true, 
+      message: 'Threshold check completed',
+      externalNetVolume: pumpPortalTracker.externalNetVolume,
+      config 
+    });
+  } catch (error) {
+    console.error('[API] Error checking thresholds:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Configure MEV protection settings
 app.post('/api/auto-sell/mev-protection', (req, res) => {
   try {
-    const { enabled, confirmationDelaySec, launchCooldownSec, rapidTraderWindowSec } = req.body;
+    const { confirmationDelaySec, launchCooldownSec } = req.body;
     
-    const settings = {};
-    if (enabled !== undefined) settings.enabled = enabled;
-    if (confirmationDelaySec !== undefined) settings.confirmationDelaySec = parseFloat(confirmationDelaySec);
-    if (launchCooldownSec !== undefined) settings.launchCooldownSec = parseFloat(launchCooldownSec);
-    if (rapidTraderWindowSec !== undefined) settings.rapidTraderWindowSec = parseFloat(rapidTraderWindowSec);
+    pumpPortalTracker.setMevProtection({
+      confirmationDelaySec: confirmationDelaySec !== undefined ? parseFloat(confirmationDelaySec) : undefined,
+      launchCooldownSec: launchCooldownSec !== undefined ? parseFloat(launchCooldownSec) : undefined,
+    });
     
-    const mevProtection = pumpPortalTracker.setMevProtection(settings);
-    res.json({ success: true, mevProtection });
+    const mev = pumpPortalTracker.getMevProtection();
+    res.json({ 
+      success: true, 
+      mevProtection: mev
+    });
   } catch (error) {
     console.error('[API] Error configuring MEV protection:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get MEV protection settings (now using PumpPortal)
+// Get MEV protection settings
 app.get('/api/auto-sell/mev-protection', (req, res) => {
   try {
-    const mevProtection = pumpPortalTracker.getMevProtection();
-    res.json({ success: true, mevProtection });
+    const mev = pumpPortalTracker.getMevProtection();
+    res.json({ 
+      success: true, 
+      mevProtection: mev
+    });
   } catch (error) {
     console.error('[API] Error getting MEV protection:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// SSE endpoint for auto-sell events (now using PumpPortal)
+// SSE endpoint for auto-sell events
 app.get('/api/auto-sell/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -6290,7 +6059,7 @@ app.get('/api/auto-sell/events', (req, res) => {
   // Send initial config
   res.write(`data: ${JSON.stringify({ type: 'config', ...pumpPortalTracker.getAutoSellConfig() })}\n\n`);
   
-  // Add listener
+  // Listen for auto-sell events from PumpPortal
   const removeListener = pumpPortalTracker.addAutoSellListener((event) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   });
@@ -6323,7 +6092,7 @@ pumpPortalTracker.setAutoSellExecutor(async (walletAddress) => {
     
     console.log(`[PumpPortal AutoSell] 🚀 Selling 100% of tokens for ${walletAddress.slice(0, 8)}...`);
     
-    const result = await callTradingFunction('sell', privateKey, mintAddress, percentage, 'low');
+    const result = await callTradingFunction('sellTokenSimple', privateKey, mintAddress, percentage, 'low');
     
     // Invalidate cache after sell
     const keypair = Keypair.fromSecretKey(base58.decode(privateKey));
@@ -6344,70 +6113,10 @@ pumpPortalTracker.setAutoSellExecutor(async (walletAddress) => {
   }
 });
 
-// QuickNode Webhook Endpoint
-// This receives webhooks from QuickNode stream
-// SECURITY: Never log request body or payload - could contain sensitive data
+// QuickNode Webhook Endpoint - DISABLED (using PumpPortal instead)
 app.post('/api/quicknode-webhook', express.json({ limit: '50mb' }), async (req, res) => {
-  // DEBUG: Log that we received ANY request (before auth)
-  console.log('[QuickNode] 📡 INCOMING REQUEST');
-  
-  try {
-    // SECURITY: Verify QuickNode security token
-    // Get token from environment variable or use default
-    const rootEnvPath = path.join(__dirname, '..', '.env');
-    let expectedToken = 'qnsec_YTMwNzIyMmQtMGFhMS00OTM3LTg2YzktMDMwYjBmOGYzYmQ1'; // Default
-    try {
-      if (fs.existsSync(rootEnvPath)) {
-        require('dotenv').config({ path: rootEnvPath });
-      }
-      expectedToken = process.env.QUICKNODE_SECURITY_TOKEN || expectedToken;
-    } catch (e) {
-      // Use default if env read fails
-    }
-    
-    // QuickNode sends token in header (check common header names)
-    const providedToken = req.headers['x-quicknode-token'] || 
-                         req.headers['quicknode-token'] || 
-                         req.headers['x-qn-token'] ||
-                         req.headers['authorization']?.replace('Bearer ', '') ||
-                         req.query.token;
-    
-    if (providedToken !== expectedToken) {
-      console.warn('[QuickNode] ⚠️ Webhook rejected - invalid or missing security token');
-      // Return 401 to indicate authentication failure (but don't reveal expected token)
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized'
-      });
-    }
-    
-    // QuickNode sends the filtered payload directly
-    const payload = req.body;
-    
-    // DEBUG: Log payload structure
-    console.log(`[QuickNode] 📦 Payload: isArray=${Array.isArray(payload)}, length=${Array.isArray(payload) ? payload.length : 'N/A'}, hasEvents=${payload && payload[0] && payload[0].events ? payload[0].events.length : 'none'}`);
-    
-    // Handle the webhook (doesn't log sensitive data)
-    const result = quickNodeWebhook.handleQuickNodeWebhook(payload);
-    console.log(`[QuickNode] 📊 Result: processed=${result.processed}, skipped=${result.skipped}`);
-    
-    // Always return 200 to acknowledge receipt
-    // Don't include sensitive data in response
-    res.status(200).json({
-      success: true,
-      processed: result.processed,
-      skipped: result.skipped
-      // Intentionally NOT including payload or error details in response
-    });
-  } catch (error) {
-    // Log error but don't expose stack trace or sensitive details
-    console.error('[QuickNode] ❌ Webhook error:', error.message);
-    // Still return 200 to prevent QuickNode from retrying
-    res.status(200).json({
-      success: false
-      // Intentionally NOT including error message in response
-    });
-  }
+  // QuickNode webhooks disabled - using PumpPortal for trade tracking
+  res.status(200).json({ success: true, message: 'QuickNode disabled - using PumpPortal' });
 });
 
 // Transfer SOL from one wallet to another (any wallet to any wallet)
@@ -6607,8 +6316,303 @@ app.get('/api/launch-tracker/aggregated-stats', (req, res) => {
 // PUMPPORTAL TEST ENDPOINTS (for comparing with Helius)
 // =====================================================
 
-// Initialize PumpPortal tracker
+// Initialize PumpPortal tracker (keeping for backward compatibility)
 pumpPortalTracker.initialize();
+
+// Candle aggregator removed - using Birdeye charts instead
+// (removed to avoid rate limits)
+
+console.log('[API Server] ✅ PumpPortal tracker initialized');
+
+// =====================================================
+// INITIALIZE CLEAN P&L TRACKER
+// =====================================================
+const pnlTracker = require('./pnl-tracker');
+
+// Initialize from current-run.json if exists
+try {
+  const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
+  if (fs.existsSync(currentRunPath)) {
+    const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+    if (currentRun.mintAddress) {
+      // Build wallet addresses from keys
+      const walletsData = {
+        devWalletAddress: currentRun.devWallet || currentRun.devWalletAddress,
+        bundleWalletAddresses: currentRun.bundleWalletAddresses || [],
+        holderWalletAddresses: currentRun.holderWalletAddresses || [],
+      };
+      pnlTracker.initLaunch(currentRun.mintAddress, walletsData);
+    }
+  }
+} catch (e) {
+  console.log('[PnL] Could not init from current-run:', e.message);
+}
+
+// Set up sell executor for auto-sells
+pnlTracker.setSellExecutor(async (walletAddr, percentage) => {
+  // Find wallet in warmed wallets
+  const warmedPath = path.join(__dirname, '..', 'keys', 'warmed-wallets.json');
+  let privateKey = null;
+  
+  if (fs.existsSync(warmedPath)) {
+    const warmed = JSON.parse(fs.readFileSync(warmedPath, 'utf8'));
+    const wallet = warmed.find(w => w.address?.toLowerCase() === walletAddr?.toLowerCase());
+    if (wallet) privateKey = wallet.privateKey;
+  }
+  
+  if (!privateKey) {
+    throw new Error('Wallet private key not found');
+  }
+  
+  // Get current mint
+  const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
+  const currentRun = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+  const mintAddress = currentRun.mintAddress;
+  
+  // Execute sell
+  const { callTradingFunction } = require('./call-trading-function');
+  const result = await callTradingFunction('sellTokenSimple', privateKey, mintAddress, percentage, 'high');
+  
+  return result;
+});
+
+console.log('[API Server] ✅ Clean PnL Tracker initialized');
+
+// Watch for new launches to reinitialize PnL tracker
+try {
+  const currentRunPath = path.join(__dirname, '..', 'keys', 'current-run.json');
+  let lastMint = null;
+  
+  fs.watch(currentRunPath, { persistent: false }, () => {
+    try {
+      const data = JSON.parse(fs.readFileSync(currentRunPath, 'utf8'));
+      if (data.mintAddress && data.mintAddress !== lastMint) {
+        lastMint = data.mintAddress;
+        
+        // Build wallet addresses
+        const walletsData = {
+          devWalletAddress: data.devWallet || data.devWalletAddress,
+          bundleWalletAddresses: data.bundleWalletAddresses || [],
+          holderWalletAddresses: data.holderWalletAddresses || [],
+        };
+        
+        // Reinitialize PnL tracker for new launch
+        pnlTracker.initLaunch(data.mintAddress, walletsData);
+        console.log(`[PnL] 🚀 Reinitialized for new launch: ${data.mintAddress.slice(0, 8)}...`);
+      }
+    } catch (e) {}
+  });
+  
+  console.log('[API Server] 👀 Watching for new launches to init PnL');
+} catch (e) {
+  console.log('[API Server] Could not watch current-run.json:', e.message);
+}
+
+// =====================================================
+// NEW TRADE MANAGER API ENDPOINTS
+// =====================================================
+
+// Get TradeManager status
+app.get('/api/trade-manager/status', (req, res) => {
+  res.json({ success: true, ...pumpPortalTracker.getStatus() });
+});
+
+// Get all trades
+app.get('/api/trade-manager/trades', (req, res) => {
+  const trades = pumpPortalTracker.getTrades();
+  res.json({ success: true, trades, count: trades.length });
+});
+
+// Get P&L for all wallets
+app.get('/api/trade-manager/pnl', (req, res) => {
+  const wallets = pumpPortalTracker.getWalletProfits();
+  const total = wallets.reduce((sum, w) => sum + (w.profit || 0), 0);
+  res.json({ success: true, wallets, total });
+});
+
+// Get external volume
+app.get('/api/trade-manager/external-volume', (req, res) => {
+  const config = pumpPortalTracker.getAutoSellConfig();
+  res.json({ success: true, net: config.externalNetVolume || 0 });
+});
+
+// Start tracking a token
+app.post('/api/trade-manager/track', (req, res) => {
+  const { mintAddress } = req.body;
+  if (!mintAddress) {
+    return res.status(400).json({ success: false, error: 'mintAddress required' });
+  }
+  pumpPortalTracker.subscribeToToken(mintAddress);
+  res.json({ success: true, message: `Tracking ${mintAddress.slice(0, 8)}...` });
+});
+
+// Manually record a trade (for testing or imports)
+app.post('/api/trade-manager/record-trade', (req, res) => {
+  const { signature, wallet, type, solAmount, tokenAmount } = req.body;
+  if (!wallet || !type || !solAmount) {
+    return res.status(400).json({ success: false, error: 'wallet, type, and solAmount required' });
+  }
+  // Use PumpPortal injectTrade for manual trade recording
+  pumpPortalTracker.injectTrade({
+    signature: signature || `manual-${Date.now()}`,
+    mint: pumpPortalTracker.currentMintAddress,
+    traderPublicKey: wallet,
+    txType: type,
+    solAmount: parseFloat(solAmount),
+    tokenAmount: parseFloat(tokenAmount) || 0,
+    source: 'manual'
+  });
+  res.json({ success: true, message: 'Trade recorded' });
+});
+
+// =====================================================
+// CLEAN P&L TRACKER API ENDPOINTS
+// =====================================================
+
+// Get all wallets P&L
+app.get('/api/pnl/wallets', (req, res) => {
+  const wallets = pnlTracker.getAllWalletsPnL();
+  const total = pnlTracker.getTotalPnL();
+  res.json({ success: true, wallets, total });
+});
+
+// Get specific wallet P&L
+app.get('/api/pnl/wallet/:label', (req, res) => {
+  const pnl = pnlTracker.getWalletPnL(req.params.label);
+  if (!pnl) {
+    return res.status(404).json({ success: false, error: 'Wallet not found' });
+  }
+  res.json({ success: true, ...pnl });
+});
+
+// Get total P&L
+app.get('/api/pnl/total', (req, res) => {
+  const total = pnlTracker.getTotalPnL();
+  res.json({ success: true, ...total });
+});
+
+// Get external volume
+app.get('/api/pnl/external-volume', (req, res) => {
+  const volume = pnlTracker.getExternalVolume();
+  res.json({ success: true, ...volume });
+});
+
+// Configure auto-sell for a wallet
+app.post('/api/pnl/auto-sell/configure', (req, res) => {
+  const { walletLabel, externalVolume, profitPercent, stopLoss, timeSeconds, percentage, enabled } = req.body;
+  
+  if (!walletLabel) {
+    return res.status(400).json({ success: false, error: 'walletLabel required' });
+  }
+  
+  const success = pnlTracker.configureAutoSell(walletLabel, {
+    enabled,
+    externalVolume,
+    profitPercent,
+    stopLoss,
+    timeSeconds,
+    percentage,
+  });
+  
+  res.json({ success, message: success ? 'Auto-sell configured' : 'Failed to configure' });
+});
+
+// Get auto-sell config
+app.get('/api/pnl/auto-sell/config', (req, res) => {
+  const config = pnlTracker.getAutoSellConfig();
+  res.json({ success: true, config });
+});
+
+// Configure auto-buy
+app.post('/api/pnl/auto-buy/configure', (req, res) => {
+  const { walletLabel, externalVolume, amount, enabled } = req.body;
+  
+  pnlTracker.configureAutoBuy({
+    enabled,
+    walletLabel,
+    externalVolume,
+    amount,
+  });
+  
+  res.json({ success: true, message: 'Auto-buy configured' });
+});
+
+// Reset P&L data for current launch
+app.post('/api/pnl/reset', (req, res) => {
+  pnlTracker.reset();
+  res.json({ success: true, message: 'P&L data reset' });
+});
+
+// Bundle buys are now tracked exclusively via PumpPortal WebSocket
+
+// SSE endpoint for real-time P&L updates
+app.get('/api/pnl/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  
+  // Send current state
+  res.write(`data: ${JSON.stringify({ type: 'init', wallets: pnlTracker.getAllWalletsPnL(), total: pnlTracker.getTotalPnL(), external: pnlTracker.getExternalVolume() })}\n\n`);
+  
+  // Listen for updates
+  const onTrade = (data) => {
+    res.write(`data: ${JSON.stringify({ type: 'trade', ...data })}\n\n`);
+  };
+  const onExternal = (data) => {
+    res.write(`data: ${JSON.stringify({ type: 'external', ...data })}\n\n`);
+  };
+  const onAutoSell = (data) => {
+    res.write(`data: ${JSON.stringify({ type: 'autoSell', ...data })}\n\n`);
+  };
+  
+  pnlTracker.on('trade', onTrade);
+  pnlTracker.on('externalVolume', onExternal);
+  pnlTracker.on('autoSellTriggered', onAutoSell);
+  pnlTracker.on('autoSellComplete', onAutoSell);
+  
+  req.on('close', () => {
+    pnlTracker.off('trade', onTrade);
+    pnlTracker.off('externalVolume', onExternal);
+    pnlTracker.off('autoSellTriggered', onAutoSell);
+    pnlTracker.off('autoSellComplete', onAutoSell);
+  });
+});
+
+// Candle aggregator removed - using Birdeye charts instead
+// (removed to avoid rate limits)
+// Connect PumpPortal trades to TradeManager only
+try {
+  // Forward all PumpPortal trades to TradeManager
+  pumpPortalTracker.addTradeCallback((trade) => {
+    // Candle aggregator removed - using Birdeye charts instead
+    
+    // Forward to PnL Tracker
+    try {
+      if (trade.isOurWallet && trade.solAmount > 0) {
+        // Record OUR trades for accurate P&L
+        pnlTracker.recordOurTrade({
+          wallet: trade.fullTrader,
+          type: trade.type,
+          solAmount: trade.solAmount,
+          tokenAmount: trade.tokenAmount || trade.amount || 0,
+          signature: trade.fullSignature || trade.signature,
+          timestamp: trade.timestamp,
+        });
+      } else if (!trade.isOurWallet && trade.solAmount > 0) {
+        // Record EXTERNAL trades for auto-sell triggers
+        pnlTracker.recordExternalTrade({
+          type: trade.type,
+          solAmount: trade.solAmount,
+        });
+      }
+    } catch (err) {}
+  });
+  
+  console.log('[API Server] ✅ Connected PumpPortal to TradeManager + PnL');
+} catch (err) {
+  console.log('[API Server] ⚠️ Could not connect PumpPortal:', err.message);
+}
 
 // Get PumpPortal status
 app.get('/api/pumpportal/status', (req, res) => {
@@ -6689,819 +6693,8 @@ app.get('/api/pumpportal/wallet-profits', (req, res) => {
   });
 });
 
-// =====================================================
-// AUTOMATED SETUP ENDPOINTS (Domain + Branding + Deploy)
-// =====================================================
-
-// List Vercel projects
-app.get('/api/setup/vercel-projects', async (req, res) => {
-  try {
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
-      });
-    }
-    
-    const response = await fetch(`https://api.vercel.com/v9/projects?teamId=${teamId}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(data.error?.message || 'Failed to fetch projects');
-    }
-    
-    const projects = (data.projects || []).map(p => ({
-      id: p.id,
-      name: p.name,
-      url: p.targets?.production?.url || `${p.name}.vercel.app`,
-      updatedAt: p.updatedAt,
-    }));
-    
-    res.json({ success: true, projects });
-  } catch (error) {
-    console.error('[Setup] Vercel projects error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Search for cheap domains
-app.post('/api/setup/search-domains', async (req, res) => {
-  try {
-    const { name, maxPrice = 5 } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ success: false, error: 'Name is required' });
-    }
-    
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required' 
-      });
-    }
-    
-    // Generate domain variations
-    const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const variations = [
-      cleanName,
-      `${cleanName}ai`,
-      `${cleanName}app`,
-      `${cleanName}xyz`,
-      `${cleanName}fun`,
-      `${cleanName}io`,
-      `${cleanName}coin`,
-      `${cleanName}defi`,
-      `get${cleanName}`,
-      `the${cleanName}`,
-    ];
-    
-    const tlds = ['.xyz', '.fun', '.space', '.site', '.online', '.app', '.io', '.co'];
-    const domains = [];
-    
-    // Check each domain
-    for (const variation of variations) {
-      for (const tld of tlds) {
-        const domain = `${variation}${tld}`;
-        try {
-          // Check availability
-          const availRes = await fetch(
-            `https://api.vercel.com/v1/registrar/domains/${domain}/availability?teamId=${teamId}`,
-            { headers: { 'Authorization': `Bearer ${token}` } }
-          );
-          const availData = await availRes.json();
-          
-          if (availData.available && !availData.premium) {
-            // Get price
-            const priceRes = await fetch(
-              `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
-              { headers: { 'Authorization': `Bearer ${token}` } }
-            );
-            const priceData = await priceRes.json();
-            
-            if (priceData.price && priceData.price < maxPrice) {
-              domains.push({
-                domain,
-                price: priceData.price,
-                priceFormatted: `$${priceData.price.toFixed(2)}`,
-              });
-            }
-          }
-          
-          // Rate limit protection
-          await new Promise(r => setTimeout(r, 200));
-          
-          // Stop if we have enough
-          if (domains.length >= 10) break;
-        } catch (e) {
-          // Skip errors, continue
-        }
-      }
-      if (domains.length >= 10) break;
-    }
-    
-    // Sort by price
-    domains.sort((a, b) => a.price - b.price);
-    
-    res.json({ success: true, domains });
-  } catch (error) {
-    console.error('[Setup] Domain search error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Purchase domain and connect to project
-app.post('/api/setup/purchase-domain', async (req, res) => {
-  try {
-    const { domain, price, projectId } = req.body;
-    
-    if (!domain || !price || !projectId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'domain, price, and projectId are required' 
-      });
-    }
-    
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    
-    // Contact info from env
-    const contactInfo = {
-      firstName: process.env.DOMAIN_CONTACT_FIRST_NAME || 'John',
-      lastName: process.env.DOMAIN_CONTACT_LAST_NAME || 'Doe',
-      email: process.env.DOMAIN_CONTACT_EMAIL || 'contact@example.com',
-      phone: process.env.DOMAIN_CONTACT_PHONE || '+1234567890',
-      address1: process.env.DOMAIN_CONTACT_ADDRESS || '123 Main St',
-      city: process.env.DOMAIN_CONTACT_CITY || 'New York',
-      state: process.env.DOMAIN_CONTACT_STATE || 'NY',
-      zip: process.env.DOMAIN_CONTACT_ZIP || '10001',
-      country: process.env.DOMAIN_CONTACT_COUNTRY || 'US',
-    };
-    
-    // 1. Purchase domain
-    console.log(`[Setup] Purchasing domain: ${domain} for $${price}`);
-    const buyRes = await fetch(
-      `https://api.vercel.com/v1/registrar/domains/${domain}/buy?teamId=${teamId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          autoRenew: false,
-          years: 1,
-          expectedPrice: price,
-          contactInformation: contactInfo,
-        }),
-      }
-    );
-    
-    const buyData = await buyRes.json();
-    
-    if (!buyRes.ok) {
-      throw new Error(buyData.error?.message || 'Failed to purchase domain');
-    }
-    
-    console.log(`[Setup] ✅ Domain purchased! Order: ${buyData.orderId}`);
-    
-    // 2. Connect to project
-    console.log(`[Setup] Connecting ${domain} to project ${projectId}...`);
-    const connectRes = await fetch(
-      `https://api.vercel.com/v10/projects/${projectId}/domains?teamId=${teamId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: domain }),
-      }
-    );
-    
-    const connectData = await connectRes.json();
-    
-    if (!connectRes.ok && !connectData.error?.message?.includes('already exists')) {
-      console.warn(`[Setup] Warning: ${connectData.error?.message || 'Failed to connect domain'}`);
-    } else {
-      console.log(`[Setup] ✅ Domain connected to project!`);
-    }
-    
-    // 3. Update .env with new website URL
-    const envPath = path.join(__dirname, '..', '.env');
-    let envContent = fs.readFileSync(envPath, 'utf8');
-    
-    if (envContent.includes('WEBSITE_URL=')) {
-      envContent = envContent.replace(/WEBSITE_URL=.*/g, `WEBSITE_URL=https://${domain}`);
-    } else {
-      envContent += `\nWEBSITE_URL=https://${domain}`;
-    }
-    
-    fs.writeFileSync(envPath, envContent);
-    console.log(`[Setup] ✅ Updated WEBSITE_URL in .env`);
-    
-    res.json({
-      success: true,
-      domain,
-      orderId: buyData.orderId,
-      projectId,
-      websiteUrl: `https://${domain}`,
-    });
-  } catch (error) {
-    console.error('[Setup] Purchase error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Full setup: search domains + generate branding
-app.post('/api/setup/full', async (req, res) => {
-  try {
-    const { name, projectId, colorScheme = 'cyber', maxPrice = 5 } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ success: false, error: 'Name is required' });
-    }
-    
-    const result = {
-      name,
-      domains: [],
-      branding: null,
-      content: null,
-    };
-    
-    // 1. Search for domains
-    console.log(`[Setup] Searching domains for: ${name}`);
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    
-    if (token && teamId) {
-      const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const variations = [cleanName, `${cleanName}ai`, `${cleanName}app`, `${cleanName}xyz`, `${cleanName}io`];
-      const tlds = ['.xyz', '.fun', '.space', '.site', '.io', '.dev', '.app'];
-      
-      console.log(`[Setup] Checking domain variations: ${variations.join(', ')}`);
-      console.log(`[Setup] With TLDs: ${tlds.join(', ')}`);
-      console.log(`[Setup] Max price: $${maxPrice}`);
-      
-      let checked = 0;
-      let available = 0;
-      let tooExpensive = 0;
-      let premium = 0;
-      
-      for (const variation of variations) {
-        for (const tld of tlds) {
-          const domain = `${variation}${tld}`;
-          checked++;
-          try {
-            const availRes = await fetch(
-              `https://api.vercel.com/v1/registrar/domains/${domain}/availability?teamId=${teamId}`,
-              { headers: { 'Authorization': `Bearer ${token}` } }
-            );
-            const availData = await availRes.json();
-            
-            if (availData.available) {
-              available++;
-              if (availData.premium) {
-                premium++;
-                console.log(`[Setup] ⚠️ ${domain} - Premium (skipped)`);
-              } else {
-                const priceRes = await fetch(
-                  `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
-                  { headers: { 'Authorization': `Bearer ${token}` } }
-                );
-                const priceData = await priceRes.json();
-                
-                // Vercel API returns: { purchasePrice, renewalPrice, transferPrice, years }
-                const price = priceData.purchasePrice || priceData.price || null;
-                
-                if (price === null) {
-                  // Log the actual response to debug
-                  console.log(`[Setup] ❓ ${domain} - Price API returned: ${JSON.stringify(priceData).substring(0, 100)}`);
-                  // Try to add anyway if available (assume it's cheap)
-                  result.domains.push({
-                    domain,
-                    price: 0,
-                    priceFormatted: 'Check price',
-                    needsPriceCheck: true,
-                  });
-                } else if (price < maxPrice) {
-                  console.log(`[Setup] ✅ ${domain} - $${price.toFixed(2)} (ADDED)`);
-                  result.domains.push({
-                    domain,
-                    price: price,
-                    priceFormatted: `$${price.toFixed(2)}`,
-                  });
-                } else {
-                  tooExpensive++;
-                  console.log(`[Setup] 💰 ${domain} - $${price.toFixed(2)} (too expensive, max: $${maxPrice})`);
-                }
-              }
-            }
-            await new Promise(r => setTimeout(r, 150)); // Slightly faster
-            if (result.domains.length >= 5) break;
-          } catch (e) {
-            console.log(`[Setup] ❌ ${domain} - Error: ${e.message}`);
-          }
-        }
-        if (result.domains.length >= 5) break;
-      }
-      
-      console.log(`[Setup] Domain search complete: ${checked} checked, ${available} available, ${premium} premium, ${tooExpensive} too expensive, ${result.domains.length} added`);
-      result.domains.sort((a, b) => a.price - b.price);
-    } else {
-      console.log(`[Setup] ⚠️ VERCEL_TOKEN or VERCEL_TEAM_ID not set - skipping domain search`);
-    }
-    
-    // 2. Generate AI content + branding
-    if (generateContentWithBranding) {
-      console.log(`[Setup] Generating content and branding...`);
-      const contentResult = await generateContentWithBranding(
-        `Create a token called ${name}`,
-        {
-          theme: colorScheme,
-          generateImages: true,
-          uploadImages: false, // Don't upload until user confirms
-        }
-      );
-      
-      if (contentResult.success) {
-        result.content = contentResult.data;
-        result.branding = contentResult.branding;
-      }
-    }
-    
-    res.json({ success: true, ...result });
-  } catch (error) {
-    console.error('[Setup] Full setup error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// =====================================================
-// VERCEL PROJECT & DOMAIN MANAGEMENT
-// =====================================================
-
-// List all Vercel projects (deployments)
-app.get('/api/vercel/projects', async (req, res) => {
-  try {
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
-      });
-    }
-    
-    const response = await fetch(
-      `https://api.vercel.com/v9/projects?teamId=${teamId}&limit=100`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      return res.status(response.status).json({ 
-        success: false, 
-        error: data.error?.message || 'Failed to list projects' 
-      });
-    }
-    
-    // Map to simplified format
-    const projects = (data.projects || []).map(p => ({
-      id: p.id,
-      name: p.name,
-      framework: p.framework || 'unknown',
-      updatedAt: p.updatedAt,
-      // Get production domain if available
-      productionDomain: p.targets?.production?.alias?.[0] || p.alias?.[0]?.domain || null,
-    }));
-    
-    // Sort by most recently updated
-    projects.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-    
-    res.json({ 
-      success: true, 
-      projects,
-      defaultProjectId: process.env.VERCEL_PROJECT_ID || null,
-    });
-  } catch (error) {
-    console.error('[Vercel] List projects error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// List all domains OWNED by the team (from Vercel Registrar)
-app.get('/api/vercel/domains', async (req, res) => {
-  try {
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
-      });
-    }
-    
-    const response = await fetch(
-      `https://api.vercel.com/v5/domains?teamId=${teamId}&limit=100`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      return res.status(response.status).json({ 
-        success: false, 
-        error: data.error?.message || 'Failed to list domains' 
-      });
-    }
-    
-    // Map to simplified format
-    const domains = (data.domains || []).map(d => ({
-      name: d.name,
-      expiresAt: d.expiresAt,
-      renew: d.renew,
-      serviceType: d.serviceType, // 'zeit.world' for Vercel DNS
-      verified: d.verified,
-      // Check if connected to a project
-      projectId: d.projectId || null,
-    }));
-    
-    // Sort alphabetically
-    domains.sort((a, b) => a.name.localeCompare(b.name));
-    
-    res.json({ 
-      success: true, 
-      domains,
-      count: domains.length,
-    });
-  } catch (error) {
-    console.error('[Vercel] List owned domains error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Search for available domains to purchase
-app.get('/api/vercel/domains/search', async (req, res) => {
-  try {
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    const { query, maxPrice = 20 } = req.query;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ success: false, error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required' });
-    }
-    
-    if (!query) {
-      return res.status(400).json({ success: false, error: 'Query parameter required' });
-    }
-    
-    const cleanName = query.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const variations = [cleanName, `${cleanName}ai`, `${cleanName}app`, `${cleanName}io`, `get${cleanName}`];
-    const tlds = ['.xyz', '.fun', '.site', '.space', '.io', '.dev', '.app'];
-    
-    const domains = [];
-    
-    console.log(`[Domain Search] Searching for: ${cleanName}`);
-    
-    for (const variation of variations) {
-      if (domains.length >= 10) break;
-      
-      for (const tld of tlds) {
-        if (domains.length >= 10) break;
-        
-        const domain = `${variation}${tld}`;
-        
-        try {
-          // Check availability
-          const availRes = await fetch(
-            `https://api.vercel.com/v1/registrar/domains/${domain}/availability?teamId=${teamId}`,
-            { headers: { 'Authorization': `Bearer ${token}` } }
-          );
-          const availData = await availRes.json();
-          
-          if (availData.available && !availData.premium) {
-            // Get price
-            const priceRes = await fetch(
-              `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
-              { headers: { 'Authorization': `Bearer ${token}` } }
-            );
-            const priceData = await priceRes.json();
-            const price = priceData.purchasePrice || priceData.price || 0;
-            
-            if (price > 0 && price <= parseFloat(maxPrice)) {
-              console.log(`[Domain Search] ✅ ${domain} - $${price.toFixed(2)}`);
-              domains.push({
-                domain,
-                price,
-                priceFormatted: `$${price.toFixed(2)}`,
-                renewalPrice: priceData.renewalPrice,
-              });
-            }
-          }
-          
-          await new Promise(r => setTimeout(r, 100)); // Rate limit
-        } catch (e) {
-          // Skip errors
-        }
-      }
-    }
-    
-    console.log(`[Domain Search] Found ${domains.length} available domains`);
-    domains.sort((a, b) => a.price - b.price);
-    
-    res.json({ success: true, domains, query: cleanName });
-    
-  } catch (error) {
-    console.error('[Domain Search] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Purchase a domain
-app.post('/api/vercel/domains/purchase', async (req, res) => {
-  try {
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    const { domain } = req.body;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ success: false, error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required' });
-    }
-    
-    if (!domain) {
-      return res.status(400).json({ success: false, error: 'Domain required' });
-    }
-    
-    console.log(`[Domain Purchase] Attempting to purchase: ${domain}`);
-    
-    // Get the price first
-    const priceRes = await fetch(
-      `https://api.vercel.com/v1/registrar/domains/${domain}/price?teamId=${teamId}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const priceData = await priceRes.json();
-    const expectedPrice = priceData.purchasePrice || priceData.price || 0;
-    
-    console.log(`[Domain Purchase] Expected price: $${expectedPrice}`);
-    
-    // Contact info for domain registration
-    const contactInfo = {
-      firstName: process.env.DOMAIN_CONTACT_FIRST_NAME || 'John',
-      lastName: process.env.DOMAIN_CONTACT_LAST_NAME || 'Doe',
-      email: process.env.DOMAIN_CONTACT_EMAIL || 'contact@example.com',
-      phone: process.env.DOMAIN_CONTACT_PHONE || '+1234567890',
-      address1: process.env.DOMAIN_CONTACT_ADDRESS || '123 Main St',
-      city: process.env.DOMAIN_CONTACT_CITY || 'New York',
-      state: process.env.DOMAIN_CONTACT_STATE || 'NY',
-      zip: process.env.DOMAIN_CONTACT_ZIP || '10001',
-      country: process.env.DOMAIN_CONTACT_COUNTRY || 'US',
-    };
-    
-    // Use the correct Vercel API endpoint for domain purchase
-    const response = await fetch(
-      `https://api.vercel.com/v1/registrar/domains/${domain}/buy?teamId=${teamId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          autoRenew: false,
-          years: 1,
-          expectedPrice: expectedPrice,
-          contactInformation: contactInfo,
-        }),
-      }
-    );
-    
-    // Handle empty or non-JSON responses
-    const responseText = await response.text();
-    console.log(`[Domain Purchase] Response status: ${response.status}, body: ${responseText.substring(0, 500)}`);
-    
-    let data = {};
-    if (responseText) {
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseErr) {
-        console.error(`[Domain Purchase] Failed to parse response: ${parseErr.message}`);
-        // If response is OK but body isn't JSON, treat as success
-        if (response.ok) {
-          data = { success: true };
-        } else {
-          return res.status(response.status).json({
-            success: false,
-            error: `API Error: ${responseText.substring(0, 200)}`,
-          });
-        }
-      }
-    }
-    
-    if (!response.ok) {
-      console.error(`[Domain Purchase] Failed: ${data.error?.message || JSON.stringify(data)}`);
-      return res.status(response.status).json({
-        success: false,
-        error: data.error?.message || 'Failed to purchase domain',
-      });
-    }
-    
-    console.log(`[Domain Purchase] ✅ Successfully purchased: ${domain}`);
-    
-    res.json({
-      success: true,
-      domain,
-      message: `Domain "${domain}" purchased successfully!`,
-      data,
-    });
-    
-  } catch (error) {
-    console.error('[Domain Purchase] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// List all domains connected to project
-app.get('/api/domains/list', async (req, res) => {
-  try {
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    const projectId = req.query.projectId || process.env.VERCEL_PROJECT_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
-      });
-    }
-    
-    if (!projectId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'projectId required (query param or VERCEL_PROJECT_ID in .env)' 
-      });
-    }
-    
-    const response = await fetch(
-      `https://api.vercel.com/v9/projects/${projectId}/domains?teamId=${teamId}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      return res.status(response.status).json({ 
-        success: false, 
-        error: data.error?.message || 'Failed to list domains' 
-      });
-    }
-    
-    res.json({ 
-      success: true, 
-      projectId,
-      domains: data.domains || [],
-    });
-  } catch (error) {
-    console.error('[Domain] List error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Connect domain to project
-app.post('/api/domains/connect', async (req, res) => {
-  try {
-    const { domain, projectId: reqProjectId } = req.body;
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    const projectId = reqProjectId || process.env.VERCEL_PROJECT_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
-      });
-    }
-    
-    if (!domain) {
-      return res.status(400).json({ success: false, error: 'domain is required' });
-    }
-    
-    if (!projectId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'projectId required (in body or VERCEL_PROJECT_ID in .env)' 
-      });
-    }
-    
-    console.log(`[Domain] Connecting ${domain} to project ${projectId}...`);
-    
-    const response = await fetch(
-      `https://api.vercel.com/v10/projects/${projectId}/domains?teamId=${teamId}`,
-      {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: domain }),
-      }
-    );
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      // Already exists is OK
-      if (data.error?.code === 'domain_already_exists') {
-        console.log(`[Domain] ${domain} already connected`);
-        return res.json({ success: true, domain, alreadyConnected: true });
-      }
-      return res.status(response.status).json({ 
-        success: false, 
-        error: data.error?.message || 'Failed to connect domain' 
-      });
-    }
-    
-    console.log(`[Domain] ✅ ${domain} connected to project!`);
-    res.json({ 
-      success: true, 
-      domain,
-      verified: data.verified,
-      configured: data.configured,
-    });
-  } catch (error) {
-    console.error('[Domain] Connect error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Disconnect domain from project (you still own it)
-app.post('/api/domains/disconnect', async (req, res) => {
-  try {
-    const { domain, projectId: reqProjectId } = req.body;
-    const token = process.env.VERCEL_TOKEN;
-    const teamId = process.env.VERCEL_TEAM_ID;
-    const projectId = reqProjectId || process.env.VERCEL_PROJECT_ID;
-    
-    if (!token || !teamId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'VERCEL_TOKEN and VERCEL_TEAM_ID required in .env' 
-      });
-    }
-    
-    if (!domain) {
-      return res.status(400).json({ success: false, error: 'domain is required' });
-    }
-    
-    if (!projectId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'projectId required (in body or VERCEL_PROJECT_ID in .env)' 
-      });
-    }
-    
-    console.log(`[Domain] Disconnecting ${domain} from project ${projectId}...`);
-    
-    const response = await fetch(
-      `https://api.vercel.com/v9/projects/${projectId}/domains/${domain}?teamId=${teamId}`,
-      {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-      }
-    );
-    
-    // 204 No Content = success, 404 = already disconnected
-    if (response.status === 204 || response.status === 200) {
-      console.log(`[Domain] ✅ ${domain} disconnected from project!`);
-      return res.json({ success: true, domain, disconnected: true });
-    }
-    
-    if (response.status === 404) {
-      console.log(`[Domain] ${domain} was not connected to project`);
-      return res.json({ success: true, domain, alreadyDisconnected: true });
-    }
-    
-    const data = await response.json().catch(() => ({}));
-    return res.status(response.status).json({ 
-      success: false, 
-      error: data.error?.message || `HTTP ${response.status}` 
-    });
-  } catch (error) {
-    console.error('[Domain] Disconnect error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+// NOTE: Vercel/Domain setup endpoints removed for simplified public version
+// Removed endpoints: /api/setup/*, /api/vercel/*, /api/domains/*
 
 // =====================================================
 // DEBUG & LOGGING ENDPOINTS
@@ -7991,9 +7184,16 @@ app.post('/api/private-funding/check-balance', async (req, res) => {
     const { address, chain = 'ethereum' } = req.body;
     const { ethers } = require('ethers');
     
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     
     const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.ethereum);
@@ -8092,9 +7292,17 @@ app.post('/api/private-funding/bridge-sol-to-eth', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Mayan SDK not installed' });
     }
     
-    // Chain mapping
-    const chainMap = { ethereum: 'ethereum', base: 'base', bsc: 'bsc' };
-    const toChain = chainMap[chain] || 'base';
+    // Chain mapping - Mayan SDK supported chains
+    const chainMap = { 
+      ethereum: 'ethereum', 
+      base: 'base', 
+      bsc: 'bsc',
+      polygon: 'polygon',
+      avalanche: 'avalanche',
+      arbitrum: 'arbitrum',
+      optimism: 'optimism',
+    };
+    const toChain = chainMap[chain] || chain || 'base'; // Fallback to provided chain if not in map
     
     // Get quote
     console.log(`[Private Funding] Fetching Mayan quote...`);
@@ -8203,9 +7411,16 @@ app.post('/api/private-funding/bridge-eth-to-sol', async (req, res) => {
     const { ethers } = require('ethers');
     
     // RPC setup
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     
     const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
@@ -8508,9 +7723,17 @@ app.post('/api/private-funding/bridge-from-wallet', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Mayan SDK not installed' });
     }
     
-    // Chain mapping
-    const chainMap = { ethereum: 'ethereum', base: 'base', bsc: 'bsc' };
-    const toChain = chainMap[chain] || 'base';
+    // Chain mapping - Mayan SDK supported chains
+    const chainMap = { 
+      ethereum: 'ethereum', 
+      base: 'base', 
+      bsc: 'bsc',
+      polygon: 'polygon',
+      avalanche: 'avalanche',
+      arbitrum: 'arbitrum',
+      optimism: 'optimism',
+    };
+    const toChain = chainMap[chain] || chain || 'base'; // Fallback to provided chain if not in map
     
     // Get quote
     console.log(`[Private Funding] Fetching Mayan quote for ${amount} SOL → ${toChain}...`);
@@ -8593,9 +7816,16 @@ app.get('/api/private-funding/status', async (req, res) => {
     const { ethers } = require('ethers');
     const data = loadEvmIntermediaryWallets();
     
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     
     const walletsWithBalances = await Promise.all(
@@ -8636,9 +7866,16 @@ app.post('/api/private-funding/wait-for-eth-balance', async (req, res) => {
     }
     
     const { ethers } = require('ethers');
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     
     const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
@@ -8831,14 +8068,26 @@ app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
     const mayanSdk = require('@mayanfinance/swap-sdk');
     const { fetchQuote, swapFromSolana } = mayanSdk;
     
+    // Chain mapping for Mayan SDK
+    const chainMap = { 
+      ethereum: 'ethereum', 
+      base: 'base', 
+      bsc: 'bsc',
+      polygon: 'polygon',
+      avalanche: 'avalanche',
+      arbitrum: 'arbitrum',
+      optimism: 'optimism',
+    };
+    const toChain = chainMap[chain] || chain || 'base';
+    
     // Get quote
-    console.log(`[Private Funding] Fetching Mayan quote for ${totalAmount} SOL...`);
+    console.log(`[Private Funding] Fetching Mayan quote for ${totalAmount} SOL → ${toChain}...`);
     const quotes = await fetchQuote({
       amountIn64: amountLamports.toString(),
       fromToken: '0x0000000000000000000000000000000000000000',
       toToken: '0x0000000000000000000000000000000000000000',
       fromChain: 'solana',
-      toChain: chain,
+      toChain: toChain,
       slippageBps: 100,
     });
     
@@ -8878,9 +8127,16 @@ app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
     // ========== STEP 4: Wait for ETH to arrive ==========
     console.log(`[Private Funding] Step 4: Waiting for ETH to arrive on ${chain}...`);
     
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
     
@@ -8889,10 +8145,14 @@ app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
     const pollInterval = 10 * 1000; // 10 seconds
     const startTime = Date.now();
     
-    let ethBalance = 0;
+    // IMPORTANT: Keep on-chain balances as bigint (wei) to avoid ethers v6 underflow issues.
+    // We'll derive a numeric ETH value only for logging/UI.
+    let ethBalance = 0; // ETH (number) for logs only
+    let balanceWeiLatest = 0n; // wei (bigint) for calculations
     while (Date.now() - startTime < maxWaitTime) {
       const balanceWei = await provider.getBalance(evmWallet.address);
-      ethBalance = parseFloat(ethers.formatEther(balanceWei));
+      balanceWeiLatest = balanceWei;
+      ethBalance = parseFloat(ethers.formatEther(balanceWeiLatest));
       
       if (ethBalance >= minEthBalance) {
         console.log(`[Private Funding] ✅ ETH arrived: ${ethBalance.toFixed(6)} ETH`);
@@ -8914,8 +8174,46 @@ app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
     // ========== STEP 5: Bridge ETH → SOL to destination wallets ==========
     console.log(`[Private Funding] Step 5: Bridging ETH → SOL to ${destinationAddresses.length} wallets...`);
     
-    const amountPerWallet = ethBalance / destinationAddresses.length;
-    const amountPerWalletWei = ethers.parseEther((amountPerWallet * 0.98).toFixed(18)); // 98% to account for gas
+    // Calculate actual gas cost per transaction (BSC/Base are very cheap)
+    const feeData = await provider.getFeeData();
+    const estimatedGasPerTx = 150000n; // Typical gas for Mayan swap
+    const gasCostPerTx = (feeData.gasPrice || ethers.parseUnits('1', 'gwei')) * estimatedGasPerTx;
+    const totalGasReserve = gasCostPerTx * BigInt(destinationAddresses.length);
+    const smallBuffer = ethers.parseEther('0.00001'); // Tiny buffer (0.00001 ETH = ~$0.02)
+    
+    // Reserve only actual gas needed, not a percentage
+    const totalReserveWei = totalGasReserve + smallBuffer;
+    const availableForBridgingWei = balanceWeiLatest > totalReserveWei
+      ? (balanceWeiLatest - totalReserveWei)
+      : 0n;
+    
+    // Mayan minimum amount requirement (varies by chain, but ~0.0008 ETH is safe)
+    const MAYAN_MIN_AMOUNT_ETH = chain === 'ethereum' ? 0.001 : 0.0008; // Ethereum mainnet needs more
+    const MAYAN_MIN_AMOUNT_WEI = ethers.parseEther(MAYAN_MIN_AMOUNT_ETH.toString());
+    
+    const amountPerWalletWei = destinationAddresses.length > 0
+      ? (availableForBridgingWei / BigInt(destinationAddresses.length))
+      : 0n;
+    const amountPerWallet = parseFloat(ethers.formatEther(amountPerWalletWei));
+    
+    console.log(`[Private Funding] Gas per tx: ${ethers.formatEther(gasCostPerTx)} ETH`);
+    console.log(`[Private Funding] Total gas reserve: ${ethers.formatEther(totalReserveWei)} ETH`);
+    console.log(`[Private Funding] Amount per wallet: ${amountPerWallet.toFixed(6)} ETH`);
+    console.log(`[Private Funding] Mayan minimum: ${MAYAN_MIN_AMOUNT_ETH} ETH`);
+    
+    // Check if amount is too small for Mayan
+    if (amountPerWalletWei < MAYAN_MIN_AMOUNT_WEI) {
+      const totalNeeded = (MAYAN_MIN_AMOUNT_WEI * BigInt(destinationAddresses.length)) + totalReserveWei;
+      const totalNeededEth = parseFloat(ethers.formatEther(totalNeeded));
+      return res.status(400).json({ 
+        success: false, 
+        error: `Amount too small for Mayan bridge. Each wallet needs at least ${MAYAN_MIN_AMOUNT_ETH} ETH, but only ${amountPerWallet.toFixed(6)} ETH per wallet available. Total needed: ~${totalNeededEth.toFixed(6)} ETH, have: ${ethBalance.toFixed(6)} ETH. Try funding with more SOL or fewer wallets.`,
+        amountPerWallet: amountPerWallet,
+        minimumRequired: MAYAN_MIN_AMOUNT_ETH,
+        totalNeeded: totalNeededEth,
+        currentBalance: ethBalance
+      });
+    }
     
     // Create signer
     const evmSigner = new ethers.Wallet(evmWallet.privateKey, provider);
@@ -8924,7 +8222,15 @@ app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
     const results = [];
     for (const destAddr of destinationAddresses) {
       try {
-        console.log(`[Private Funding] Bridging to ${destAddr.substring(0, 8)}...`);
+        console.log(`[Private Funding] Bridging ${amountPerWallet.toFixed(6)} ETH to ${destAddr.substring(0, 8)}...`);
+        
+        // Double-check amount is still sufficient (in case balance changed)
+        const currentBalance = await provider.getBalance(evmWallet.address);
+        if (currentBalance < amountPerWalletWei + gasCostPerTx) {
+          console.log(`[Private Funding] ⚠️ Insufficient balance for ${destAddr.substring(0, 8)}... (have: ${ethers.formatEther(currentBalance)} ETH, need: ${ethers.formatEther(amountPerWalletWei + gasCostPerTx)} ETH)`);
+          results.push({ address: destAddr, success: false, error: 'Insufficient balance' });
+          continue;
+        }
         
         // Get quote for ETH → SOL
         const quote2 = await fetchQuote({
@@ -8961,8 +8267,21 @@ app.post('/api/private-funding/auto-fund-wallets', async (req, res) => {
         results.push({ address: destAddr, success: true, signature: sig2 });
         
       } catch (err) {
-        console.log(`[Private Funding] ❌ Failed for ${destAddr.substring(0, 8)}...: ${err.message}`);
-        results.push({ address: destAddr, success: false, error: err.message });
+        const errorMsg = err.message || String(err);
+        console.log(`[Private Funding] ❌ Failed for ${destAddr.substring(0, 8)}...: ${errorMsg}`);
+        
+        // Provide helpful error message if amount is too small
+        if (errorMsg.includes('too small') || errorMsg.includes('minimum') || errorMsg.includes('min')) {
+          results.push({ 
+            address: destAddr, 
+            success: false, 
+            error: `Amount too small (min ~${MAYAN_MIN_AMOUNT_ETH} ETH, got ${amountPerWallet.toFixed(6)} ETH). Try funding with more SOL or fewer wallets.`,
+            amount: amountPerWallet,
+            minimum: MAYAN_MIN_AMOUNT_ETH
+          });
+        } else {
+          results.push({ address: destAddr, success: false, error: errorMsg });
+        }
       }
     }
     
@@ -9078,11 +8397,31 @@ app.post('/api/private-funding/auto-withdraw-wallets', async (req, res) => {
           continue;
         }
         
-        // Bridge 95% (keep some for rent)
-        const amountToWithdraw = balanceSol * 0.95;
+        // Bridge almost everything - only keep rent exemption (0.00089 SOL) + tiny buffer
+        const rentExemption = 0.00089; // Solana rent exemption
+        const tinyBuffer = 0.0001; // Small buffer for fees
+        const amountToWithdraw = Math.max(0, balanceSol - rentExemption - tinyBuffer);
         const amountLamports = Math.floor(amountToWithdraw * LAMPORTS_PER_SOL);
         
+        if (amountLamports <= 0) {
+          console.log(`[Private Withdrawal] ⚠️ Balance too low after rent exemption: ${srcAddr.substring(0, 8)}...`);
+          bridgeResults.push({ address: srcAddr, success: false, error: 'Balance too low' });
+          continue;
+        }
+        
         console.log(`[Private Withdrawal] Bridging ${amountToWithdraw.toFixed(4)} SOL from ${srcAddr.substring(0, 8)}...`);
+        
+        // Chain mapping for Mayan SDK
+        const chainMap = { 
+          ethereum: 'ethereum', 
+          base: 'base', 
+          bsc: 'bsc',
+          polygon: 'polygon',
+          avalanche: 'avalanche',
+          arbitrum: 'arbitrum',
+          optimism: 'optimism',
+        };
+        const toChain = chainMap[chain] || chain || 'base';
         
         // Get quote
         const quotes = await fetchQuote({
@@ -9090,7 +8429,7 @@ app.post('/api/private-funding/auto-withdraw-wallets', async (req, res) => {
           fromToken: '0x0000000000000000000000000000000000000000',
           toToken: '0x0000000000000000000000000000000000000000',
           fromChain: 'solana',
-          toChain: chain,
+          toChain: toChain,
           slippageBps: 100,
         });
         
@@ -9139,9 +8478,16 @@ app.post('/api/private-funding/auto-withdraw-wallets', async (req, res) => {
     // ========== STEP 4: Wait for ETH to arrive ==========
     console.log(`[Private Withdrawal] Step 4: Waiting for ETH to arrive (bridged ~${totalBridged.toFixed(4)} SOL)...`);
     
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
     
@@ -9242,6 +8588,245 @@ app.post('/api/private-funding/auto-withdraw-wallets', async (req, res) => {
   }
 });
 
+// Withdraw ALL ETH from ALL intermediary wallets back to main SOL wallet
+app.post('/api/private-funding/withdraw-all-eth', async (req, res) => {
+  try {
+    const { chain = 'base' } = req.body;
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Private Funding] 💰 WITHDRAWING ALL ETH FROM INTERMEDIARY WALLETS`);
+    console.log(`[Private Funding] Chain: ${chain.toUpperCase()}`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    const data = loadEvmIntermediaryWallets();
+    const wallets = data.wallets.filter(w => 
+      w.chain === chain && 
+      w.status !== 'recovered' && 
+      w.status !== 'distributed'
+    );
+    
+    if (wallets.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: 'No intermediary wallets found with ETH',
+        withdrawn: 0,
+        totalEth: 0
+      });
+    }
+    
+    console.log(`[Private Funding] Found ${wallets.length} intermediary wallet(s) on ${chain.toUpperCase()}`);
+    
+    const { ethers } = require('ethers');
+    const { Connection, Keypair, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+    const base58 = require('bs58').default || require('bs58');
+    
+    // Get main wallet
+    const env = readEnvFile();
+    if (!env.PRIVATE_KEY) {
+      return res.status(400).json({ success: false, error: 'No main wallet configured (PRIVATE_KEY in .env)' });
+    }
+    const mainKp = Keypair.fromSecretKey(base58.decode(env.PRIVATE_KEY));
+    const mainAddress = mainKp.publicKey.toBase58();
+    
+    // RPC setup
+    const rpcUrls = {
+      ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
+      base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
+    };
+    const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
+    
+    // Import Mayan SDK
+    let fetchQuote, swapFromEvm;
+    try {
+      const mayanSdk = require('@mayanfinance/swap-sdk');
+      fetchQuote = mayanSdk.fetchQuote;
+      swapFromEvm = mayanSdk.swapFromEvm;
+    } catch (e) {
+      return res.status(500).json({ success: false, error: 'Mayan SDK not installed' });
+    }
+    
+    const results = [];
+    let totalEthWithdrawn = 0;
+    let totalSolReceived = 0;
+    
+    for (const evmWallet of wallets) {
+      try {
+        const wallet = new ethers.Wallet(evmWallet.privateKey, provider);
+        const balance = await provider.getBalance(wallet.address);
+        const balanceEth = parseFloat(ethers.formatEther(balance));
+        
+        if (balanceEth < 0.0001) {
+          console.log(`[Private Funding] ⚠️ Skipping ${evmWallet.address.substring(0, 10)}... (balance: ${balanceEth.toFixed(6)} ETH)`);
+          results.push({ 
+            address: evmWallet.address, 
+            success: false, 
+            error: 'Balance too low',
+            balance: balanceEth 
+          });
+          continue;
+        }
+        
+        // Calculate gas cost with larger estimate (Mayan swaps are complex)
+        // BSC/Base typically need 200k-300k gas, Ethereum mainnet can be higher
+        const feeData = await provider.getFeeData();
+        const estimatedGas = chain === 'ethereum' ? 300000n : 250000n; // Higher estimate for complex swaps
+        const gasPrice = feeData.gasPrice || ethers.parseUnits('3', 'gwei'); // Use actual or safe default
+        const gasCost = gasPrice * estimatedGas;
+        const gasCostEth = parseFloat(ethers.formatEther(gasCost));
+        
+        // Add larger safety buffer (20% of gas cost + fixed minimum)
+        const safetyBuffer = Math.max(gasCostEth * 0.2, 0.00005); // At least 0.00005 ETH buffer
+        const totalReserve = gasCostEth + safetyBuffer;
+        
+        console.log(`[Private Funding] Balance: ${balanceEth.toFixed(6)} ETH, Gas estimate: ${gasCostEth.toFixed(6)} ETH, Buffer: ${safetyBuffer.toFixed(6)} ETH`);
+        
+        // Reserve gas + buffer, bridge the rest
+        let amountToBridge = Math.max(0, balanceEth - totalReserve);
+        
+        // Make sure we have enough for minimum Mayan amount
+        const MAYAN_MIN = chain === 'ethereum' ? 0.001 : 0.0008;
+        if (amountToBridge < MAYAN_MIN) {
+          // If amount is too small, try to bridge everything except a larger gas reserve
+          const largerReserve = gasCostEth * 1.5; // 50% extra for gas
+          amountToBridge = Math.max(0, balanceEth - largerReserve);
+          
+          if (amountToBridge < MAYAN_MIN) {
+            console.log(`[Private Funding] ⚠️ Skipping ${evmWallet.address.substring(0, 10)}... (balance: ${balanceEth.toFixed(6)} ETH, after gas reserve: ${amountToBridge.toFixed(6)} ETH, need min: ${MAYAN_MIN} ETH)`);
+            results.push({ 
+              address: evmWallet.address, 
+              success: false, 
+              error: `Insufficient balance. Have ${balanceEth.toFixed(6)} ETH, need ${(largerReserve + MAYAN_MIN).toFixed(6)} ETH minimum (gas + min bridge amount)`,
+              balance: balanceEth,
+              gasCost: gasCostEth,
+              minimumNeeded: largerReserve + MAYAN_MIN
+            });
+            continue;
+          }
+        }
+        
+        console.log(`[Private Funding] Withdrawing ${amountToBridge.toFixed(6)} ETH from ${evmWallet.address.substring(0, 10)}... (reserving ${totalReserve.toFixed(6)} ETH for gas)`);
+        
+        const amountWei = ethers.parseEther(amountToBridge.toFixed(18));
+        
+        // Get quote FIRST to make sure it's valid
+        const quotes = await fetchQuote({
+          amountIn64: amountWei.toString(),
+          fromToken: '0x0000000000000000000000000000000000000000',
+          toToken: '0x0000000000000000000000000000000000000000',
+          fromChain: chain,
+          toChain: 'solana',
+          slippageBps: 100,
+        });
+        
+        if (!quotes || quotes.length === 0) {
+          console.log(`[Private Funding] ⚠️ No quote for ${evmWallet.address.substring(0, 10)}...`);
+          results.push({ address: evmWallet.address, success: false, error: 'No quote' });
+          continue;
+        }
+        
+        // Double-check balance is still sufficient (in case it changed)
+        const currentBalance = await provider.getBalance(wallet.address);
+        const currentBalanceEth = parseFloat(ethers.formatEther(currentBalance));
+        let finalAmountToBridge = amountToBridge;
+        let finalAmountWei = amountWei;
+        
+        if (currentBalanceEth < amountToBridge + totalReserve) {
+          // Recalculate with current balance
+          finalAmountToBridge = Math.max(0, currentBalanceEth - totalReserve);
+          if (finalAmountToBridge < MAYAN_MIN) {
+            console.log(`[Private Funding] ⚠️ Balance changed, insufficient: ${currentBalanceEth.toFixed(6)} ETH`);
+            results.push({ address: evmWallet.address, success: false, error: 'Balance insufficient after quote' });
+            continue;
+          }
+          // Update amountWei with new amount
+          finalAmountWei = ethers.parseEther(finalAmountToBridge.toFixed(18));
+          console.log(`[Private Funding] Adjusted amount to ${finalAmountToBridge.toFixed(6)} ETH due to balance change`);
+        }
+        
+        // Execute swap
+        const evmSigner = new ethers.Wallet(evmWallet.privateKey, provider);
+        const result = await swapFromEvm(
+          quotes[0],
+          evmWallet.address,
+          mainAddress,
+          null,
+          evmSigner,
+          null,
+          null,
+          null
+        );
+        
+        const sig = typeof result === 'string' ? result : result.hash || result.signature;
+        const expectedSol = quotes[0].expectedAmountOut || quotes[0].minAmountOut;
+        const expectedSolAmount = expectedSol ? parseFloat(expectedSol) / 1e9 : 0;
+        
+        // Use finalAmountToBridge if it was adjusted, otherwise use original amountToBridge
+        const finalBridgeAmount = finalAmountToBridge || amountToBridge;
+        
+        console.log(`[Private Funding] ✅ Bridged ${finalBridgeAmount.toFixed(6)} ETH → ~${expectedSolAmount.toFixed(4)} SOL: ${sig}`);
+        
+        totalEthWithdrawn += finalBridgeAmount;
+        totalSolReceived += expectedSolAmount;
+        
+        // Update wallet status
+        evmWallet.status = 'recovered';
+        evmWallet.recoveredAt = new Date().toISOString();
+        evmWallet.recoveredTo = mainAddress;
+        evmWallet.recoveredAmount = finalBridgeAmount;
+        evmWallet.recoveredTx = sig;
+        
+        results.push({ 
+          address: evmWallet.address, 
+          success: true, 
+          ethAmount: finalBridgeAmount,
+          expectedSol: expectedSolAmount,
+          signature: sig
+        });
+        
+        // Small delay between transactions
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+      } catch (error) {
+        console.error(`[Private Funding] ❌ Failed for ${evmWallet.address.substring(0, 10)}...:`, error.message);
+        results.push({ 
+          address: evmWallet.address, 
+          success: false, 
+          error: error.message 
+        });
+      }
+    }
+    
+    // Save updated wallet statuses
+    saveEvmIntermediaryWallets(data);
+    
+    const successCount = results.filter(r => r.success).length;
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Private Funding] ✅ COMPLETED: ${successCount}/${wallets.length} wallets recovered`);
+    console.log(`[Private Funding] Total ETH withdrawn: ${totalEthWithdrawn.toFixed(6)} ETH`);
+    console.log(`[Private Funding] Expected SOL: ~${totalSolReceived.toFixed(4)} SOL`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    res.json({
+      success: true,
+      message: `Withdrew ${totalEthWithdrawn.toFixed(6)} ETH from ${successCount} wallet(s). Expected ~${totalSolReceived.toFixed(4)} SOL in 2-5 minutes.`,
+      withdrawn: successCount,
+      totalEth: totalEthWithdrawn,
+      expectedSol: totalSolReceived,
+      results
+    });
+    
+  } catch (error) {
+    console.error('[Private Funding] Withdraw all ETH error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get intermediary wallet with private key (for withdrawal flow)
 app.get('/api/private-funding/intermediary/:id', (req, res) => {
   try {
@@ -9255,6 +8840,648 @@ app.get('/api/private-funding/intermediary/:id', (req, res) => {
 
     res.json({ success: true, wallet });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// =====================================================
+// PRIVATE FUNDING VIA INTERMEDIARY SOL WALLETS (NO MAYAN)
+// =====================================================
+//
+// NOTE:
+// - Saves intermediary wallets in JSON format (same as launch pattern: keys/intermediary-wallets.json)
+// - Generates and saves the wallets BEFORE sending any funds
+// - Sends sequentially (1-by-1) to keep RPC pressure and fees low
+//
+const INTERMEDIARY_WALLETS_FILE = path.join(__dirname, '..', 'keys', 'intermediary.txt');
+const INTERMEDIARY_WALLETS_JSON = path.join(__dirname, '..', 'keys', 'intermediary-wallets.json'); // Old JSON file to delete
+
+function ensureKeysDir() {
+  const keysDir = path.dirname(INTERMEDIARY_WALLETS_FILE);
+  if (!fs.existsSync(keysDir)) {
+    fs.mkdirSync(keysDir, { recursive: true });
+  }
+}
+
+// Save intermediary wallets in simple text format: "Funding 1\npk1\npk2\n..."
+function saveSolIntermediaryKeypairs(keypairs, hopNumber = 1) {
+  ensureKeysDir();
+  try {
+    let lines = [];
+    
+    // Read existing file if it exists
+    if (fs.existsSync(INTERMEDIARY_WALLETS_FILE)) {
+      const content = fs.readFileSync(INTERMEDIARY_WALLETS_FILE, 'utf8');
+      lines = content.trim().split('\n');
+    }
+    
+    // Find existing "Funding X" sections and update the matching one
+    let foundSection = false;
+    const sectionHeader = `Funding ${hopNumber}`;
+    const result = [];
+    let inTargetSection = false;
+    let i = 0;
+    
+    while (i < lines.length) {
+      if (lines[i].startsWith('Funding ')) {
+        if (lines[i] === sectionHeader) {
+          inTargetSection = true;
+          foundSection = true;
+          result.push(sectionHeader);
+          // Add new private keys for this funding
+          keypairs.forEach(kp => {
+            result.push(base58.encode(kp.secretKey));
+          });
+          // Skip old keys in this section
+          i++;
+          while (i < lines.length && !lines[i].startsWith('Funding ')) {
+            i++;
+          }
+        } else {
+          inTargetSection = false;
+          result.push(lines[i]);
+          i++;
+        }
+      } else if (!inTargetSection) {
+        result.push(lines[i]);
+        i++;
+      } else {
+        i++;
+      }
+    }
+    
+    // If section doesn't exist, add it at the end
+    if (!foundSection) {
+      if (result.length > 0 && !result[result.length - 1].endsWith('\n')) {
+        result.push('');
+      }
+      result.push(sectionHeader);
+      keypairs.forEach(kp => {
+        result.push(base58.encode(kp.secretKey));
+      });
+    }
+    
+    fs.writeFileSync(INTERMEDIARY_WALLETS_FILE, result.join('\n') + '\n');
+    
+    // Delete old JSON file if it exists
+    if (fs.existsSync(INTERMEDIARY_WALLETS_JSON)) {
+      try {
+        fs.unlinkSync(INTERMEDIARY_WALLETS_JSON);
+        console.log(`[Private Funding SOL] 🗑️ Deleted old JSON file: ${INTERMEDIARY_WALLETS_JSON}`);
+      } catch (e) {
+        // Ignore deletion errors
+      }
+    }
+    
+    console.log(`[Private Funding SOL] 💾 Saved ${keypairs.length} intermediary wallet(s) to ${INTERMEDIARY_WALLETS_FILE} (Funding ${hopNumber})`);
+  } catch (error) {
+    console.error(`[Private Funding SOL] ⚠️  Failed to save intermediary wallets:`, error);
+  }
+}
+
+// Load intermediary wallets from simple text format
+function loadSolIntermediaryKeypairs(hopNumber = 1) {
+  try {
+    if (!fs.existsSync(INTERMEDIARY_WALLETS_FILE)) {
+      // Also check for old JSON file for migration
+      if (fs.existsSync(INTERMEDIARY_WALLETS_JSON)) {
+        console.log(`[Private Funding SOL] ⚠️ Found old JSON file, migrating to ${INTERMEDIARY_WALLETS_FILE}`);
+        const data = JSON.parse(fs.readFileSync(INTERMEDIARY_WALLETS_JSON, 'utf8'));
+        const hopKey = `hop${hopNumber}`;
+        const wallets = data[hopKey] || [];
+        const keypairs = wallets.map(w => {
+          try {
+            return Keypair.fromSecretKey(base58.decode(w.privateKey));
+          } catch (e) {
+            return null;
+          }
+        }).filter(kp => kp !== null);
+        
+        // Migrate to txt format
+        if (keypairs.length > 0) {
+          saveSolIntermediaryKeypairs(keypairs, hopNumber);
+        }
+        return keypairs;
+      }
+      return [];
+    }
+    
+    const content = fs.readFileSync(INTERMEDIARY_WALLETS_FILE, 'utf8');
+    const lines = content.trim().split('\n');
+    const sectionHeader = `Funding ${hopNumber}`;
+    
+    let inTargetSection = false;
+    const privateKeys = [];
+    
+    for (const line of lines) {
+      if (line.startsWith('Funding ')) {
+        inTargetSection = (line === sectionHeader);
+      } else if (inTargetSection && line.trim()) {
+        privateKeys.push(line.trim());
+      }
+    }
+    
+    return privateKeys.map(pk => {
+      try {
+        return Keypair.fromSecretKey(base58.decode(pk));
+      } catch (e) {
+        console.error(`[Private Funding SOL] ⚠️ Invalid private key in ${INTERMEDIARY_WALLETS_FILE}:`, e.message);
+        return null;
+      }
+    }).filter(kp => kp !== null);
+  } catch (e) {
+    console.error('[Private Funding SOL] Error loading intermediary wallets:', e.message);
+    return [];
+  }
+}
+
+// PRIVATE FUNDING (SOL → [intermediary SOL wallets] → destination SOL wallets)
+// This replaces the Mayan bridge for the "private" option.
+app.post('/api/private-funding/sol-intermediary', async (req, res) => {
+  try {
+    const {
+      sourceWalletId = 'main', // 'main' uses PRIVATE_KEY from .env, or provide private key directly
+      sourcePrivateKey, // Optional: if provided, use this instead of sourceWalletId
+      destinationAddresses, // array of base58 SOL addresses
+      totalAmountSol,       // total SOL amount to route
+      intermediaryCount = 10, // up to 50
+      reuseSavedIntermediaries = false, // if true, uses saved wallets from intermediary-wallets.json
+    } = req.body || {};
+
+    if (!Array.isArray(destinationAddresses) || destinationAddresses.length === 0 || !totalAmountSol) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: destinationAddresses (array), totalAmountSol',
+      });
+    }
+
+    const hopCount = Math.min(Math.max(Number(intermediaryCount) || 0, 1), 50);
+
+    const solRpcUrl = process.env.SOL_RPC_URL || process.env.SOLANA_RPC_URL || process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const connection = new Connection(solRpcUrl, 'confirmed');
+
+    // Get source keypair (from sourcePrivateKey if provided, otherwise from sourceWalletId='main' using PRIVATE_KEY)
+    let sourceKp;
+    try {
+      let privateKeyStr;
+      if (sourcePrivateKey) {
+        privateKeyStr = sourcePrivateKey;
+      } else if (sourceWalletId === 'main') {
+        const env = readEnvFile();
+        if (!env.PRIVATE_KEY) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'PRIVATE_KEY not set in .env file. Either set PRIVATE_KEY in .env or provide sourcePrivateKey in request.' 
+          });
+        }
+        privateKeyStr = env.PRIVATE_KEY;
+      } else {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Either provide sourcePrivateKey or use sourceWalletId="main" (requires PRIVATE_KEY in .env)' 
+        });
+      }
+
+      const trimmed = String(privateKeyStr).trim();
+      let sk;
+      if (trimmed.startsWith('[')) sk = new Uint8Array(JSON.parse(trimmed));
+      else sk = base58.decode(trimmed);
+      if (sk.length === 32) sourceKp = Keypair.fromSeed(sk);
+      else if (sk.length === 64) sourceKp = Keypair.fromSecretKey(sk);
+      else throw new Error(`Invalid key length: ${sk.length} bytes (expected 32 or 64)`);
+    } catch (e) {
+      return res.status(400).json({ success: false, error: `Invalid Solana private key: ${e.message}` });
+    }
+
+    const totalLamports = Math.floor(Number(totalAmountSol) * LAMPORTS_PER_SOL);
+    if (!Number.isFinite(totalLamports) || totalLamports <= 0) {
+      return res.status(400).json({ success: false, error: 'totalAmountSol must be a positive number' });
+    }
+
+    // Create or load intermediary keypairs (and SAVE BEFORE SENDING)
+    let intermediaryKps = [];
+    if (reuseSavedIntermediaries) {
+      intermediaryKps = loadSolIntermediaryKeypairs(1); // Load from hop1
+      if (intermediaryKps.length === 0) {
+        return res.status(400).json({ success: false, error: `No saved intermediary wallets found at ${INTERMEDIARY_WALLETS_FILE}. Please create new intermediaries or check the file.` });
+      }
+      if (intermediaryKps.length > 50) intermediaryKps = intermediaryKps.slice(0, 50);
+      console.log(`[Private Funding SOL] 🔄 Reusing ${intermediaryKps.length} saved intermediary wallets`);
+    } else {
+      intermediaryKps = Array.from({ length: hopCount }, () => Keypair.generate());
+      // Save wallets to JSON file BEFORE sending (so they're recoverable if something goes wrong)
+      saveSolIntermediaryKeypairs(intermediaryKps, 1); // Save to txt file, MUST happen before any send
+      console.log(`[Private Funding SOL] 💾 Intermediary wallets saved to ${INTERMEDIARY_WALLETS_FILE}`);
+    }
+
+    const sourceBalance = await connection.getBalance(sourceKp.publicKey);
+    // Approx fee budgeting: use 10k lamports / tx safety buffer
+    const estimatedTxCount = intermediaryKps.length + destinationAddresses.length;
+    const feeBufferLamports = 10_000 * estimatedTxCount;
+    if (sourceBalance < totalLamports + feeBufferLamports) {
+      return res.status(400).json({
+        success: false,
+        error: `Insufficient balance. Have ${(sourceBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL, need ~${((totalLamports + feeBufferLamports) / LAMPORTS_PER_SOL).toFixed(6)} SOL (amount + fee buffer)`,
+      });
+    }
+
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Private Funding SOL] 🔒 SOL intermediary route (NO Mayan)`);
+    console.log(`[Private Funding SOL] Source: ${sourceKp.publicKey.toBase58()}`);
+    console.log(`[Private Funding SOL] Intermediaries: ${intermediaryKps.length} (saved: ${INTERMEDIARY_WALLETS_FILE})`);
+    console.log(`[Private Funding SOL] Destinations: ${destinationAddresses.length}`);
+    console.log(`[Private Funding SOL] Total: ${(totalLamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
+    console.log(`${'='.repeat(60)}\n`);
+
+    // CHAIN ROUTING: Source -> Inter1 -> Inter2 -> ... -> InterN -> Destination
+    // Each intermediary receives the FULL amount and passes it through (minus fees)
+    console.log(`[Private Funding SOL] Routing through ${intermediaryKps.length} intermediary chain: Source -> Inter1 -> Inter2 -> ... -> Inter${intermediaryKps.length} -> Destination`);
+    console.log(`[Private Funding SOL] Full amount: ${(totalLamports / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+    
+    const chainResults = [];
+    let currentAmount = totalLamports;
+    let currentSender = sourceKp;
+    // Note: We send ALL balance from intermediaries (like Phantom does)
+    // Solana automatically closes accounts when balance goes to 0 and refunds rent to recipient
+    // We only need to reserve a small amount for transaction fees
+    
+    // Build the chain: Source -> Inter1 -> Inter2 -> ... -> InterN -> Destination
+    const chain = [sourceKp, ...intermediaryKps];
+    
+    // Route through each intermediary in sequence
+    // Flow: Source -> Inter1 -> Inter2 -> ... -> InterN -> Destination
+    for (let i = 0; i < intermediaryKps.length; i++) {
+      const isLastIntermediary = (i === intermediaryKps.length - 1);
+      
+      // For each hop:
+      // - Hop 1: Source sends TO Inter1 (intermediaryKps[0])
+      // - Hop 2: Inter1 sends TO Inter2 (intermediaryKps[1])
+      // - Hop 3: Inter2 sends TO Inter3 (intermediaryKps[2])
+      // - ...
+      // - Hop N: InterN sends TO Destination
+      
+      // The recipient for this hop
+      const recipientKp = isLastIntermediary 
+        ? null // Last hop sends to destination, not an intermediary
+        : intermediaryKps[i]; // Intermediary that RECEIVES in this hop
+      
+      // Where to send funds TO
+      const nextRecipient = isLastIntermediary 
+        ? new PublicKey(destinationAddresses[0]) // Last intermediary sends to destination
+        : recipientKp.publicKey; // Send to the intermediary that receives in this hop
+      
+      try {
+        // For hops after the first, verify the sender (previous intermediary) has received funds
+        if (i > 0) {
+          // Wait a bit for previous transaction to settle
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Check balance of current sender (which should be the previous intermediary that just received funds)
+          const senderBalance = await connection.getBalance(currentSender.publicKey);
+          const expectedBalance = currentAmount;
+          
+          console.log(`[Private Funding SOL] Hop ${i + 1}: Checking balance of ${currentSender.publicKey.toBase58().substring(0, 8)}... (expected ~${(expectedBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL)`);
+          
+          if (senderBalance < expectedBalance - 10_000) { // Allow small variance for fees
+            console.log(`[Private Funding SOL] ⚠️ Hop ${i + 1}: Sender balance ${(senderBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL, expected ~${(expectedBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL. Waiting...`);
+            
+            // Wait and retry balance check (up to 10 seconds)
+            let retries = 0;
+            let newBalance = senderBalance;
+            while (newBalance < expectedBalance - 10_000 && retries < 20) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              newBalance = await connection.getBalance(currentSender.publicKey);
+              console.log(`[Private Funding SOL] Retry ${retries + 1}/20: Balance ${(newBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+              if (newBalance >= expectedBalance - 10_000) {
+                console.log(`[Private Funding SOL] ✅ Balance confirmed: ${(newBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+                break;
+              }
+              retries++;
+            }
+            
+            const finalBalance = await connection.getBalance(currentSender.publicKey);
+            if (finalBalance < expectedBalance - 10_000) {
+              throw new Error(`Insufficient balance in intermediary ${i}. Have ${(finalBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL, expected ~${(expectedBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL. Transaction may not have confirmed yet.`);
+            }
+            
+            // Use actual balance (might be slightly less due to fees)
+            currentAmount = finalBalance;
+          } else {
+            // Use actual balance
+            currentAmount = senderBalance;
+          }
+        }
+        
+        // Calculate amount to send
+        // Transaction fee is always deducted from sender, so we need to reserve it
+        // For intermediary wallets: send balance - tx fee, then account closes and rent refunds to recipient
+        const TX_FEE_RESERVE = 5_000; // Conservative estimate for transaction fee (actual is usually ~5k lamports)
+        let amountToSend;
+        if (i === 0) {
+          // First hop from source wallet - reserve tx fee
+          amountToSend = currentAmount - TX_FEE_RESERVE;
+        } else {
+          // Intermediary wallets - send balance minus tx fee
+          // After sending, remaining balance (tx fee) is consumed by fee, account closes, rent refunded to recipient
+          amountToSend = currentAmount - TX_FEE_RESERVE;
+        }
+        
+        if (amountToSend <= 0) {
+          throw new Error(`Insufficient balance. Have ${(currentAmount / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+        }
+        
+        // Convert recipient to PublicKey if needed
+        const recipientPubkey = nextRecipient instanceof PublicKey ? nextRecipient : new PublicKey(nextRecipient);
+        const recipientAddress = recipientPubkey.toBase58();
+        
+        console.log(`[Private Funding SOL] Hop ${i + 1}/${intermediaryKps.length}: ${currentSender.publicKey.toBase58().substring(0, 8)}... -> ${recipientAddress.substring(0, 8)}... (${(amountToSend / LAMPORTS_PER_SOL).toFixed(9)} SOL, sender balance: ${(currentAmount / LAMPORTS_PER_SOL).toFixed(9)} SOL)`);
+        
+        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        const msg = new TransactionMessage({
+          payerKey: currentSender.publicKey,
+          recentBlockhash: blockhash,
+          instructions: [
+            SystemProgram.transfer({
+              fromPubkey: currentSender.publicKey,
+              toPubkey: recipientPubkey,
+              lamports: amountToSend,
+            }),
+          ],
+        }).compileToV0Message();
+
+        const tx = new VersionedTransaction(msg);
+        tx.sign([currentSender]);
+        const sig = await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 });
+        
+        // Wait for confirmation with longer timeout
+        const confirmation = await connection.confirmTransaction(sig, 'confirmed');
+        if (confirmation.value.err) {
+          throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+        }
+
+        console.log(`[Private Funding SOL] ✅ Hop ${i + 1} complete: ${sig.substring(0, 16)}...`);
+        
+        // Wait a bit longer for balance to update after confirmation
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Verify the recipient actually received the funds before moving to next hop
+        // The recipient is the intermediary that just received funds (or destination if last hop)
+        let recipientBalance = await connection.getBalance(recipientPubkey);
+        const expectedRecipientBalance = amountToSend;
+        
+        console.log(`[Private Funding SOL] Hop ${i + 1}: Verifying recipient ${recipientPubkey.toBase58().substring(0, 8)}... received ${(expectedRecipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+        
+        if (recipientBalance < expectedRecipientBalance - 10_000) {
+          console.log(`[Private Funding SOL] ⚠️ Hop ${i + 1}: Recipient balance ${(recipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL, expected ~${(expectedRecipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL. Waiting for balance update...`);
+          
+          // Wait for balance to appear (up to 10 seconds)
+          let retries = 0;
+          while (recipientBalance < expectedRecipientBalance - 10_000 && retries < 20) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            recipientBalance = await connection.getBalance(recipientPubkey);
+            console.log(`[Private Funding SOL] Retry ${retries + 1}/20: Recipient balance ${(recipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+            if (recipientBalance >= expectedRecipientBalance - 10_000) {
+              console.log(`[Private Funding SOL] ✅ Recipient balance confirmed: ${(recipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+              break;
+            }
+            retries++;
+          }
+          
+          // Final check
+          recipientBalance = await connection.getBalance(recipientPubkey);
+          if (recipientBalance < expectedRecipientBalance - 10_000) {
+            throw new Error(`Recipient ${recipientPubkey.toBase58().substring(0, 8)}... did not receive funds. Balance: ${(recipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL, expected: ${(expectedRecipientBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL. Transaction: ${sig}`);
+          }
+        }
+        
+        // Update for next hop - the recipient becomes the sender
+        // After sending to Inter1, Inter1 becomes the sender for the next hop
+        // After sending to Inter2, Inter2 becomes the sender for the next hop, etc.
+        if (!isLastIntermediary && recipientKp) {
+          // Next sender is the intermediary that just received funds
+          currentSender = recipientKp;
+          currentAmount = recipientBalance; // Use actual received balance (includes rent refund if account was closed)
+          console.log(`[Private Funding SOL] Hop ${i + 1}: Recipient ${recipientKp.publicKey.toBase58().substring(0, 8)}... now has ${(currentAmount / LAMPORTS_PER_SOL).toFixed(9)} SOL and will be sender for Hop ${i + 2}`);
+        }
+        
+        chainResults.push({ 
+          hop: i + 1, 
+          from: currentSender.publicKey.toBase58(), 
+          to: nextRecipient.toBase58(), 
+          amount: amountToSend,
+          success: true, 
+          signature: sig 
+        });
+        
+        // Small delay between hops to ensure transaction is fully processed
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (e) {
+        console.error(`[Private Funding SOL] ❌ Failed at hop ${i + 1}/${intermediaryKps.length}: ${e.message}`);
+        const errorRecipient = isLastIntermediary 
+          ? destinationAddresses[0]
+          : (recipientKp ? recipientKp.publicKey.toBase58() : 'unknown');
+        chainResults.push({ 
+          hop: i + 1, 
+          from: currentSender.publicKey.toBase58(), 
+          to: errorRecipient, 
+          success: false, 
+          error: e.message 
+        });
+        // If a hop fails, we can't continue the chain
+        return res.status(500).json({ 
+          success: false, 
+          error: `Chain routing failed at hop ${i + 1}: ${e.message}`,
+          chainResults 
+        });
+      }
+    }
+    
+    // Final hop: Last intermediary -> Destination (already handled in the loop if isLastIntermediary)
+    // The loop should have already sent to destination, so we just need to verify
+    const finalDestination = destinationAddresses[0];
+    const finalAmount = currentAmount;
+    
+    // Verify final destination received funds
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const destinationBalance = await connection.getBalance(new PublicKey(finalDestination));
+    console.log(`[Private Funding SOL] ✅ COMPLETE: Destination balance ${(destinationBalance / LAMPORTS_PER_SOL).toFixed(9)} SOL`);
+    console.log(`[Private Funding SOL] ✅ COMPLETE: ${(finalAmount / LAMPORTS_PER_SOL).toFixed(9)} SOL delivered to destination via ${intermediaryKps.length} intermediary wallets`);
+    
+    // Intermediary wallets are automatically closed by Solana when balance hits 0
+    // The rent is automatically refunded to the recipient (minus transaction fees)
+    console.log(`[Private Funding SOL] 💾 Intermediary wallets saved to ${INTERMEDIARY_WALLETS_FILE}`);
+    console.log(`[Private Funding SOL] 💡 Intermediary wallets were automatically closed by Solana (rent refunded to destination, minus tx fees)`);
+    
+    // Delete old JSON file if it exists
+    if (fs.existsSync(INTERMEDIARY_WALLETS_JSON)) {
+      try {
+        fs.unlinkSync(INTERMEDIARY_WALLETS_JSON);
+        console.log(`[Private Funding SOL] 🗑️ Deleted old JSON file: ${INTERMEDIARY_WALLETS_JSON}`);
+      } catch (e) {
+        // Ignore deletion errors
+      }
+    }
+    
+    console.log(`[Private Funding SOL] ✅ All done!\n`);
+    
+    res.json({
+      success: true,
+      message: `Private funding via SOL intermediary chain complete. ${(finalAmount / LAMPORTS_PER_SOL).toFixed(9)} SOL delivered via ${intermediaryKps.length} intermediaries.`,
+      intermediaryWalletsFile: INTERMEDIARY_WALLETS_FILE, // Simple text format: "Funding 1\npk1\npk2\n..."
+      chainResults,
+      finalAmount: finalAmount / LAMPORTS_PER_SOL,
+      destination: finalDestination,
+    });
+  } catch (error) {
+    console.error('[Private Funding SOL] Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// RECOVERY: Collect SOL from all intermediary wallets
+app.post('/api/private-funding/recover-sol-intermediaries', async (req, res) => {
+  try {
+    const { destinationWalletId = 'main' } = req.body;
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Recovery SOL] 🔧 RECOVERING SOL FROM INTERMEDIARY WALLETS`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    // Get destination address
+    let destinationAddress;
+    if (destinationWalletId === 'main') {
+      const env = readEnvFile();
+      if (!env.PRIVATE_KEY) {
+        return res.status(400).json({ success: false, error: 'PRIVATE_KEY not set in .env' });
+      }
+      const mainKp = Keypair.fromSecretKey(base58.decode(env.PRIVATE_KEY));
+      destinationAddress = mainKp.publicKey.toBase58();
+    } else {
+      destinationAddress = destinationWalletId;
+    }
+    
+    console.log(`[Recovery SOL] Destination: ${destinationAddress.substring(0, 8)}...`);
+    
+    // Load all intermediary wallets from JSON
+    const intermediaryWallets = loadSolIntermediaryKeypairs(1); // Load from hop1
+    
+    if (intermediaryWallets.length === 0) {
+      return res.status(404).json({ success: false, error: 'No intermediary wallets found in ' + INTERMEDIARY_WALLETS_FILE });
+    }
+    
+    console.log(`[Recovery SOL] Found ${intermediaryWallets.length} intermediary wallets`);
+    
+    const solRpcUrl = process.env.SOL_RPC_URL || process.env.SOLANA_RPC_URL || process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+    const connection = new Connection(solRpcUrl, 'confirmed');
+    const destinationPubkey = new PublicKey(destinationAddress);
+    
+    const results = [];
+    let totalRecovered = 0;
+    const RENT_EXEMPTION = 890_880; // Minimum balance required for rent exemption (~0.00089 SOL)
+    const TX_FEE_ESTIMATE = 20_000; // Estimated transaction fee (conservative, actual is usually ~5k)
+    const MIN_REQUIRED = RENT_EXEMPTION + TX_FEE_ESTIMATE; // Total minimum to leave in account (~0.00091 SOL)
+    
+    console.log(`[Recovery SOL] Minimum required per wallet: ${(MIN_REQUIRED / LAMPORTS_PER_SOL).toFixed(9)} SOL (rent exemption + fees)`);
+    
+    for (let i = 0; i < intermediaryWallets.length; i++) {
+      const intermediaryKp = intermediaryWallets[i];
+      const address = intermediaryKp.publicKey.toBase58();
+      
+      try {
+        // Check balance
+        const balance = await connection.getBalance(intermediaryKp.publicKey);
+        const balanceSol = balance / LAMPORTS_PER_SOL;
+        
+        if (balance < MIN_REQUIRED) {
+          console.log(`[Recovery SOL] Wallet ${i + 1}/${intermediaryWallets.length} (${address.substring(0, 8)}...): Insufficient balance (${balanceSol.toFixed(9)} SOL, need ${(MIN_REQUIRED / LAMPORTS_PER_SOL).toFixed(9)} SOL for rent + fees)`);
+          results.push({ 
+            wallet: address, 
+            index: i + 1, 
+            success: false, 
+            error: 'Insufficient balance (below rent exemption + fees)',
+            balance: balanceSol 
+          });
+          continue;
+        }
+        
+        // Leave rent exemption + fee estimate, send the rest
+        const amountToSend = balance - MIN_REQUIRED;
+        const amountToSendSol = amountToSend / LAMPORTS_PER_SOL;
+        
+        if (amountToSend <= 0) {
+          console.log(`[Recovery SOL] Wallet ${i + 1}/${intermediaryWallets.length} (${address.substring(0, 8)}...): No recoverable balance (below minimum)`);
+          results.push({ 
+            wallet: address, 
+            index: i + 1, 
+            success: false, 
+            error: 'No recoverable balance (below minimum)',
+            balance: balanceSol 
+          });
+          continue;
+        }
+        
+        console.log(`[Recovery SOL] Wallet ${i + 1}/${intermediaryWallets.length} (${address.substring(0, 8)}...): Recovering ${amountToSendSol.toFixed(9)} SOL (balance: ${balanceSol.toFixed(9)} SOL)`);
+        
+        // Send SOL to destination
+        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        const msg = new TransactionMessage({
+          payerKey: intermediaryKp.publicKey,
+          recentBlockhash: blockhash,
+          instructions: [
+            SystemProgram.transfer({
+              fromPubkey: intermediaryKp.publicKey,
+              toPubkey: destinationPubkey,
+              lamports: amountToSend,
+            }),
+          ],
+        }).compileToV0Message();
+
+        const tx = new VersionedTransaction(msg);
+        tx.sign([intermediaryKp]);
+        const sig = await connection.sendTransaction(tx, { skipPreflight: false, maxRetries: 3 });
+        await connection.confirmTransaction(sig, 'confirmed');
+        
+        totalRecovered += amountToSendSol;
+        console.log(`[Recovery SOL] ✅ Wallet ${i + 1} recovered: ${sig.substring(0, 16)}...`);
+        
+        results.push({ 
+          wallet: address, 
+          index: i + 1, 
+          success: true, 
+          signature: sig,
+          amount: amountToSendSol,
+          balance: balanceSol 
+        });
+        
+        // Small delay between transactions
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (e) {
+        console.error(`[Recovery SOL] ❌ Failed to recover from wallet ${i + 1} (${address.substring(0, 8)}...): ${e.message}`);
+        results.push({ 
+          wallet: address, 
+          index: i + 1, 
+          success: false, 
+          error: e.message 
+        });
+      }
+    }
+    
+    const successCount = results.filter(r => r.success).length;
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[Recovery SOL] ✅ COMPLETE: ${successCount}/${intermediaryWallets.length} wallets recovered`);
+    console.log(`[Recovery SOL] Total recovered: ${totalRecovered.toFixed(9)} SOL`);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    res.json({
+      success: true,
+      message: `Recovered ${totalRecovered.toFixed(9)} SOL from ${successCount}/${intermediaryWallets.length} intermediary wallets`,
+      totalRecovered,
+      successCount,
+      totalWallets: intermediaryWallets.length,
+      results,
+    });
+  } catch (error) {
+    console.error('[Recovery SOL] Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -9283,9 +9510,16 @@ app.post('/api/private-funding/recover-intermediary', async (req, res) => {
     const mayanSdk = require('@mayanfinance/swap-sdk');
     const { fetchQuote, swapFromEvm } = mayanSdk;
     
+    // Public RPCs are sufficient for simple swaps/bridging operations
+    // Only set custom RPC URLs in .env if you need higher rate limits or reliability
     const rpcUrls = {
       ethereum: process.env.ETH_RPC_URL || 'https://ethereum.publicnode.com',
       base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed1.binance.org',
+      polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+      avalanche: process.env.AVALANCHE_RPC_URL || 'https://api.avax.network/ext/bc/C/rpc',
+      arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+      optimism: process.env.OPTIMISM_RPC_URL || 'https://mainnet.optimism.io',
     };
     const provider = new ethers.JsonRpcProvider(rpcUrls[chain] || rpcUrls.base);
     
@@ -9302,17 +9536,48 @@ app.post('/api/private-funding/recover-intermediary', async (req, res) => {
     // Create signer
     const evmSigner = new ethers.Wallet(wallet.privateKey, provider);
     
-    // Use 98% of balance for gas
-    const amountToSend = ethBalance * 0.98;
+    // Calculate actual gas cost with safety buffer
+    const feeData = await provider.getFeeData();
+    const estimatedGas = chain === 'ethereum' ? 300000n : 250000n;
+    const gasPrice = feeData.gasPrice || ethers.parseUnits('3', 'gwei');
+    const gasCost = gasPrice * estimatedGas;
+    const gasCostEth = parseFloat(ethers.formatEther(gasCost));
+    const safetyBuffer = Math.max(gasCostEth * 0.2, 0.00005);
+    const totalReserve = gasCostEth + safetyBuffer;
+    
+    // Bridge everything except gas reserve
+    const amountToSend = Math.max(0, ethBalance - totalReserve);
+    const MAYAN_MIN = chain === 'ethereum' ? 0.001 : 0.0008;
+    
+    if (amountToSend < MAYAN_MIN) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Insufficient balance after gas. Have ${ethBalance.toFixed(6)} ETH, need ${(totalReserve + MAYAN_MIN).toFixed(6)} ETH minimum (gas + min bridge amount)` 
+      });
+    }
+    
     const amountWei = ethers.parseEther(amountToSend.toFixed(18));
+    console.log(`[Recovery] Gas estimate: ${gasCostEth.toFixed(6)} ETH, Buffer: ${safetyBuffer.toFixed(6)} ETH, Bridging: ${amountToSend.toFixed(6)} ETH`);
+    
+    // Chain mapping for Mayan SDK
+    const chainMap = { 
+      ethereum: 'ethereum', 
+      base: 'base', 
+      bsc: 'bsc',
+      polygon: 'polygon',
+      avalanche: 'avalanche',
+      arbitrum: 'arbitrum',
+      optimism: 'optimism',
+    };
+    const fromChain = chainMap[chain] || chain || 'base';
     
     // Get quote
-    console.log(`[Recovery] Getting quote for ${amountToSend.toFixed(6)} ETH → SOL...`);
+    console.log(`[Recovery] Getting quote for ${amountToSend.toFixed(6)} ETH (${fromChain} → SOL)...`);
     const quotes = await fetchQuote({
       amountIn64: amountWei.toString(),
       fromToken: '0x0000000000000000000000000000000000000000',
       toToken: '0x0000000000000000000000000000000000000000',
-      fromChain: chain,
+      fromChain: fromChain,
       toChain: 'solana',
       slippageBps: 100,
     });
