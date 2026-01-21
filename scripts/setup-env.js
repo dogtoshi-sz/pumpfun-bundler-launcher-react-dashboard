@@ -20,15 +20,35 @@ if (!fs.existsSync(envExamplePath)) {
 // Check if .env already exists
 if (fs.existsSync(envPath)) {
   console.log('✓ .env file already exists. Skipping auto-setup.');
-  process.exit(0);
+} else {
+  // Copy .env.example to .env
+  try {
+    fs.copyFileSync(envExamplePath, envPath);
+    console.log('✓ Created .env file from .env.example');
+    console.log('⚠️  Please edit .env and add your PRIVATE_KEY and RPC_ENDPOINT before running the app.');
+  } catch (error) {
+    console.error('✗ Error creating .env file:', error.message);
+    process.exit(1);
+  }
 }
 
-// Copy .env.example to .env
+// Create necessary directory structure
 try {
-  fs.copyFileSync(envExamplePath, envPath);
-  console.log('✓ Created .env file from .env.example');
-  console.log('⚠️  Please edit .env and add your PRIVATE_KEY and RPC_ENDPOINT before running the app.');
+  const keysDir = path.join(__dirname, '..', 'keys');
+  const tradeConfigsDir = path.join(keysDir, 'trade-configs');
+  
+  // Create keys directory if it doesn't exist
+  if (!fs.existsSync(keysDir)) {
+    fs.mkdirSync(keysDir, { recursive: true });
+    console.log('✓ Created keys directory');
+  }
+  
+  // Create trade-configs directory if it doesn't exist
+  if (!fs.existsSync(tradeConfigsDir)) {
+    fs.mkdirSync(tradeConfigsDir, { recursive: true });
+    console.log('✓ Created keys/trade-configs directory');
+  }
 } catch (error) {
-  console.error('✗ Error creating .env file:', error.message);
-  process.exit(1);
+  console.error('✗ Error creating directory structure:', error.message);
+  // Don't exit on directory creation errors - they're not critical
 }
