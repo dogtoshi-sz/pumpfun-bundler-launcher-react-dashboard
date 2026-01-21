@@ -144,6 +144,64 @@ async function gatherLastWallets(count: number = 10) {
           })
           
           console.log(`   ✅✅✅ Transferred ${(transferAmount / 1e9).toFixed(6)} SOL: https://solscan.io/tx/${sig}`)
+          
+          // Close any remaining empty token accounts to recover rent
+          try {
+            const remainingTokenAccounts = await connection.getTokenAccountsByOwner(kp.publicKey, {
+              programId: TOKEN_PROGRAM_ID,
+            }, "confirmed")
+            
+            if (remainingTokenAccounts.value.length > 0) {
+              let closedCount = 0
+              let totalRentRecovered = 0
+              
+              for (const { pubkey } of remainingTokenAccounts.value) {
+                try {
+                  const balance = await connection.getTokenAccountBalance(pubkey)
+                  
+                  // Only close if account is empty (balance is 0)
+                  if (balance.value.amount === '0' || balance.value.uiAmount === 0) {
+                    const closeIx = createCloseAccountInstruction(
+                      pubkey,
+                      mainKp.publicKey, // Rent recipient
+                      kp.publicKey // Owner
+                    )
+                    
+                    const closeTx = new Transaction().add(
+                      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                      closeIx
+                    )
+                    closeTx.feePayer = mainKp.publicKey
+                    closeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash
+                    
+                    const closeSig = await sendAndConfirmTransaction(connection, closeTx, [mainKp, kp], {
+                      commitment: "confirmed",
+                      skipPreflight: false
+                    })
+                    
+                    // Estimate rent recovered (~0.002 SOL per token account)
+                    const estimatedRent = 2_039_280
+                    totalRentRecovered += estimatedRent
+                    closedCount++
+                    
+                    console.log(`   🧹 Closed empty token account, recovered ~${(estimatedRent / 1e9).toFixed(6)} SOL rent: https://solscan.io/tx/${closeSig}`)
+                  }
+                } catch (closeError: any) {
+                  const errorMsg = closeError.message || String(closeError)
+                  if (!errorMsg.includes('AccountNotFound') && !errorMsg.includes('no record')) {
+                    // Silently skip - account might already be closed or have balance
+                  }
+                }
+              }
+              
+              if (closedCount > 0) {
+                console.log(`   ✅ Closed ${closedCount} empty token account(s), recovered ~${(totalRentRecovered / 1e9).toFixed(6)} SOL rent`)
+              }
+            }
+          } catch (closeAccountsError: any) {
+            // Non-critical - just continue
+          }
+          
           return { success: true, address: walletAddr, amount: transferAmount }
         } else {
           console.log(`   ⚠️  Balance too low to transfer (${(currentBalance / 1e9).toFixed(6)} SOL)`)
