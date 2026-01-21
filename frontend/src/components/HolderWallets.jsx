@@ -23,6 +23,7 @@ import {
   PlusIcon,
   QuestionMarkCircleIcon,
   ShieldCheckIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import {
   WalletIcon as WalletIconSolid,
@@ -57,6 +58,8 @@ export default function HolderWallets() {
   const [transferTo, setTransferTo] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [transferring, setTransferring] = useState(false);
+  // Custom confirmation modal state
+  const [confirmationModal, setConfirmationModal] = useState(null);
   // Load priority fee from localStorage or default to 'normal' (random variance for natural trades)
   const [priorityFee, setPriorityFee] = useState(() => {
     const saved = localStorage.getItem('holderWalletPriorityFee');
@@ -64,6 +67,25 @@ export default function HolderWallets() {
     if (saved === 'low' || saved === 'medium') return 'normal';
     return saved || 'normal'; // Default to 'normal' - random variance looks natural
   });
+  
+  // Custom confirmation function that returns a Promise
+  const showConfirmation = (title, message, type = 'warning') => {
+    return new Promise((resolve) => {
+      setConfirmationModal({
+        title,
+        message,
+        type,
+        onConfirm: () => {
+          setConfirmationModal(null);
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmationModal(null);
+          resolve(false);
+        }
+      });
+    });
+  };
   
   // PnL Tracker state
   const [pnlExpanded, setPnlExpanded] = useState(false);
@@ -816,38 +838,29 @@ export default function HolderWallets() {
     // Commands that require confirmation
     const requiresConfirmation = ['rapid-sell', 'rapid-sell-50-percent', 'rapid-sell-remaining', 'gather-new-only', 'gather', 'gather-all', 'collect-fees'];
     
-    // Commands that require DOUBLE confirmation (for anonymity protection)
-    const requiresDoubleConfirmation = ['gather-new-only', 'gather', 'gather-all'];
-    
     if (requiresConfirmation.includes(commandId)) {
       const message = confirmMessages[commandId] || `Are you sure you want to execute: ${commandNames[commandId]}?`;
-      if (!window.confirm(message)) {
-        return; // User cancelled
+      
+      // Parse message to extract title and body
+      const lines = message.split('\n');
+      const title = lines[0].replace(/[\[\]!]/g, '').trim();
+      const body = lines.slice(1).join('\n').trim();
+      
+      // Determine modal type based on command
+      let modalType = 'warning';
+      if (commandId.includes('gather')) {
+        modalType = 'danger';
+      } else if (commandId.includes('rapid-sell')) {
+        modalType = 'warning';
+      } else {
+        modalType = 'info';
       }
       
-      // Double confirmation for gather commands (anonymity protection)
-      if (requiresDoubleConfirmation.includes(commandId)) {
-        const doubleConfirmMessage = `⚠️ FINAL CONFIRMATION ⚠️\n\nYou are about to ${commandNames[commandId]}.\n\nThis will:\n- Transfer ALL tokens from selected wallets to your funding wallet\n- Transfer ALL SOL from selected wallets to your funding wallet\n- Create on-chain links that BREAK wallet anonymity\n\n🚨 This action CANNOT be undone and will COMPROMISE your wallet privacy!\n\nType "CONFIRM" (case-insensitive) to proceed:`;
-        
-        // Use prompt for second confirmation (forces user to type)
-        // Make it case-insensitive for better UX
-        let userInput = null;
-        try {
-          userInput = window.prompt(doubleConfirmMessage);
-        } catch (error) {
-          console.error('[HolderWallets] Prompt blocked or failed:', error);
-          addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled - browser blocked the confirmation prompt. Please allow popups and try again.`, 'error');
-          return;
-        }
-        
-        if (!userInput || userInput.trim().toUpperCase() !== 'CONFIRM') {
-          const reason = !userInput ? 'cancelled' : 'confirmation text incorrect';
-          addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled - ${reason}. You must type "CONFIRM" to proceed.`, 'info');
-          console.log(`[HolderWallets] Gather command cancelled: ${reason}. User input: "${userInput}"`);
-          return; // User didn't type "CONFIRM" or cancelled
-        }
-        
-        console.log(`[HolderWallets] Double confirmation passed for ${commandId}`);
+      // Show custom confirmation modal
+      const confirmed = await showConfirmation(title, body, modalType);
+      if (!confirmed) {
+        addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled`, 'info');
+        return; // User cancelled
       }
     }
     
@@ -1702,6 +1715,60 @@ export default function HolderWallets() {
           </div>
         </div>
       </div>
+
+      {/* Custom Confirmation Modal */}
+      {confirmationModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-gray-900/95 via-gray-900/90 to-gray-950/95 backdrop-blur-xl rounded-xl p-6 border border-gray-700/50 shadow-2xl max-w-md w-full animate-in fade-in zoom-in duration-200">
+            <div className="flex items-start gap-4 mb-4">
+              {confirmationModal.type === 'danger' && (
+                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center border border-red-500/50">
+                  <ShieldCheckIcon className="w-6 h-6 text-red-400" />
+                </div>
+              )}
+              {confirmationModal.type === 'warning' && (
+                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-yellow-500/20 flex items-center justify-center border border-yellow-500/50">
+                  <ExclamationTriangleIcon className="w-6 h-6 text-yellow-400" />
+                </div>
+              )}
+              {confirmationModal.type === 'info' && (
+                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-500/50">
+                  <InformationCircleIcon className="w-6 h-6 text-cyan-400" />
+                </div>
+              )}
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-white mb-2">
+                  {confirmationModal.title}
+                </h3>
+                <div className="text-sm text-gray-300 whitespace-pre-line leading-relaxed">
+                  {confirmationModal.message}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={confirmationModal.onCancel}
+                className="flex-1 px-4 py-2.5 bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700/50 text-gray-300 hover:text-white font-semibold rounded-lg transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmationModal.onConfirm}
+                className={`flex-1 px-4 py-2.5 font-semibold rounded-lg transition-all ${
+                  confirmationModal.type === 'danger'
+                    ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white'
+                    : confirmationModal.type === 'warning'
+                    ? 'bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600 text-white'
+                    : 'bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-500 hover:to-cyan-600 text-white'
+                }`}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transfer SOL Modal */}
       {showTransferModal && (
