@@ -7,6 +7,11 @@ let bundleId: string
 
 export const sendBundle = async (txs: VersionedTransaction[]): Promise<string | undefined> => {
     try {
+        if (!LIL_JIT_ENDPOINT) {
+            console.error("❌ ERROR: LIL_JIT_ENDPOINT is not configured. Please set it in your .env file.");
+            return undefined;
+        }
+        
         const serializedTxs = txs.map(tx => base58.encode(tx.serialize()))
         const config = {
             headers: {
@@ -19,28 +24,28 @@ export const sendBundle = async (txs: VersionedTransaction[]): Promise<string | 
             method: "sendBundle",
             params: [serializedTxs],
         };
-        axios
-            .post(
+        
+        try {
+            const response = await axios.post(
                 LIL_JIT_ENDPOINT,
                 data,
                 config
-            )
-            .then(function (response) {
-                // handle success
-                bundleId = response.data.result
-                console.log("Bundle sent successfully", bundleId)
-                return bundleId
-            })
-            .catch((err) => {
-                console.log("Error when sending the bundle");
-                return bundleId
-            }).finally(() => {
-                return bundleId
-            })
-        return bundleId
-    } catch (error) {
-        console.log("Error while sending bundle")
-        return
+            );
+            
+            bundleId = response.data.result;
+            console.log("Bundle sent successfully", bundleId);
+            return bundleId;
+        } catch (err: any) {
+            console.log("Error when sending the bundle:", err.message || err);
+            if (err.response) {
+                console.log("Response status:", err.response.status);
+                console.log("Response data:", err.response.data);
+            }
+            return undefined;
+        }
+    } catch (error: any) {
+        console.log("Error while sending bundle:", error.message || error);
+        return undefined;
     }
 }
 

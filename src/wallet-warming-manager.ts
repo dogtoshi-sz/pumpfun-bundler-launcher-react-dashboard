@@ -9,6 +9,7 @@ import { buyTokenSimple, sellTokenSimple, getWalletTokenBalance } from "../cli/t
 import { RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, PRIVATE_KEY } from "../constants"
 import { sleep } from "../utils"
 import { getCachedTrendingTokens } from "./fetch-trending-tokens"
+import { TOKEN_PROGRAM_ID, createCloseAccountInstruction, getAssociatedTokenAddress, getAccount } from "@solana/spl-token"
 
 const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -44,19 +45,15 @@ const getProjectRoot = () => {
 const WARMED_WALLETS_FILE = path.join(getProjectRoot(), 'keys', 'warmed-wallets.json')
 
 // Load warmed wallets
+// Only logs errors to reduce noise (this function is called frequently)
 export function loadWarmedWallets(): WarmedWallet[] {
   try {
-    console.log(`[Wallet Manager] Loading wallets from: ${WARMED_WALLETS_FILE}`)
-    console.log(`[Wallet Manager] File exists: ${fs.existsSync(WARMED_WALLETS_FILE)}`)
-    
     if (fs.existsSync(WARMED_WALLETS_FILE)) {
       const content = fs.readFileSync(WARMED_WALLETS_FILE, 'utf8')
       const data = JSON.parse(content)
       const wallets = data.wallets || []
-      console.log(`[Wallet Manager] Loaded ${wallets.length} wallets from file`)
+      // Only log if there's an issue or first load (check if file was just created)
       return wallets
-    } else {
-      console.log(`[Wallet Manager] File does not exist: ${WARMED_WALLETS_FILE}`)
     }
   } catch (error) {
     console.error('[Wallet Manager] Error loading warmed wallets:', error)
@@ -104,8 +101,36 @@ export function createWarmingWallet(tags: string[] = []): WarmedWallet {
 
 // Add existing wallet
 export function addWarmingWallet(privateKey: string, tags: string[] = []): WarmedWallet {
-  const kp = Keypair.fromSecretKey(base58.decode(privateKey))
-  const address = kp.publicKey.toBase58()
+  // Validate and decode private key
+  const trimmedKey = privateKey.trim()
+  
+  if (!trimmedKey || trimmedKey.length < 80) {
+    throw new Error(`Invalid private key: too short (${trimmedKey.length} chars). Solana private keys are typically 80-200 characters in base58 format.`)
+  }
+  
+  let decoded: Uint8Array
+  try {
+    decoded = base58.decode(trimmedKey)
+  } catch (decodeError: any) {
+    throw new Error(`Invalid private key format: ${decodeError.message}. Make sure it's a valid base58-encoded Solana private key.`)
+  }
+  
+  if (decoded.length !== 64) {
+    throw new Error(`Invalid private key: decoded length is ${decoded.length} bytes, expected 64 bytes.`)
+  }
+  
+  let kp: Keypair
+  let address: string
+  try {
+    kp = Keypair.fromSecretKey(decoded)
+    address = kp.publicKey.toBase58()
+  } catch (keypairError: any) {
+    throw new Error(`Failed to create keypair from private key: ${keypairError.message}`)
+  }
+  
+  if (!address || address.length < 32) {
+    throw new Error(`Failed to derive valid wallet address from private key. Got address: ${address}`)
+  }
   
   const wallets = loadWarmedWallets()
   
@@ -121,7 +146,7 @@ export function addWarmingWallet(privateKey: string, tags: string[] = []): Warme
   }
   
   const wallet: WarmedWallet = {
-    privateKey,
+    privateKey: trimmedKey, // Store trimmed version
     address,
     transactionCount: 0,
     firstTransactionDate: null,
@@ -218,6 +243,7 @@ async function autoFundWallet(walletKp: Keypair, requiredSol: number): Promise<b
     const balanceSol = balance / 1e9
     
     if (balanceSol >= requiredSol) {
+      console.log(`   ✅ Wallet ${walletKp.publicKey.toBase58().substring(0, 8)}... already has ${balanceSol.toFixed(6)} SOL (sufficient, skipping funding)`)
       return true // Already has enough
     }
     
@@ -282,6 +308,8 @@ export async function warmWallet(
     maxIntervalSeconds: number
     priorityFee: 'low' | 'medium' | 'high'
     useJupiter: boolean
+    closeTokenAccounts?: boolean // If true, sell 100% and close accounts to recover rent. If false, sell 99.9% and keep dust (cheaper for many trades)
+    tradingPattern?: 'sequential' | 'randomized' | 'accumulate' // Trading pattern strategy
   },
   tokenList: string[],
   onProgress?: (wallet: WarmedWallet) => void
@@ -303,43 +331,106 @@ export async function warmWallet(
   let failedCount = 0
   const isFirstTransaction = wallet.transactionCount === 0
   
-  // Check balance (wallet should already be funded via chained transfer)
+  // Check balance (wallet should already be funded from main funding wallet)
   const balance = await connection.getBalance(walletKp.publicKey)
   const balanceSol = balance / 1e9
   console.log(`   💰 Current balance: ${balanceSol.toFixed(6)} SOL`)
   
-  for (let i = 0; i < config.tradesPerWallet; i++) {
+  // Track tokens we've bought but not sold yet (for randomized/accumulate patterns)
+  const heldTokens: Array<{ mint: string; balance: number }> = []
+  
+  // Track which tokens we've already used to avoid repeating the same token
+  const usedTokens = new Set<string>()
+  
+  // Generate pattern based on trading pattern type
+  const pattern = config.tradingPattern || 'sequential'
+  console.log(`   🎲 Trading pattern: ${pattern} (from config: ${config.tradingPattern || 'undefined'})`)
+  
+  // For randomized: create a pattern like [buy, buy, sell, buy, sell, sell] based on tradesPerWallet
+  let tradePlan: Array<'buy' | 'sell'> = []
+  if (pattern === 'randomized') {
+    // Create a balanced pattern: roughly half buys, half sells
+    const numBuys = Math.ceil(config.tradesPerWallet / 2)
+    const numSells = config.tradesPerWallet - numBuys
+    tradePlan = Array(numBuys).fill('buy').concat(Array(numSells).fill('sell'))
+    // Shuffle the pattern for randomness (but ensure we have tokens before selling)
+    for (let i = tradePlan.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [tradePlan[i], tradePlan[j]] = [tradePlan[j], tradePlan[i]]
+    }
+    // Ensure we always have at least one buy before first sell
+    if (tradePlan[0] === 'sell' && numBuys > 0) {
+      const firstBuy = tradePlan.indexOf('buy')
+      if (firstBuy > 0) {
+        [tradePlan[0], tradePlan[firstBuy]] = [tradePlan[firstBuy], tradePlan[0]]
+      }
+    }
+    console.log(`   🎲 Randomized pattern: ${tradePlan.join(' → ')}`)
+  } else if (pattern === 'accumulate') {
+    // Buy all first, then sell all
+    const numBuys = Math.ceil(config.tradesPerWallet / 2)
+    const numSells = Math.floor(config.tradesPerWallet / 2)
+    tradePlan = Array(numBuys).fill('buy').concat(Array(numSells).fill('sell'))
+    console.log(`   📦 Accumulate pattern: ${tradePlan.join(' → ')}`)
+  } else {
+    // Sequential: alternate buy/sell
+    for (let i = 0; i < config.tradesPerWallet; i++) {
+      tradePlan.push(i % 2 === 0 ? 'buy' : 'sell')
+    }
+  }
+  
+  for (let i = 0; i < tradePlan.length; i++) {
+    const action = tradePlan[i]
+    console.log(`   📋 Action ${i + 1}/${tradePlan.length}: ${action.toUpperCase()} (pattern: ${pattern})`)
     if (tokenList.length === 0) {
       console.log(`   ⚠️  No tokens available`)
       break
     }
     
-    const buyAmount = config.minBuyAmount + Math.random() * (config.maxBuyAmount - config.minBuyAmount)
+    // Execute based on action type
+    if (action === 'buy') {
+      const buyAmount = config.minBuyAmount + Math.random() * (config.maxBuyAmount - config.minBuyAmount)
+      
+      // Track balance before buy to measure full trade costs
+      const balanceBeforeBuy = await connection.getBalance(walletKp.publicKey)
+      const balanceBeforeBuySol = balanceBeforeBuy / 1e9
+      
+      // Try up to 20 different tokens if Jupiter fails (token might be dead/rugged)
+      // Jupiter CAN trade pump.fun tokens via bonding curve - issue is dead/no-volume tokens
+      let buySuccess = false
+      let randomToken = ''
+      const maxTokenRetries = 20
     
-    // Try up to 20 different tokens if Jupiter fails (token might be dead/rugged)
-    // Jupiter CAN trade pump.fun tokens via bonding curve - issue is dead/no-volume tokens
-    let buySuccess = false
-    let randomToken = ''
-    const maxTokenRetries = 20
-    
-    // Use all tokens - the fetch already filtered for volume/liquidity
-    const tokensToTry = tokenList
+    // Use all tokens - the sell function will automatically fallback to pump.fun SDK if Jupiter fails
+    // This ensures we can trade both graduated tokens (via Jupiter) and bonding curve tokens (via pump.fun SDK)
+    // Prefer unused tokens, but allow reuse if we've used all available tokens
+    const unusedTokens = tokenList.filter(t => !usedTokens.has(t))
+    const tokensToTry = unusedTokens.length > 0 ? unusedTokens : tokenList // Fallback to all tokens if we've used them all
     
     for (let tokenAttempt = 0; tokenAttempt < maxTokenRetries && !buySuccess; tokenAttempt++) {
       randomToken = tokensToTry[Math.floor(Math.random() * tokensToTry.length)]
       
       try {
         // Buy
-        console.log(`   [${i + 1}/${config.tradesPerWallet}] Buying ${buyAmount.toFixed(4)} SOL of ${randomToken.substring(0, 8)}...${tokenAttempt > 0 ? ` (token retry ${tokenAttempt + 1})` : ''}`)
+        console.log(`   [${i + 1}/${tradePlan.length}] 🛒 ${action === 'buy' ? 'Buying' : 'Selling'} ${buyAmount.toFixed(4)} SOL of ${randomToken.substring(0, 8)}...${tokenAttempt > 0 ? ` (token retry ${tokenAttempt + 1})` : ''}`)
+        console.log(`   💰 Balance before buy: ${balanceBeforeBuySol.toFixed(6)} SOL`)
         await buyTokenSimple(
           wallet.privateKey,
           randomToken,
           buyAmount,
           undefined,
           config.useJupiter,
-          config.priorityFee
+          config.priorityFee,
+          true // skipHeliusSender = true (save 0.0002 SOL per tx for wallet warming)
         )
         buySuccess = true
+        // Check balance after buy
+        await sleep(1000) // Wait for buy to settle
+        const balanceAfterBuy = await connection.getBalance(walletKp.publicKey)
+        const balanceAfterBuySol = balanceAfterBuy / 1e9
+        const buyCost = balanceBeforeBuySol - balanceAfterBuySol
+        console.log(`   💰 Balance after buy: ${balanceAfterBuySol.toFixed(6)} SOL (cost: ${buyCost.toFixed(6)} SOL)`)
+        console.log(`   💡 Buy cost includes: ${buyAmount.toFixed(6)} SOL tokens + ~0.002 SOL rent (token account creation) + tx fees`)
       } catch (buyError: any) {
         const errMsg = buyError.message?.toLowerCase() || ''
         // If Jupiter failed (no route/no liquidity), try a different token
@@ -362,15 +453,15 @@ export async function warmWallet(
       }
     }
     
-    // DON'T crash if no tradable token found - just skip this trade and continue
-    if (!buySuccess) {
-      console.log(`   ⚠️  Skipping trade ${i + 1} - no tradable token found after ${maxTokenRetries} attempts`)
-      failedCount++
-      continue // Continue to next trade instead of crashing
-    }
-    
-    try {
-      // Buy succeeded, continue with the rest of the trade logic
+      // DON'T crash if no tradable token found - just skip this trade and continue
+      if (!buySuccess) {
+        console.log(`   ⚠️  Skipping buy action ${i + 1} - no tradable token found after ${maxTokenRetries} attempts`)
+        failedCount++
+        continue // Continue to next action instead of crashing
+      }
+      
+      try {
+        // Buy succeeded, wait for tokens and add to heldTokens
       
       updateWalletStats(address, i === 0 && isFirstTransaction)
       if (onProgress) {
@@ -386,11 +477,13 @@ export async function warmWallet(
       let tokensReady = false
       let retries = 0
       const maxRetries = 40 // Wait up to 20 seconds (40 * 500ms) after initial delay
+      let finalTokenBalance = 0
       
       while (!tokensReady && retries < maxRetries) {
         const tokenBalance = await getWalletTokenBalance(wallet.privateKey, randomToken)
         if (tokenBalance.hasTokens && tokenBalance.balance > 0) {
           tokensReady = true
+          finalTokenBalance = tokenBalance.balance
           console.log(`   ✅ Tokens received: ${tokenBalance.balance.toFixed(6)}`)
         } else {
           retries++
@@ -401,35 +494,538 @@ export async function warmWallet(
         }
       }
       
-      if (!tokensReady) {
-        throw new Error(`Tokens did not settle after ${2 + maxRetries * 0.5} seconds`)
+        if (!tokensReady) {
+          throw new Error(`Tokens did not settle after ${2 + maxRetries * 0.5} seconds`)
+        }
+        
+        // Add to held tokens (don't sell yet unless sequential pattern)
+        heldTokens.push({ mint: randomToken, balance: finalTokenBalance })
+        usedTokens.add(randomToken) // Mark this token as used
+        console.log(`   ✅ Token added to held tokens (total: ${heldTokens.length}) - pattern: ${pattern}`)
+        console.log(`   📝 Used tokens so far: ${usedTokens.size}/${tokenList.length}`)
+        
+        updateWalletStats(address, i === 0 && isFirstTransaction)
+        if (onProgress) {
+          const updated = loadWarmedWallets().find(w => w.address === address)
+          if (updated) onProgress(updated)
+        }
+        
+        // For sequential pattern, sell immediately after buy
+        console.log(`   🔍 Pattern check: pattern === 'sequential'? ${pattern === 'sequential'} (pattern value: "${pattern}")`)
+        if (pattern === 'sequential') {
+          console.log(`   ✅ Sequential pattern detected - selling immediately after buy`)
+          // Choose sell strategy based on config
+          const closeAccounts = config.closeTokenAccounts !== false; // Default to true (close accounts)
+      
+          // Track balance before sell to measure costs
+          const balanceBeforeSell = await connection.getBalance(walletKp.publicKey)
+          const balanceBeforeSellSol = balanceBeforeSell / 1e9
+          
+          if (closeAccounts) {
+        // Mode 1: Sell 100% and close account to recover rent (~0.002 SOL per trade)
+        // More expensive per trade (extra close tx) but recovers rent - good for cleanup
+        console.log(`   💸 Selling 100% and closing account (recovering rent)...`)
+        console.log(`   💰 Balance before sell: ${balanceBeforeSellSol.toFixed(6)} SOL`)
+        const sellResult = await sellTokenSimple(
+          wallet.privateKey,
+          randomToken,
+          100, // Sell 100% so we can close the account
+          config.priorityFee,
+          true // skipHeliusSender = true (save 0.0002 SOL per tx for wallet warming)
+        )
+        
+        // Check balance after sell
+        await sleep(1000) // Wait for sell to settle
+        const balanceAfterSell = await connection.getBalance(walletKp.publicKey)
+        const balanceAfterSellSol = balanceAfterSell / 1e9
+        const sellCost = balanceBeforeSellSol - balanceAfterSellSol
+        console.log(`   💰 Balance after sell: ${balanceAfterSellSol.toFixed(6)} SOL (cost: ${sellCost.toFixed(6)} SOL)`)
+        
+        // Close the token account to recover rent (~0.002 SOL)
+        try {
+          console.log(`   🗑️ Closing token account to recover rent...`)
+          const balanceBeforeClose = await connection.getBalance(walletKp.publicKey)
+          const balanceBeforeCloseSol = balanceBeforeClose / 1e9
+          const mintPubkey = new PublicKey(randomToken)
+          
+          // Wait longer to ensure sell transaction is fully processed
+          await sleep(2000)
+          
+          // Check if sell transaction already closed the account (check balance change)
+          // If Jupiter/sell tx closed it, rent should already be refunded
+          const balanceAfterSellWait = await connection.getBalance(walletKp.publicKey)
+          const balanceAfterSellWaitSol = balanceAfterSellWait / 1e9
+          const potentialRentRefund = balanceAfterSellWaitSol - balanceAfterSellSol
+          
+          if (potentialRentRefund > 0.001) {
+            console.log(`   💰 Balance increased by ${potentialRentRefund.toFixed(6)} SOL after sell (rent may have been auto-refunded)`)
+          }
+          
+          // Find ALL token accounts for this mint (check both Token and Token-2022 programs)
+          // Jupiter might use either program depending on the token
+          const tokenAccounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+            mint: mintPubkey,
+            programId: TOKEN_PROGRAM_ID
+          })
+          
+          // Token-2022 program ID (hardcoded since TOKEN_2022_PROGRAM_ID may not be available in older versions)
+          const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
+          
+          const token2022Accounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+            mint: mintPubkey,
+            programId: TOKEN_2022_PROGRAM_ID
+          })
+          
+          // Deduplicate accounts by pubkey (same account might be returned from both Token and Token-2022 queries)
+          const accountMap = new Map<string, typeof tokenAccounts.value[0]>()
+          for (const account of tokenAccounts.value) {
+            accountMap.set(account.pubkey.toBase58(), account)
+          }
+          for (const account of token2022Accounts.value) {
+            if (!accountMap.has(account.pubkey.toBase58())) {
+              accountMap.set(account.pubkey.toBase58(), account)
+            }
+          }
+          const allTokenAccounts = Array.from(accountMap.values())
+          
+          if (allTokenAccounts.length === 0) {
+            console.log(`   ℹ️ No token account found for ${randomToken.substring(0, 8)}... (may have been auto-closed or never created)`)
+            // Don't return - just skip closing for this token
+            console.log(`   ℹ️ Skipping account close (no account found)`)
+          } else {
+          
+          console.log(`   🔍 Found ${allTokenAccounts.length} unique token account(s) for mint ${randomToken.substring(0, 8)}...`)
+          
+          // Process each token account - close all empty ones (should only be one per mint, but be safe)
+          let closedCount = 0
+          let totalRentRecovered = 0
+          
+          for (const tokenAccountInfo of allTokenAccounts) {
+            const tokenAccount = tokenAccountInfo.pubkey
+            const rawAccountData = tokenAccountInfo.account.data
+            const accountProgramId = tokenAccountInfo.account.owner // The program that owns this account (Token or Token-2022)
+            
+            // Get account info to check lamports (rent)
+            const accountInfo = await connection.getAccountInfo(tokenAccount)
+            if (!accountInfo) {
+              console.log(`   ℹ️ Account ${tokenAccount.toBase58()} no longer exists, skipping`)
+              continue
+            }
+            
+            const lamportsOnAccount = accountInfo.lamports
+            const TOKEN_2022_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
+            const isToken2022 = accountProgramId.equals(TOKEN_2022_ID)
+            const programName = isToken2022 ? 'Token-2022' : 'Token'
+            
+            console.log(`   🔍 Found token account: ${tokenAccount.toBase58()} (${programName}, lamports: ${(lamportsOnAccount / 1e9).toFixed(6)} SOL)`)
+          
+            // Parse account data to get balance and owner
+            try {
+              // Read balance from raw account data (bytes 64-72)
+              // SPL Token account layout: mint(32) + owner(32) + amount(8) + ...
+              if (rawAccountData.length < 72) {
+                console.log(`   ⚠️ Invalid token account data length: ${rawAccountData.length}, skipping`)
+                continue
+              }
+              
+              // Read balance (BigUInt64LE at offset 64)
+              const balanceBigInt = rawAccountData.readBigUInt64LE(64)
+              const balance = Number(balanceBigInt)
+              
+              // Read owner/authority (PublicKey at offset 32-64)
+              const ownerBytes = rawAccountData.slice(32, 64)
+              const accountOwner = new PublicKey(ownerBytes)
+              
+              // Check if there's a delegate (offset 72: 0 = None, 1 = Some)
+              const hasDelegate = rawAccountData.length > 72 && rawAccountData.readUInt8(72) === 1
+              let delegate: PublicKey | null = null
+              if (hasDelegate && rawAccountData.length >= 105) {
+                const delegateBytes = rawAccountData.slice(73, 105)
+                delegate = new PublicKey(delegateBytes)
+              }
+              
+              console.log(`   📊   Balance: ${balance}, Owner: ${accountOwner.toBase58()}, Rent: ${(lamportsOnAccount / 1e9).toFixed(6)} SOL${delegate ? `, Delegate: ${delegate.toBase58()}` : ''}`)
+              
+              // Only close if balance is 0 (empty account)
+              if (balance > 0) {
+                console.log(`   ⚠️   Account has ${balance} tokens remaining (dust). Cannot close account with balance.`)
+                console.log(`   ⚠️   This means ${(lamportsOnAccount / 1e9).toFixed(6)} SOL rent will remain locked.`)
+                continue // Skip this account, try next one
+              }
+              
+              // If there's a delegate, we can't close without the delegate's signature
+              if (delegate && !delegate.equals(new PublicKey('11111111111111111111111111111111'))) {
+                console.log(`   ⚠️   Account has delegate ${delegate.toBase58()}. Cannot close without delegate signature.`)
+                continue // Skip this account
+              }
+              
+              // Verify the account owner matches the wallet
+              if (!accountOwner.equals(walletKp.publicKey)) {
+                console.log(`   ⚠️   Owner mismatch! Account owner: ${accountOwner.toBase58()}, Wallet: ${walletKp.publicKey.toBase58()}`)
+                continue // Skip this account
+              }
+              
+              console.log(`   ✅   Account is empty (balance: 0) and verified, closing to recover ${(lamportsOnAccount / 1e9).toFixed(6)} SOL rent...`)
+              
+              // Re-verify account still exists right before closing (avoid stale data)
+              const accountCheck = await connection.getAccountInfo(tokenAccount)
+              if (!accountCheck) {
+                console.log(`   ⚠️   Account ${tokenAccount.toBase58()} no longer exists (may have been auto-closed by sell tx)`)
+                console.log(`   ⚠️   Rent ${(lamportsOnAccount / 1e9).toFixed(6)} SOL was likely auto-refunded or lost`)
+                continue // Skip this account
+              }
+              
+              const currentLamports = accountCheck.lamports
+              if (currentLamports === 0) {
+                console.log(`   ⚠️   Account ${tokenAccount.toBase58()} has 0 lamports (already closed/being closed)`)
+                continue
+              }
+              
+              console.log(`   🔍   Account still exists with ${(currentLamports / 1e9).toFixed(6)} SOL rent, proceeding to close...`)
+              
+              const latestBlockhash = await connection.getLatestBlockhash('confirmed')
+              
+              // Use the correct close instruction based on program (Token vs Token-2022)
+              // For Token-2022, we MUST pass the program ID, otherwise it defaults to regular Token program
+              const TOKEN_2022_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
+              const programIdForClose = isToken2022 ? TOKEN_2022_ID : TOKEN_PROGRAM_ID
+              
+              console.log(`   🔧   Using ${programName} program ID for close instruction`)
+              
+              const closeMsg = new TransactionMessage({
+                payerKey: walletKp.publicKey,
+                recentBlockhash: latestBlockhash.blockhash,
+                instructions: [
+                  createCloseAccountInstruction(
+                    tokenAccount,      // Token account to close (actual account found)
+                    walletKp.publicKey, // Destination for rent refund
+                    accountOwner,       // Authority (use the actual owner from account data)
+                    [],                 // Multi-signers (not needed)
+                    programIdForClose   // CRITICAL: Must pass program ID for Token-2022!
+                  )
+                ]
+              }).compileToV0Message()
+            
+              const closeTx = new VersionedTransaction(closeMsg)
+              closeTx.sign([walletKp])
+              
+              try {
+                const closeSig = await connection.sendTransaction(closeTx, { skipPreflight: false, maxRetries: 3 })
+                const confirmation = await connection.confirmTransaction(closeSig, 'confirmed')
+                
+                if (confirmation.value.err) {
+                  const errStr = JSON.stringify(confirmation.value.err)
+                  if (errStr.includes('InvalidAccountData') || errStr.includes('invalid account data')) {
+                    console.log(`   ℹ️   Account was already closed before our transaction`)
+                    // Check if rent was auto-refunded
+                    const balanceAfterFailed = await connection.getBalance(walletKp.publicKey)
+                    const balanceAfterFailedSol = balanceAfterFailed / 1e9
+                    console.log(`   💰   Current balance: ${balanceAfterFailedSol.toFixed(6)} SOL`)
+                    continue // Try next account
+                  }
+                  throw new Error(`Close transaction failed: ${errStr}`)
+                }
+                
+                closedCount++
+                totalRentRecovered += currentLamports
+                console.log(`   ✅   Closed ${tokenAccount.toBase58()}: https://solscan.io/tx/${closeSig}`)
+                
+                // Verify rent was actually refunded by checking balance
+                await sleep(500)
+                const balanceAfterClose = await connection.getBalance(walletKp.publicKey)
+                const balanceAfterCloseSol = balanceAfterClose / 1e9
+                console.log(`   💰   Balance after close: ${balanceAfterCloseSol.toFixed(6)} SOL`)
+                
+              } catch (txError: any) {
+                const errorMsg = txError.message || String(txError)
+                if (errorMsg.includes('InvalidAccountData') || 
+                    errorMsg.includes('invalid account data') || 
+                    errorMsg.includes('could not find account') ||
+                    errorMsg.includes('AccountNotInitialized') ||
+                    errorMsg.includes('attempt to debit an account but found no record')) {
+                  console.log(`   ⚠️   Account ${tokenAccount.toBase58()} already closed or doesn't exist`)
+                  console.log(`   ⚠️   This means ${(currentLamports / 1e9).toFixed(6)} SOL rent was NOT recovered via our close`)
+                  
+                  // Check if the account still exists
+                  const accountStillExists = await connection.getAccountInfo(tokenAccount)
+                  if (!accountStillExists) {
+                    console.log(`   ⚠️   Account confirmed gone. Checking if rent was auto-refunded...`)
+                    // Check balance to see if rent was automatically refunded
+                    const balanceAfterFailedClose = await connection.getBalance(walletKp.publicKey)
+                    const balanceAfterFailedCloseSol = balanceAfterFailedClose / 1e9
+                    const balanceChange = balanceAfterFailedCloseSol - balanceBeforeCloseSol
+                    
+                    if (balanceChange > 0.001) {
+                      console.log(`   ✅   Balance increased by ${balanceChange.toFixed(6)} SOL - rent WAS auto-refunded!`)
+                    } else {
+                      console.log(`   ❌   Balance unchanged (${balanceChange.toFixed(6)} SOL) - rent was NOT refunded`)
+                      console.log(`   ❌   ~${(currentLamports / 1e9).toFixed(6)} SOL rent is LOST`)
+                    }
+                  } else {
+                    console.log(`   ⚠️   Account still exists with ${(accountStillExists.lamports / 1e9).toFixed(6)} SOL. Close transaction failed.`)
+                  }
+                  continue // Try next account
+                }
+                console.log(`   ⚠️   Failed to close ${tokenAccount.toBase58()}: ${errorMsg}`)
+                // Continue to try other accounts
+              }
+            } catch (accountError: any) {
+              console.log(`   ⚠️   Error processing account ${tokenAccount.toBase58()}: ${accountError.message}`)
+              // Continue to next account
+            }
+          }
+          
+          // Final summary
+          if (closedCount > 0) {
+            // Check final balance to verify rent recovery
+            await sleep(1000) // Wait for all closes to settle
+            const balanceAfterClose = await connection.getBalance(walletKp.publicKey)
+            const balanceAfterCloseSol = balanceAfterClose / 1e9
+            const rentRecovered = balanceAfterCloseSol - balanceBeforeCloseSol
+            const totalTradeCost = balanceBeforeBuySol - balanceAfterCloseSol
+            const netSellPlusClose = balanceAfterCloseSol - balanceBeforeSellSol
+            
+            console.log(`   ✅ Closed ${closedCount} token account(s), recovered ${(totalRentRecovered / 1e9).toFixed(6)} SOL rent`)
+            console.log(`   💰 Balance after close: ${balanceAfterCloseSol.toFixed(6)} SOL (rent recovered: ${rentRecovered.toFixed(6)} SOL)`)
+            console.log(`   💰 Net from sell+close: ${netSellPlusClose.toFixed(6)} SOL (should be positive if rent was recovered)`)
+            console.log(`   💰 TOTAL TRADE COST: ${totalTradeCost.toFixed(6)} SOL (from buy start to close end)`)
+          } else {
+            console.log(`   ℹ️ No empty token accounts to close (all may have balance or already closed)`)
+          }
+          }
+        } catch (closeError: any) {
+          // Log the actual error so we can see what's happening
+          const balanceAfterFailedClose = await connection.getBalance(walletKp.publicKey)
+          const balanceAfterFailedCloseSol = balanceAfterFailedClose / 1e9
+          const totalTradeCostWithLockedRent = balanceBeforeBuySol - balanceAfterFailedCloseSol
+          const rentLost = balanceAfterFailedCloseSol - balanceBeforeSellSol - (balanceBeforeSellSol - balanceAfterBuySol)
+          
+          console.error(`   ❌ Failed to close token account: ${closeError.message || closeError}`)
+          console.error(`   ❌ Full error: ${JSON.stringify(closeError, Object.getOwnPropertyNames(closeError))}`)
+          console.error(`   ❌ This means ~0.002 SOL rent will remain locked in the token account.`)
+          console.error(`   💰 Balance after failed close: ${balanceAfterFailedCloseSol.toFixed(6)} SOL`)
+          console.error(`   💰 TOTAL TRADE COST (WITH LOCKED RENT): ${totalTradeCostWithLockedRent.toFixed(6)} SOL`)
+          console.error(`   ⚠️  Expected cost: ~0.00001-0.00005 SOL (just fees). Actual: ${totalTradeCostWithLockedRent.toFixed(6)} SOL`)
+          console.error(`   ⚠️  The difference (~${(totalTradeCostWithLockedRent - 0.00003).toFixed(6)} SOL) is likely the locked rent.`)
+          // Don't throw - continue with next trade even if close fails
+        }
+      } else {
+        // Mode 2: Sell 99.9% and keep dust (don't close account)
+        // Cheaper per trade (no close tx) but rent stays locked - good for building many tx history
+        console.log(`   💸 Selling 99.9% (keeping 0.1% dust, no close - cheap mode)...`)
+        await sellTokenSimple(
+          wallet.privateKey,
+          randomToken,
+          99.9, // Sell 99.9%, keep tiny dust so account stays open
+          config.priorityFee,
+          true // skipHeliusSender = true (save 0.0002 SOL per tx for wallet warming)
+        )
       }
       
-      // Sell 99.9% to maximize SOL recovery while keeping tiny token dust
-      console.log(`   💸 Selling 99.9% (keeping 0.1% token dust)...`)
-      await sellTokenSimple(
-        wallet.privateKey,
-        randomToken,
-        99.9,
-        config.priorityFee
-      )
-      
-      updateWalletStats(address, false)
-      if (onProgress) {
-        const updated = loadWarmedWallets().find(w => w.address === address)
-        if (updated) onProgress(updated)
+          updateWalletStats(address, false)
+          if (onProgress) {
+            const updated = loadWarmedWallets().find(w => w.address === address)
+            if (updated) onProgress(updated)
+          }
+          
+          successCount++
+          
+          // Remove from heldTokens if we sold 100% (sequential pattern always sells 100%)
+          const index = heldTokens.findIndex(t => t.mint === randomToken)
+          if (index >= 0) heldTokens.splice(index, 1)
+        } else {
+          // For randomized/accumulate patterns, don't sell yet - just hold the token
+          // Token already added to heldTokens above
+          console.log(`   ✅ Non-sequential pattern (${pattern}) - holding token, will sell later`)
+        }
+        
+        // Minimal delay before next action
+        if (i < tradePlan.length - 1) {
+          const interval = config.minIntervalSeconds + 
+            Math.random() * (config.maxIntervalSeconds - config.minIntervalSeconds)
+          await sleep(interval * 1000)
+        }
+      } catch (error: any) {
+        failedCount++
+        console.log(`   ❌ Buy action ${i + 1} failed: ${error.message}`)
+        if (i < tradePlan.length - 1) await sleep(10000) // Wait on error
+      }
+    } else if (action === 'sell' && heldTokens.length > 0) {
+      // Sell action - pick a random held token (or last token for accumulate)
+      console.log(`   💸 Executing SELL action - ${heldTokens.length} token(s) available to sell`)
+      let tokenToSell: { mint: string; balance: number }
+      if (pattern === 'accumulate' && i === tradePlan.length - 1) {
+        // Last action in accumulate: sell all held tokens
+        tokenToSell = heldTokens[Math.floor(Math.random() * heldTokens.length)]
+      } else {
+        tokenToSell = heldTokens[Math.floor(Math.random() * heldTokens.length)]
       }
       
-      successCount++
+      const sellPercentage = pattern === 'accumulate' && i === tradePlan.length - 1 ? 100 : (80 + Math.random() * 20)
       
-      // Minimal delay before next trade (0.2 seconds for speed)
-      if (i < config.tradesPerWallet - 1) {
-        await sleep(200)
+      try {
+        console.log(`   [${i + 1}/${tradePlan.length}] 💸 Selling ${sellPercentage.toFixed(1)}% of ${tokenToSell.mint.substring(0, 8)}...`)
+        
+        // Choose sell strategy based on config
+        const closeAccounts = config.closeTokenAccounts !== false; // Default to true (close accounts)
+        
+        // Track balance before sell to measure costs
+        const balanceBeforeSell = await connection.getBalance(walletKp.publicKey)
+        const balanceBeforeSellSol = balanceBeforeSell / 1e9
+        
+        if (closeAccounts && sellPercentage >= 100) {
+          // Mode 1: Sell 100% and close account to recover rent (~0.002 SOL per trade)
+          console.log(`   💸 Selling 100% and closing account (recovering rent)...`)
+          console.log(`   💰 Balance before sell: ${balanceBeforeSellSol.toFixed(6)} SOL`)
+          await sellTokenSimple(
+            wallet.privateKey,
+            tokenToSell.mint,
+            100, // Sell 100% so we can close the account
+            config.priorityFee,
+            true // skipHeliusSender = true (save 0.0002 SOL per tx for wallet warming)
+          )
+          
+          // Wait and close account (reuse existing close logic)
+          await sleep(2000)
+          const mintPubkey = new PublicKey(tokenToSell.mint)
+          const tokenAccounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+            mint: mintPubkey,
+            programId: TOKEN_PROGRAM_ID
+          })
+          const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
+          const token2022Accounts = await connection.getTokenAccountsByOwner(walletKp.publicKey, {
+            mint: mintPubkey,
+            programId: TOKEN_2022_PROGRAM_ID
+          })
+          
+          // Try to close empty accounts (reuse existing logic, simplified)
+          if (tokenAccounts.value.length > 0 || token2022Accounts.value.length > 0) {
+            const allAccounts = [...tokenAccounts.value, ...token2022Accounts.value]
+            for (const accountInfo of allAccounts) {
+              try {
+                const accountInfo_check = await connection.getAccountInfo(accountInfo.pubkey)
+                if (accountInfo_check && accountInfo_check.lamports > 0) {
+                  const rawData = accountInfo.account.data
+                  if (rawData.length >= 72) {
+                    const balance = Number(rawData.readBigUInt64LE(64))
+                    if (balance === 0) {
+                      const ownerBytes = rawData.slice(32, 64)
+                      const accountOwner = new PublicKey(ownerBytes)
+                      const isToken2022 = accountInfo.account.owner.equals(TOKEN_2022_PROGRAM_ID)
+                      const programIdForClose = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
+                      
+                      const latestBlockhash = await connection.getLatestBlockhash('confirmed')
+                      const closeMsg = new TransactionMessage({
+                        payerKey: walletKp.publicKey,
+                        recentBlockhash: latestBlockhash.blockhash,
+                        instructions: [
+                          createCloseAccountInstruction(
+                            accountInfo.pubkey,
+                            walletKp.publicKey,
+                            accountOwner,
+                            [],
+                            programIdForClose
+                          )
+                        ]
+                      }).compileToV0Message()
+                      const closeTx = new VersionedTransaction(closeMsg)
+                      closeTx.sign([walletKp])
+                      await connection.sendTransaction(closeTx, { skipPreflight: false, maxRetries: 3 })
+                      console.log(`   ✅ Closed token account`)
+                    }
+                  }
+                }
+              } catch (closeErr) {
+                // Ignore close errors for pattern trading
+              }
+            }
+          }
+        } else {
+          // Mode 2: Sell percentage (99.9% for cheap mode or partial for accumulate)
+          await sellTokenSimple(
+            wallet.privateKey,
+            tokenToSell.mint,
+            sellPercentage,
+            config.priorityFee,
+            true // skipHeliusSender = true (save 0.0002 SOL per tx for wallet warming)
+          )
+        }
+        
+        console.log(`   ✅ Sell successful`)
+        // Remove from held tokens if we sold 100%
+        if (sellPercentage >= 100) {
+          const index = heldTokens.findIndex(t => t.mint === tokenToSell.mint)
+          if (index >= 0) heldTokens.splice(index, 1)
+        }
+        
+        updateWalletStats(address, false)
+        if (onProgress) {
+          const updated = loadWarmedWallets().find(w => w.address === address)
+          if (updated) onProgress(updated)
+        }
+        
+        successCount++
+        
+        // Minimal delay before next action
+        if (i < tradePlan.length - 1) {
+          const interval = config.minIntervalSeconds + 
+            Math.random() * (config.maxIntervalSeconds - config.minIntervalSeconds)
+          await sleep(interval * 1000)
+        }
+      } catch (error: any) {
+        failedCount++
+        console.log(`   ❌ Sell action ${i + 1} failed: ${error.message}`)
+        if (i < tradePlan.length - 1) await sleep(10000) // Wait on error
       }
-    } catch (error: any) {
-      failedCount++
-      console.log(`   ❌ Trade ${i + 1} failed: ${error.message}`)
-      await sleep(10000) // Wait on error
+    } else if (action === 'sell' && heldTokens.length === 0) {
+      // Can't sell if we have no tokens - skip this sell action or do a buy instead
+      console.log(`   ⚠️  Skipping sell action ${i + 1} (no tokens held yet) - executing buy instead`)
+      // Replace sell with buy
+      const buyAmount = config.minBuyAmount + Math.random() * (config.maxBuyAmount - config.minBuyAmount)
+      // Prefer unused tokens, but allow reuse if we've used all available tokens
+      const unusedTokens = tokenList.filter(t => !usedTokens.has(t))
+      const tokensToTry = unusedTokens.length > 0 ? unusedTokens : tokenList
+      let randomToken = tokensToTry[Math.floor(Math.random() * tokensToTry.length)]
+      
+      try {
+        console.log(`   [${i + 1}/${tradePlan.length}] 🛒 Buying ${buyAmount.toFixed(4)} SOL of token ${randomToken.substring(0, 8)}... (replacing sell)`)
+        await buyTokenSimple(
+          wallet.privateKey,
+          randomToken,
+          buyAmount,
+          undefined,
+          config.useJupiter,
+          config.priorityFee,
+          true
+        )
+        await sleep(2000)
+        const tokenBalance = await getWalletTokenBalance(wallet.privateKey, randomToken)
+        if (tokenBalance.hasTokens && tokenBalance.balance > 0) {
+          heldTokens.push({ mint: randomToken, balance: tokenBalance.balance })
+          usedTokens.add(randomToken) // Mark this token as used
+          console.log(`   ✅ Buy successful, token added to held tokens`)
+          console.log(`   📝 Used tokens so far: ${usedTokens.size}/${tokenList.length}`)
+          successCount++
+        }
+      } catch (error: any) {
+        failedCount++
+        console.log(`   ❌ Buy (replacement) failed: ${error.message}`)
+      }
+    }
+  }
+  
+  // Final sell for accumulate pattern - sell any remaining tokens
+  if (pattern === 'accumulate' && heldTokens.length > 0) {
+    console.log(`   💸 Final sell: Selling remaining ${heldTokens.length} token(s)...`)
+    for (const token of heldTokens) {
+      try {
+        await sellTokenSimple(wallet.privateKey, token.mint, 100, config.priorityFee, true)
+        console.log(`   ✅ Sold ${token.mint.substring(0, 8)}...`)
+        successCount++
+      } catch (error: any) {
+        console.log(`   ❌ Failed to sell ${token.mint.substring(0, 8)}...: ${error.message}`)
+        failedCount++
+      }
     }
   }
   
@@ -469,7 +1065,8 @@ export async function warmWallet(
   return { success: successCount, failed: failedCount, remainingBalance: finalBalanceSol }
 }
 
-// Warm multiple wallets (CHAINED: Wallet 1 -> Wallet 2 -> Wallet 3 -> Funding Wallet)
+// Warm multiple wallets in PARALLEL batches
+// SECURITY/ANONYMITY: ALL wallets are funded from main funding wallet ONLY. NO wallet-to-wallet transfers.
 export async function warmWallets(
   walletAddresses: string[],
   config: {
@@ -482,6 +1079,10 @@ export async function warmWallets(
     priorityFee: 'low' | 'medium' | 'high'
     useJupiter: boolean
     useTrendingTokens: boolean
+    tradingPattern?: 'sequential' | 'randomized' | 'accumulate'
+    closeTokenAccounts?: boolean
+    fundingAmount?: number
+    skipFunding?: boolean
   },
   onProgress?: (wallet: WarmedWallet) => void
 ): Promise<void> {
@@ -493,10 +1094,12 @@ export async function warmWallets(
     return
   }
   
-  console.log(`\n🔥🔥🔥 CHAINED WALLET WARMING 🔥🔥🔥`)
+  console.log(`\n🔥🔥🔥 PARALLEL WALLET WARMING 🔥🔥🔥`)
   console.log(`📊 Wallets to warm: ${walletsToWarm.length}`)
-  console.log(`💰 Funding amount per wallet: 0.2 SOL`)
+  console.log(`⚡ Parallel batches: ${config.walletsPerBatch} wallets at a time`)
+  console.log(`💰 Funding amount per wallet: ${config.fundingAmount || 0.2} SOL`)
   console.log(`📈 Trades per wallet: ${config.tradesPerWallet}`)
+  console.log(`🕵️  ANONYMITY: All wallets funded from main funding wallet ONLY - NO wallet-to-wallet transfers!`)
   
   // Get tokens
   let tokenList: string[] = []
@@ -508,97 +1111,130 @@ export async function warmWallets(
   }
   
   if (tokenList.length === 0) {
-    console.log('❌ No tokens available')
+    console.log('❌ No pump.fun tokens available')
     return
   }
   
   const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
-  const FUNDING_AMOUNT = 0.2 // 0.2 SOL per wallet
+  const FUNDING_AMOUNT = config.fundingAmount || 0.2
   
-  // Process wallets sequentially (chained)
-  for (let i = 0; i < walletsToWarm.length; i++) {
-    const wallet = walletsToWarm[i]
+  // Fund ALL wallets from main funding wallet (NO wallet-to-wallet transfers!)
+  console.log(`\n💰 Funding ${walletsToWarm.length} wallet(s) from main funding wallet...`)
+  const fundingPromises = walletsToWarm.map(async (wallet) => {
+    if (config.skipFunding) {
+      // Check if wallet already has enough balance
+      const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey))
+      const balance = await connection.getBalance(walletKp.publicKey)
+      const balanceSol = balance / 1e9
+      const estimatedNeeded = (config.maxBuyAmount * 2) * config.tradesPerWallet + 0.1
+      if (balanceSol >= estimatedNeeded) {
+        console.log(`   ✅ Wallet ${wallet.address.substring(0, 8)}... already has ${balanceSol.toFixed(6)} SOL (sufficient)`)
+        return { success: true, wallet: wallet.address }
+      }
+    }
+    
     const walletKp = Keypair.fromSecretKey(base58.decode(wallet.privateKey))
+    // autoFundWallet will check balance and skip if wallet already has enough
+    const funded = await autoFundWallet(walletKp, FUNDING_AMOUNT)
+    if (funded) {
+      // Only add delay if we actually funded (not if it was skipped)
+      const currentBalance = await connection.getBalance(walletKp.publicKey)
+      const currentBalanceSol = currentBalance / 1e9
+      if (currentBalanceSol < FUNDING_AMOUNT * 1.1) {
+        // We just funded it, wait for settlement
+        await sleep(500)
+      }
+      return { success: true, wallet: wallet.address }
+    } else {
+      console.log(`   ❌ Failed to fund wallet ${wallet.address.substring(0, 8)}...`)
+      return { success: false, wallet: wallet.address }
+    }
+  })
+  
+  const fundingResults = await Promise.all(fundingPromises)
+  const fundedWallets = fundingResults.filter(r => r.success).map(r => r.wallet)
+  const failedWallets = fundingResults.filter(r => !r.success).map(r => r.wallet)
+  
+  if (failedWallets.length > 0) {
+    console.log(`\n⚠️  Failed to fund ${failedWallets.length} wallet(s): ${failedWallets.map(a => a.substring(0, 8)).join(', ')}`)
+  }
+  
+  if (fundedWallets.length === 0) {
+    console.log('❌ No wallets were successfully funded')
+    return
+  }
+  
+  console.log(`\n✅ Successfully funded ${fundedWallets.length}/${walletsToWarm.length} wallet(s) from main funding wallet`)
+  await sleep(2000) // Wait for all funding transactions to settle
+  
+  // Warm wallets in parallel batches
+  const walletsPerBatch = config.walletsPerBatch || 2
+  const walletsToWarmFunded = walletsToWarm.filter(w => fundedWallets.includes(w.address))
+  
+  console.log(`\n🚀 Starting parallel warming: ${walletsToWarmFunded.length} wallet(s) in batches of ${walletsPerBatch}...`)
+  
+  const results: Array<{ address: string; success: number; failed: number }> = []
+  
+  // Process wallets in batches to avoid rate limits
+  for (let i = 0; i < walletsToWarmFunded.length; i += walletsPerBatch) {
+    const batch = walletsToWarmFunded.slice(i, i + walletsPerBatch)
+    const batchNumber = Math.floor(i / walletsPerBatch) + 1
+    const totalBatches = Math.ceil(walletsToWarmFunded.length / walletsPerBatch)
     
     console.log(`\n${'='.repeat(80)}`)
-    console.log(`🔥 WALLET ${i + 1}/${walletsToWarm.length}: ${wallet.address.substring(0, 8)}...${wallet.address.substring(wallet.address.length - 8)}`)
+    console.log(`📦 BATCH ${batchNumber}/${totalBatches}: Warming ${batch.length} wallet(s) in PARALLEL`)
     console.log(`${'='.repeat(80)}`)
     
-    // Fund wallet (first wallet gets from funding wallet, others get from previous wallet)
-    if (i === 0) {
-      // First wallet: fund from main wallet
-      console.log(`\n💰 Funding wallet ${i + 1} with ${FUNDING_AMOUNT} SOL from funding wallet...`)
-      const funded = await autoFundWallet(walletKp, FUNDING_AMOUNT)
-      if (!funded) {
-        console.log(`   ⚠️  Failed to fund wallet ${i + 1}, skipping`)
-        continue
+    // Process batch in parallel
+    const batchPromises = batch.map(async (wallet) => {
+      const warmConfig = {
+        tradesPerWallet: config.tradesPerWallet,
+        minBuyAmount: config.minBuyAmount,
+        maxBuyAmount: config.maxBuyAmount,
+        minIntervalSeconds: config.minIntervalSeconds,
+        maxIntervalSeconds: config.maxIntervalSeconds,
+        priorityFee: config.priorityFee,
+        useJupiter: config.useJupiter,
+        closeTokenAccounts: config.closeTokenAccounts,
+        tradingPattern: config.tradingPattern || 'sequential'
       }
-      await sleep(1000) // Wait for funding to settle
-    } else {
-      // Subsequent wallets: get SOL from previous wallet
-      const prevWallet = walletsToWarm[i - 1]
-      const prevWalletKp = Keypair.fromSecretKey(base58.decode(prevWallet.privateKey))
       
-      console.log(`\n💰 Transferring ${FUNDING_AMOUNT} SOL from wallet ${i} to wallet ${i + 1}...`)
       try {
-        // Check if previous wallet has enough
-        const prevBalance = await connection.getBalance(prevWalletKp.publicKey)
-        const prevBalanceSol = prevBalance / 1e9
-        
-        if (prevBalanceSol < FUNDING_AMOUNT) {
-          console.log(`   ⚠️  Previous wallet has insufficient balance (${prevBalanceSol.toFixed(6)} SOL), using available amount`)
-          // Transfer what's available (minus miniscule amount)
-          await transferSol(prevWalletKp, wallet.address, prevBalanceSol, true)
-        } else {
-          // Transfer exactly 0.2 SOL
-          await transferSol(prevWalletKp, wallet.address, FUNDING_AMOUNT, false)
+        const result = await warmWallet(wallet, warmConfig, tokenList, onProgress)
+        return { 
+          address: wallet.address, 
+          success: result.success, 
+          failed: result.failed 
         }
-        await sleep(1000) // Wait for transfer to settle
       } catch (error: any) {
-        console.log(`   ❌ Failed to transfer from wallet ${i} to wallet ${i + 1}: ${error.message}`)
-        console.log(`   ⚠️  Skipping wallet ${i + 1}`)
-        continue
+        console.error(`   ❌ Failed to warm wallet ${wallet.address.substring(0, 8)}...: ${error.message}`)
+        return { 
+          address: wallet.address, 
+          success: 0, 
+          failed: config.tradesPerWallet 
+        }
       }
-    }
+    })
     
-    // Warm this wallet
-    const warmConfig = {
-      tradesPerWallet: config.tradesPerWallet,
-      minBuyAmount: config.minBuyAmount,
-      maxBuyAmount: config.maxBuyAmount,
-      minIntervalSeconds: config.minIntervalSeconds,
-      maxIntervalSeconds: config.maxIntervalSeconds,
-      priorityFee: config.priorityFee,
-      useJupiter: config.useJupiter
-    }
+    const batchResults = await Promise.all(batchPromises)
+    results.push(...batchResults)
     
-    const result = await warmWallet(wallet, warmConfig, tokenList, onProgress)
-    
-    // Transfer remaining SOL to next wallet (or back to funding wallet if last)
-    if (i < walletsToWarm.length - 1) {
-      // Not last wallet: transfer to next wallet
-      const nextWallet = walletsToWarm[i + 1]
-      console.log(`\n💸 Transferring remaining SOL to wallet ${i + 2}...`)
-      try {
-        await transferSol(walletKp, nextWallet.address, result.remainingBalance, true)
-        await sleep(1000)
-      } catch (error: any) {
-        console.log(`   ⚠️  Failed to transfer to next wallet: ${error.message}`)
-      }
-    } else {
-      // Last wallet: transfer back to funding wallet
-      console.log(`\n💸 Transferring remaining SOL back to funding wallet...`)
-      try {
-        await transferSol(walletKp, mainKp.publicKey.toBase58(), result.remainingBalance, true)
-        await sleep(1000)
-      } catch (error: any) {
-        console.log(`   ⚠️  Failed to transfer back to funding wallet: ${error.message}`)
-      }
+    // Wait between batches to avoid rate limits (unless it's the last batch)
+    if (i + walletsPerBatch < walletsToWarmFunded.length) {
+      console.log(`\n⏸️  Waiting 10s before next batch...`)
+      await sleep(10000)
     }
   }
   
+  // Summary
+  const totalSuccess = results.reduce((sum, r) => sum + r.success, 0)
+  const totalFailed = results.reduce((sum, r) => sum + r.failed, 0)
+  
   console.log(`\n${'='.repeat(80)}`)
-  console.log(`✅ CHAINED WARMING COMPLETED FOR ${walletsToWarm.length} WALLET(S)`)
+  console.log(`✅ PARALLEL WARMING COMPLETED FOR ${walletsToWarmFunded.length} WALLET(S)`)
+  console.log(`📊 Total successful trades: ${totalSuccess}`)
+  console.log(`📊 Total failed trades: ${totalFailed}`)
+  console.log(`🕵️  ANONYMITY: All wallets funded from main wallet only - NO wallet-to-wallet links!`)
   console.log(`${'='.repeat(80)}\n`)
 }
 
@@ -650,23 +1286,24 @@ export async function fetchWalletTransactionHistory(address: string): Promise<{
     // Count transactions (each signature = 1 transaction)
     const transactionCount = signatures.length
     
-    // Estimate trades: look for token transfers (buy/sell pairs)
-    // This is an approximation - we count transactions that involve token programs
-    // A more accurate method would parse each transaction, but that's expensive
-    // For now, we'll estimate: transactions / 2 = trades (since each trade = buy + sell)
-    const totalTrades = Math.floor(transactionCount / 2)
+    // Count trades more accurately by filtering successful transactions
+    // Failed transactions (simulation failures, etc.) shouldn't count as trades
+    // Successful transactions are more likely to be actual token swaps
+    const successfulTxs = signatures.filter(sig => sig.err === null)
     
-    // Calculate trades in last 7 days (from exact point in time)
-    const now = Date.now() / 1000 // Current time in seconds
-    const sevenDaysAgo = now - (7 * 24 * 60 * 60) // 7 days ago in seconds
+    // Estimate trades: successful transactions / 2
+    // Each trade typically = buy + sell = 2 transactions
+    // This is more accurate than counting all transactions (including failures)
+    const totalTrades = Math.floor(successfulTxs.length / 2)
     
-    // Filter transactions from last 7 days
-    const transactionsLast7Days = signatures.filter(sig => {
+    // Calculate trades in last 7 days
+    const now = Date.now() / 1000
+    const sevenDaysAgo = now - (7 * 24 * 60 * 60)
+    const transactionsLast7Days = successfulTxs.filter(sig => {
       if (!sig.blockTime) return false
       return sig.blockTime >= sevenDaysAgo
     })
     
-    // Estimate trades in last 7 days (transactions / 2)
     const tradesLast7Days = Math.floor(transactionsLast7Days.length / 2)
     
     return {

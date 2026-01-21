@@ -97,6 +97,8 @@ class DebugLogger {
     '/api/stats',                // Stats polling
     '/api/stream',               // SSE stream
     '/api/private-funding/status', // Bridge status polling
+    '/api/vanity-pool-status',   // Polling endpoint - noisy
+    // '/api/candles',           // Removed - using Birdeye charts instead
   ];
   
   logRequest(req) {
@@ -125,7 +127,10 @@ class DebugLogger {
     const message = `[${logEntry.timestamp}] ➡️  #${reqId} ${req.method} ${req.originalUrl}`;
     
     // Only log to console if NOT a quiet endpoint
-    const isQuiet = DebugLogger.QUIET_ENDPOINTS.some(ep => req.path.startsWith(ep));
+    // Check both req.path and req.originalUrl to catch all variations
+    const isQuiet = DebugLogger.QUIET_ENDPOINTS.some(ep => 
+      req.path?.startsWith(ep) || req.originalUrl?.startsWith(ep)
+    );
     if (this.logToConsole && !isQuiet) {
       console.log(message);
       if (logEntry.body && Object.keys(logEntry.body).length > 0) {
@@ -160,7 +165,10 @@ class DebugLogger {
     const message = `[${logEntry.timestamp}] ${statusEmoji} #${reqId} ${req.method} ${req.path} → ${res.statusCode} (${duration}ms)`;
     
     // Only log to console if error OR not a quiet endpoint
-    const isQuiet = DebugLogger.QUIET_ENDPOINTS.some(ep => req.path.startsWith(ep));
+    // Check both req.path and req.originalUrl to catch all variations
+    const isQuiet = DebugLogger.QUIET_ENDPOINTS.some(ep => 
+      req.path?.startsWith(ep) || req.originalUrl?.startsWith(ep)
+    );
     const isError = res.statusCode >= 400;
     if (this.logToConsole && (isError || !isQuiet)) {
       console.log(message);

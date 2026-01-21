@@ -111,7 +111,9 @@ class WorkerPool {
   }
 
   private startWorker(workerId: number): void {
-    const worker = new Worker(path.join(__dirname, 'utils', 'vanity-worker.js'), {
+    // Vanity worker is in utils/ directory (root level), not cli/utils/
+    const workerPath = path.join(__dirname, '..', 'utils', 'vanity-worker.js');
+    const worker = new Worker(workerPath, {
       workerData: { suffix: SUFFIX, workerId }
     });
 

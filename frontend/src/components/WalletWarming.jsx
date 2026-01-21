@@ -7,21 +7,27 @@ export default function WalletWarming() {
   const [loading, setLoading] = useState(false);
   const [config, setConfig] = useState({
     tradesPerWallet: 2,
-    minBuyAmount: 0.002,
-    maxBuyAmount: 0.003,
+    minBuyAmount: 0.0002,
+    maxBuyAmount: 0.0003,
     minIntervalSeconds: 10,
     maxIntervalSeconds: 60,
     useTrendingTokens: true,
     fundingAmount: 0.015,
-    skipFunding: true
+    skipFunding: true,
+    closeTokenAccounts: true, // Default: close accounts to recover rent. Set false for cheap mode (build many tx cheaply)
+    tradingPattern: 'sequential', // 'sequential', 'randomized', 'accumulate' - pattern for executing trades
+    walletsPerBatch: 2 // How many wallets to process in parallel (already runs in parallel!)
   });
   const [selectedWallets, setSelectedWallets] = useState([]);
   const [trendingStatus, setTrendingStatus] = useState({ loading: false, lastFetch: null, error: null });
   const [newWalletPrivateKey, setNewWalletPrivateKey] = useState('');
   const [newWalletTags, setNewWalletTags] = useState('');
   const [sellingTokens, setSellingTokens] = useState({});
+  const [closingAccounts, setClosingAccounts] = useState({});
   const [withdrawingSol, setWithdrawingSol] = useState({});
   const [refreshingWallet, setRefreshingWallet] = useState({});
+  const [refreshingBalances, setRefreshingBalances] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState(null);
   const [editingTags, setEditingTags] = useState({});
   const [editTagInputs, setEditTagInputs] = useState({});
   const [showAddWalletModal, setShowAddWalletModal] = useState(false);
@@ -51,6 +57,9 @@ export default function WalletWarming() {
   const [bridgeStatus, setBridgeStatus] = useState(null);
   const [stuckIntermediaries, setStuckIntermediaries] = useState([]);
   const [loadingIntermediaries, setLoadingIntermediaries] = useState(false);
+  const [privateFundingMethod, setPrivateFundingMethod] = useState('mayan'); // 'mayan' or 'sol-intermediaries'
+  const [intermediaryCount, setIntermediaryCount] = useState(10);
+  const [reuseSavedIntermediaries, setReuseSavedIntermediaries] = useState(false);
   
   // Funding Wallet State
   const [fundingWallet, setFundingWallet] = useState(null);
@@ -113,10 +122,16 @@ export default function WalletWarming() {
       const res = await apiService.listIntermediaryWallets();
       if (res.data.success && res.data.wallets) {
         // Filter to recent wallets that might have stuck funds (not recovered, not distributed)
-        const recent = res.data.wallets.filter(w => 
-          w.status !== 'recovered' && w.status !== 'distributed'
-        ).slice(-10); // Last 10
-        setStuckIntermediaries(recent);
+        // Also filter by selected chain if in Resume mode
+        const filtered = res.data.wallets.filter(w => {
+          const statusOk = w.status !== 'recovered' && w.status !== 'distributed';
+          // If in Resume mode (step 3), also filter by selected chain
+          if (privateFundingStep === 3) {
+            return statusOk && (w.chain === bridgeChain || (!w.chain && bridgeChain === 'base'));
+          }
+          return statusOk;
+        }).slice(-10); // Last 10
+        setStuckIntermediaries(filtered);
       }
     } catch (error) {
       console.error('Failed to load intermediary wallets:', error);
@@ -159,25 +174,36 @@ export default function WalletWarming() {
     }
   };
 
-  const loadWallets = async (refreshBalances = false) => {
+  const loadWallets = async (refreshBalances = false, refreshStats = false) => {
     try {
       const res = await apiService.getWarmingWallets();
       if (res.data.success) {
         const walletList = res.data.wallets || [];
         setWallets(walletList);
         
-        // Refresh balances from blockchain if requested or on initial load
-        if (refreshBalances && walletList.length > 0) {
+        // Refresh balances and/or stats from blockchain if requested
+        if ((refreshBalances || refreshStats) && walletList.length > 0) {
           try {
             const addresses = walletList.map(w => w.address);
-            await apiService.updateWalletBalances(addresses);
-            // Reload wallets with fresh balances
+            
+            // Update balances if requested
+            if (refreshBalances) {
+              await apiService.updateWalletBalances(addresses);
+            }
+            
+            // Update transaction stats if requested
+            if (refreshStats) {
+              console.log(`[WalletWarming] Fetching transaction stats for ${addresses.length} wallet(s) from blockchain...`);
+              await apiService.updateWalletStats(addresses);
+            }
+            
+            // Reload wallets with fresh data
             const refreshRes = await apiService.getWarmingWallets();
             if (refreshRes.data.success) {
               setWallets(refreshRes.data.wallets || []);
             }
           } catch (err) {
-            console.error('Failed to refresh balances:', err);
+            console.error('Failed to refresh wallet data:', err);
           }
         }
       }
@@ -292,7 +318,7 @@ export default function WalletWarming() {
     setLoading(true);
     try {
       const tags = newWalletTags.trim() ? newWalletTags.split(',').map(t => t.trim()).filter(t => t.length > 0) : [];
-      const res = await apiService.addExistingWallet(newWalletPrivateKey.trim(), tags);
+      const res = await apiService.addWarmingWallet(newWalletPrivateKey.trim(), tags);
       if (res.data.success) {
         setNewWalletPrivateKey('');
         setNewWalletTags('');
@@ -317,7 +343,7 @@ export default function WalletWarming() {
     }
     setLoading(true);
     try {
-      const res = await apiService.startWarming(selectedWallets, { ...config, useJupiter: true, priorityFee: 'none' });
+      const res = await apiService.startWarming(selectedWallets, { ...config, useJupiter: true, priorityFee: 'none', closeTokenAccounts: config.closeTokenAccounts });
       if (res.data.success) {
         await loadWallets();
         alert('Wallet warming started!');
@@ -386,7 +412,7 @@ export default function WalletWarming() {
         try {
           const res = await apiService.withdrawSolFromWallet(wallet.address);
           if (res.data.success) {
-            withdrawn += res.data.amount || 0;
+            withdrawn += res.data.amountTransferred || 0;
           } else {
             failed++;
           }
@@ -417,6 +443,50 @@ export default function WalletWarming() {
     }
   };
 
+  // Bulk delete selected wallets
+  const handleBulkDelete = async () => {
+    if (selectedWallets.length === 0) {
+      alert('Please select wallets to delete');
+      return;
+    }
+    if (!confirm(`Delete ${selectedWallets.length} wallet(s)?\n\nThis action cannot be undone.`)) return;
+    
+    setLoading(true);
+    let deleted = 0;
+    let failed = 0;
+    
+    try {
+      for (const address of selectedWallets) {
+        try {
+          const res = await apiService.deleteWarmingWallet(address);
+          if (res.data.success) {
+            deleted++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          failed++;
+        }
+      }
+      
+      // Clear selection
+      setSelectedWallets([]);
+      
+      // Reload wallets
+      await loadWallets();
+      
+      if (failed === 0) {
+        alert(`✅ Successfully deleted ${deleted} wallet(s)`);
+      } else {
+        alert(`⚠️ Deleted ${deleted} wallet(s), ${failed} failed`);
+      }
+    } catch (error) {
+      alert(`Error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSellAllTokens = async (address) => {
     if (!confirm(`Sell ALL tokens from ${address.slice(0, 8)}...?`)) return;
     setSellingTokens(prev => ({ ...prev, [address]: true }));
@@ -432,6 +502,68 @@ export default function WalletWarming() {
       alert(`Error: ${error.response?.data?.error || error.message}`);
     } finally {
       setSellingTokens(prev => ({ ...prev, [address]: false }));
+    }
+  };
+
+  const handleCloseEmptyAccounts = async (address) => {
+    if (!confirm(`Close all empty token accounts from ${address.slice(0, 8)}...?\n\nThis will recover ~0.002 SOL rent per closed account.`)) return;
+    setClosingAccounts(prev => ({ ...prev, [address]: true }));
+    try {
+      const res = await apiService.closeEmptyTokenAccounts(address);
+      if (res.data.success) {
+        alert(`✅ Closed ${res.data.closed} empty token account(s)\n💰 Recovered ${res.data.rentRecovered?.toFixed(6) || 0} SOL rent`);
+        await loadWallets();
+      } else {
+        alert(`Failed: ${res.data.error}`);
+      }
+    } catch (error) {
+      alert(`Error: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setClosingAccounts(prev => ({ ...prev, [address]: false }));
+    }
+  };
+
+  // Bulk close empty accounts for selected wallets
+  const handleBulkCloseAccounts = async () => {
+    if (selectedWallets.length === 0) {
+      alert('Please select wallets to close empty token accounts');
+      return;
+    }
+    if (!confirm(`Close all empty token accounts from ${selectedWallets.length} wallet(s)?\n\nThis will recover ~0.002 SOL rent per closed account.`)) return;
+    
+    setLoading(true);
+    let totalClosed = 0;
+    let totalRentRecovered = 0;
+    let failed = 0;
+    
+    try {
+      for (const address of selectedWallets) {
+        try {
+          const res = await apiService.closeEmptyTokenAccounts(address);
+          if (res.data.success) {
+            totalClosed += res.data.closed || 0;
+            totalRentRecovered += res.data.rentRecovered || 0;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          failed++;
+        }
+        // Small delay between wallets
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      await loadWallets();
+      
+      if (failed === 0) {
+        alert(`✅ Closed ${totalClosed} empty token account(s) across ${selectedWallets.length} wallet(s)\n💰 Recovered ${totalRentRecovered.toFixed(6)} SOL rent`);
+      } else {
+        alert(`⚠️ Closed ${totalClosed} account(s), recovered ${totalRentRecovered.toFixed(6)} SOL\n${failed} wallet(s) failed`);
+      }
+    } catch (error) {
+      alert(`Error: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -462,7 +594,7 @@ export default function WalletWarming() {
     try {
       const res = await apiService.withdrawSolFromWallet(address);
       if (res.data.success) {
-        alert(`Withdrawn: ${res.data.amount?.toFixed(4) || 0} SOL`);
+        alert(`Withdrawn: ${res.data.amountTransferred?.toFixed(4) || 0} SOL`);
         await loadWallets();
       } else {
         alert(`Failed: ${res.data.error}`);
@@ -651,7 +783,7 @@ export default function WalletWarming() {
                   ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   : 'bg-emerald-600 hover:bg-emerald-700 text-white'
               }`}
-              title="Fund selected wallets"
+              title="Fund selected wallets: Send SOL directly from your main funding wallet to selected wallets. Fast and simple, but creates an on-chain link."
             >
               💰 Fund ({selectedWallets.length})
             </button>
@@ -663,16 +795,41 @@ export default function WalletWarming() {
                   ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   : 'bg-cyan-600 hover:bg-cyan-700 text-white'
               }`}
-              title="Withdraw SOL from selected wallets"
+              title="Withdraw: Collect SOL from selected wallets back to your main funding wallet. Useful for gathering funds after trading."
             >
               📤 Withdraw
             </button>
             <button
               onClick={() => setShowPrivateFunding(true)}
               className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors text-sm"
-              title="Private funding via SOL → ETH → SOL"
+              title="Private Funding: Break the on-chain link by bridging SOL → ETH (on selected EVM chain) → SOL via Mayan Finance. Each wallet can use a different chain (Base, BSC, Polygon, etc.) for maximum anonymity. Takes 2-5 minutes but makes wallets appear to be funded from different sources."
             >
               🔒 Private
+            </button>
+            <button
+              onClick={handleBulkCloseAccounts}
+              disabled={loading || selectedWallets.length === 0}
+              className={`px-3 py-2 font-medium rounded-lg transition-colors text-sm ${
+                selectedWallets.length === 0
+                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  : 'bg-orange-600 hover:bg-orange-700 text-white'
+              }`}
+              title="Close all empty token accounts in selected wallets (recover ~0.002 SOL rent per account)"
+            >
+              🗑️ Close Accounts ({selectedWallets.length})
+            </button>
+            
+            <button
+              onClick={handleBulkDelete}
+              disabled={loading || selectedWallets.length === 0}
+              className={`px-3 py-2 font-medium rounded-lg transition-colors text-sm ${
+                selectedWallets.length === 0
+                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  : 'bg-red-600 hover:bg-red-700 text-white'
+              }`}
+              title="Delete: Permanently remove selected wallets from the system. This action cannot be undone. Make sure wallets are empty or you've withdrawn funds first."
+            >
+              🗑️ Delete ({selectedWallets.length})
             </button>
             
             <div className="w-px h-6 bg-gray-700 mx-1" />
@@ -682,7 +839,7 @@ export default function WalletWarming() {
               onClick={handleCreateWallet}
               disabled={loading}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 text-sm"
-              title="Create one or more new wallets"
+              title="Create Wallets: Generate one or more new Solana wallets with random private keys. Wallets are stored securely and can be tagged for organization."
             >
               ➕ Create Wallets
             </button>
@@ -690,24 +847,73 @@ export default function WalletWarming() {
               onClick={() => setShowAddWalletModal(true)}
               disabled={loading}
               className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 text-sm"
+              title="Add Existing: Import an existing wallet by entering its private key (base58 format). Useful for managing wallets created elsewhere."
             >
               📥 Add Existing
             </button>
             <button
               onClick={() => setShowSettings(!showSettings)}
               className={`px-3 py-2 rounded-lg transition-colors text-sm ${showSettings ? 'bg-purple-600 text-white' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+              title="Settings: Configure wallet warming parameters (trades per wallet, buy amounts, intervals, etc.)"
             >
               ⚙️ Settings
             </button>
             <button
-              onClick={() => {
+              onClick={async () => {
                 setRecentlyCreated([]); // Clear NEW badges on refresh
-                loadWallets(true); // Refresh balances from blockchain
+                setRefreshingBalances(true);
+                setRefreshMessage('🔄 Fetching balances from blockchain...');
+                try {
+                  await loadWallets(true, true); // Refresh balances AND transaction stats from blockchain
+                  setRefreshMessage('✅ Balances updated!');
+                  setTimeout(() => setRefreshMessage(null), 3000);
+                } catch (error) {
+                  setRefreshMessage('❌ Failed to refresh balances');
+                  setTimeout(() => setRefreshMessage(null), 3000);
+                } finally {
+                  setRefreshingBalances(false);
+                }
               }}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm"
-              title="Refresh wallets & balances (clears NEW badges)"
+              disabled={refreshingBalances}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                refreshingBalances 
+                  ? 'bg-gray-700 text-gray-400 cursor-wait' 
+                  : 'bg-gray-800 hover:bg-gray-700 text-white'
+              }`}
+              title="Refresh: Update wallet balances and transaction stats from blockchain. Note: If you just completed a Mayan bridge, wait 2-5 minutes for funds to arrive before refreshing."
             >
-              🔄
+              {refreshingBalances ? <span className="animate-spin inline-block">🔄</span> : '🔄'}
+            </button>
+            {refreshMessage && (
+              <span className="text-xs text-gray-400 px-2">{refreshMessage}</span>
+            )}
+            <button
+              onClick={async () => {
+                if (selectedWallets.length === 0) {
+                  alert('Please select wallets to refresh transaction stats');
+                  return;
+                }
+                setLoading(true);
+                try {
+                  console.log(`[WalletWarming] Refreshing transaction stats for ${selectedWallets.length} wallet(s)...`);
+                  await apiService.updateWalletStats(selectedWallets);
+                  await loadWallets(false, false); // Reload wallets to show updated stats
+                  alert(`✅ Transaction stats updated for ${selectedWallets.length} wallet(s)`);
+                } catch (error) {
+                  alert(`Error: ${error.response?.data?.error || error.message}`);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading || selectedWallets.length === 0}
+              className={`px-3 py-2 font-medium rounded-lg text-sm transition-colors ${
+                selectedWallets.length === 0
+                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+              title="Refresh Stats: Fetch real transaction counts, trades, and dates from blockchain for selected wallets. This queries Solana to get actual on-chain data."
+            >
+              📊 Stats ({selectedWallets.length})
             </button>
           </div>
         </div>
@@ -732,9 +938,9 @@ export default function WalletWarming() {
               <label className="text-xs text-gray-400 mb-1 block">Min Buy (SOL)</label>
               <input
                 type="number"
-                step="0.001"
+                step="0.0001"
                 value={config.minBuyAmount}
-                onChange={(e) => setConfig({ ...config, minBuyAmount: parseFloat(e.target.value) || 0.002 })}
+                onChange={(e) => setConfig({ ...config, minBuyAmount: parseFloat(e.target.value) || 0.0002 })}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
               />
             </div>
@@ -742,11 +948,42 @@ export default function WalletWarming() {
               <label className="text-xs text-gray-400 mb-1 block">Max Buy (SOL)</label>
               <input
                 type="number"
-                step="0.001"
+                step="0.0001"
                 value={config.maxBuyAmount}
-                onChange={(e) => setConfig({ ...config, maxBuyAmount: parseFloat(e.target.value) || 0.003 })}
+                onChange={(e) => setConfig({ ...config, maxBuyAmount: parseFloat(e.target.value) || 0.0003 })}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
               />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Trading Pattern</label>
+              <select
+                value={config.tradingPattern || 'sequential'}
+                onChange={(e) => setConfig({ ...config, tradingPattern: e.target.value })}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                title="Sequential: Buy→Sell repeatedly. Randomized: Buy multiple, sell selectively. Accumulate: Buy all, sell all at end."
+              >
+                <option value="sequential">Sequential (Buy→Sell, Buy→Sell...)</option>
+                <option value="randomized">Randomized (Buy 2→Sell 1→Buy 1→Sell 2...)</option>
+                <option value="accumulate">Accumulate (Buy multiple, sell all at end)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Parallel Wallets</label>
+              <input
+                type="number"
+                value={config.walletsPerBatch || 2}
+                onChange={(e) => setConfig({ ...config, walletsPerBatch: parseInt(e.target.value) || 2 })}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm"
+                min="1"
+                max="10"
+                disabled={selectedWallets.length <= 1}
+                title={selectedWallets.length <= 1 
+                  ? "Parallel processing only applies when multiple wallets are selected. With 1 wallet, it processes normally."
+                  : "How many wallets to process simultaneously. If you select 10 wallets and set this to 3, it will process 3 at a time in batches."}
+              />
+              {selectedWallets.length <= 1 && (
+                <p className="text-xs text-gray-500 mt-1">Only applies with multiple wallets</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-400 mb-1 block">Funding (SOL)</label>
@@ -780,6 +1017,28 @@ export default function WalletWarming() {
                 />
                 <span className="text-sm text-gray-300">Trending Tokens</span>
               </label>
+            </div>
+            <div className="flex items-center">
+              <label className="flex items-center gap-2 cursor-pointer" title={config.closeTokenAccounts ? "Clean Mode: Sell 100% and close accounts (recover rent ~0.002 SOL per trade)" : "Cheap Mode: Sell 99.9% and keep dust (no close tx, cheaper for many trades)"}>
+                <input
+                  type="checkbox"
+                  checked={config.closeTokenAccounts}
+                  onChange={(e) => setConfig({ ...config, closeTokenAccounts: e.target.checked })}
+                  className="w-4 h-4 accent-purple-500"
+                />
+                <span className="text-sm text-gray-300">Close Accounts</span>
+              </label>
+            </div>
+          </div>
+          
+          {/* Mode explanation */}
+          <div className="mt-3 pt-3 border-t border-gray-800">
+            <div className="text-xs text-gray-400">
+              <strong>Mode:</strong> {config.closeTokenAccounts ? (
+                <span className="text-green-400">Clean Mode - Sells 100% and closes token accounts (recover ~0.002 SOL rent per trade, cleaner wallets)</span>
+              ) : (
+                <span className="text-orange-400">Cheap Mode - Sells 99.9% and keeps dust (no close tx, build many transactions cheaply)</span>
+              )}
             </div>
           </div>
           
@@ -885,8 +1144,9 @@ export default function WalletWarming() {
                 ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                 : 'bg-orange-600 hover:bg-orange-700 text-white'
             }`}
+            title={`Start Warming: Execute small trades on ${selectedWallets.length} wallet(s) IN PARALLEL to build transaction history. Makes wallets appear more organic and less suspicious. Configure trade amounts, patterns, and intervals in Settings.`}
           >
-            🔥 Start Warming ({selectedWallets.length})
+            🔥 Start Warming ({selectedWallets.length}) {selectedWallets.length > 1 ? '(Parallel)' : ''}
           </button>
         </div>
       </div>
@@ -909,6 +1169,8 @@ export default function WalletWarming() {
                 <th className="px-3 py-3 text-right">Balance</th>
                 <th className="px-3 py-3 text-center">Txns</th>
                 <th className="px-3 py-3 text-center">Trades</th>
+                <th className="px-3 py-3 text-center">First Tx</th>
+                <th className="px-3 py-3 text-center">Last Tx</th>
                 <th className="px-3 py-3">Tags</th>
                 <th className="px-3 py-3 text-center">Status</th>
                 <th className="px-3 py-3 text-right">Actions</th>
@@ -959,6 +1221,26 @@ export default function WalletWarming() {
                   </td>
                   <td className="px-3 py-3 text-center text-sm text-gray-300">
                     {wallet.totalTrades || 0}
+                  </td>
+                  <td className="px-3 py-3 text-center text-xs text-gray-400">
+                    {wallet.firstTransactionDate ? (
+                      <div className="flex flex-col">
+                        <span>{new Date(wallet.firstTransactionDate).toLocaleDateString()}</span>
+                        <span className="text-gray-500">{new Date(wallet.firstTransactionDate).toLocaleTimeString()}</span>
+                      </div>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-center text-xs text-gray-400">
+                    {wallet.lastTransactionDate ? (
+                      <div className="flex flex-col">
+                        <span>{new Date(wallet.lastTransactionDate).toLocaleDateString()}</span>
+                        <span className="text-gray-500">{new Date(wallet.lastTransactionDate).toLocaleTimeString()}</span>
+                      </div>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-3">
                     {editingTags[wallet.address] ? (
@@ -1023,6 +1305,14 @@ export default function WalletWarming() {
                         {sellingTokens[wallet.address] ? '...' : '💸'}
                       </button>
                       <button
+                        onClick={() => handleCloseEmptyAccounts(wallet.address)}
+                        disabled={closingAccounts[wallet.address]}
+                        className="px-2 py-1 bg-orange-600/80 hover:bg-orange-600 text-white rounded text-xs disabled:opacity-50"
+                        title="Close empty token accounts (recover ~0.002 SOL rent per account)"
+                      >
+                        {closingAccounts[wallet.address] ? '...' : '🗑️'}
+                      </button>
+                      <button
                         onClick={() => handleWithdrawSol(wallet.address)}
                         disabled={withdrawingSol[wallet.address] || (wallet.solBalance || 0) < 0.001}
                         className="px-2 py-1 bg-cyan-600/80 hover:bg-cyan-600 text-white rounded text-xs disabled:opacity-50"
@@ -1044,7 +1334,7 @@ export default function WalletWarming() {
               })}
               {filteredAndSortedWallets.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
+                  <td colSpan={10} className="px-4 py-12 text-center text-gray-500">
                     {wallets.length === 0 ? (
                       <div>
                         <p className="text-lg mb-2">No wallets yet</p>
@@ -1361,12 +1651,12 @@ export default function WalletWarming() {
         </div>
       )}
 
-      {/* ==================== PRIVATE FUNDING MODAL (SOL → ETH → SOL via Mayan) ==================== */}
+      {/* ==================== PRIVATE FUNDING MODAL ==================== */}
       {showPrivateFunding && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">🔒 Private Funding (Mayan Bridge)</h3>
+              <h3 className="text-lg font-bold text-white">Private Funding</h3>
               <button
                 onClick={() => {
                   setShowPrivateFunding(false);
@@ -1379,54 +1669,69 @@ export default function WalletWarming() {
             </div>
             
             <div className="space-y-4">
-              {/* Explanation */}
-              <div className="p-3 bg-purple-900/20 border border-purple-700/50 rounded-lg">
-                <p className="text-sm text-gray-300">
-                  🐍 Uses <strong>Mayan Finance</strong> to bridge SOL → ETH (Base) → SOL, breaking the on-chain link between source and destination wallets.
-                </p>
-              </div>
-              
-              {/* Mode Selection */}
+              {/* Method Selection - Simplified */}
               <div className="flex gap-2">
                 <button
-                  onClick={() => setPrivateFundingStep(1)}
-                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    privateFundingStep === 1 ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  onClick={() => setPrivateFundingMethod('mayan')}
+                  className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    privateFundingMethod === 'mayan' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                   }`}
                 >
-                  💰 Fund
+                  Mayan Bridge
                 </button>
                 <button
-                  onClick={() => setPrivateFundingStep(2)}
-                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    privateFundingStep === 2 ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  onClick={() => setPrivateFundingMethod('sol-intermediaries')}
+                  className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    privateFundingMethod === 'sol-intermediaries' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                   }`}
                 >
-                  📤 Withdraw
+                  SOL Chain
                 </button>
-                <button
-                  onClick={() => {
-                    setPrivateFundingStep(3);
-                    loadStuckIntermediaries();
-                  }}
-                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    privateFundingStep === 3 ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  🔧 Resume
-                </button>
+              </div>
+
+              {/* Flow Visualization - Unified styling */}
+              <div className="p-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+                {privateFundingMethod === 'mayan' ? (
+                  <>
+                    <div className="text-xs text-gray-400 mb-2">Route:</div>
+                    <div className="text-xs font-mono text-gray-300 flex items-center gap-2 flex-wrap">
+                      <span className="px-2 py-1 bg-gray-700 rounded">SOL</span>
+                      <span>→</span>
+                      <span className="px-2 py-1 bg-gray-700 rounded">ETH ({bridgeChain})</span>
+                      <span>→</span>
+                      <span className="px-2 py-1 bg-gray-700 rounded">SOL</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Cross-chain bridge via Mayan Finance • Takes 2-5 minutes
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-xs text-gray-400 mb-2">Route:</div>
+                    <div className="text-xs font-mono text-gray-300 flex items-center gap-2 flex-wrap">
+                      <span className="px-2 py-1 bg-gray-700 rounded">SOL</span>
+                      <span>→</span>
+                      <span className="px-2 py-1 bg-gray-700 rounded">{intermediaryCount} Wallets</span>
+                      <span>→</span>
+                      <span className="px-2 py-1 bg-gray-700 rounded">SOL</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Sequential SOL wallet chain • Faster, no cross-chain wait
+                    </div>
+                  </>
+                )}
               </div>
               
               {/* Fund Mode */}
               {privateFundingStep === 1 && (
                 <div className="space-y-3">
-                  <div className="p-3 bg-gray-800/50 rounded-lg">
-                    <div className="text-sm text-gray-400 mb-1">Selected Wallets to Fund:</div>
+                  <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                    <div className="text-xs text-gray-400 mb-1">Wallets to fund:</div>
                     <div className="text-white font-medium">
                       {selectedWallets.length > 0 ? (
-                        <span>{selectedWallets.length} wallet{selectedWallets.length > 1 ? 's' : ''}</span>
+                        <span>{selectedWallets.length} wallet{selectedWallets.length > 1 ? 's' : ''} selected</span>
                       ) : (
-                        <span className="text-yellow-400">⚠️ Select wallets first</span>
+                        <span className="text-gray-500 text-sm">Select wallets from the list above</span>
                       )}
                     </div>
                   </div>
@@ -1448,109 +1753,231 @@ export default function WalletWarming() {
                     )}
                   </div>
                   
-                  <div>
-                    <label className="text-sm text-gray-400 mb-1 block">Bridge Chain</label>
-                    <select
-                      value={bridgeChain}
-                      onChange={(e) => setBridgeChain(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white"
-                    >
-                      <option value="base">Base (Low fees, ~2-5 min)</option>
-                      <option value="ethereum">Ethereum (Higher fees)</option>
-                    </select>
-                  </div>
-                  
-                  {bridgeStatus && (
-                    <div className={`p-3 rounded-lg border text-sm ${
-                      bridgeStatus.error 
-                        ? 'bg-red-900/20 border-red-700 text-red-300' 
-                        : bridgeStatus.success 
-                          ? 'bg-green-900/20 border-green-700 text-green-300'
-                          : 'bg-blue-900/20 border-blue-700 text-blue-300'
-                    }`}>
-                      {bridgeStatus.message}
-                    </div>
+                  {privateFundingMethod === 'mayan' ? (
+                    <>
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Chain</label>
+                        <select
+                          value={bridgeChain}
+                          onChange={(e) => setBridgeChain(e.target.value)}
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm"
+                        >
+                          <option value="base">Base</option>
+                          <option value="bsc">BSC</option>
+                          <option value="ethereum">Ethereum</option>
+                          <option value="polygon">Polygon</option>
+                          <option value="avalanche">Avalanche</option>
+                          <option value="arbitrum">Arbitrum</option>
+                          <option value="optimism">Optimism</option>
+                        </select>
+                      </div>
+                      
+                      {bridgeStatus && (
+                        <div className={`p-3 rounded-lg border text-sm ${
+                          bridgeStatus.error 
+                            ? 'bg-red-900/20 border-red-700/50 text-red-300' 
+                            : bridgeStatus.success 
+                              ? 'bg-green-900/20 border-green-700/50 text-green-300'
+                              : 'bg-gray-800/50 border-gray-700 text-gray-300'
+                        }`}>
+                          {bridgeStatus.message}
+                        </div>
+                      )}
+                      
+                      <button
+                        onClick={async () => {
+                          if (selectedWallets.length === 0) {
+                            setBridgeStatus({ error: true, message: 'Please select wallets first' });
+                            return;
+                          }
+                          setBridgeLoading(true);
+                          setBridgeStatus({ message: 'Starting bridge... This takes 2-5 minutes' });
+                          try {
+                            const res = await apiService.autoFundWallets('main', selectedWallets, parseFloat(bridgeAmount), bridgeChain);
+                          if (res.data.success) {
+                            setBridgeStatus({ 
+                              success: true, 
+                              message: `Private funding initiated! Funds will arrive in 2-5 minutes.` 
+                            });
+                            setTimeout(() => {
+                              setBridgeStatus({ 
+                                message: `Bridge in progress... Funds should arrive soon.` 
+                              });
+                            }, 60000);
+                          } else {
+                            setBridgeStatus({ error: true, message: res.data.error });
+                          }
+                          } catch (error) {
+                            setBridgeStatus({ error: true, message: error.response?.data?.error || error.message });
+                          } finally {
+                            setBridgeLoading(false);
+                          }
+                        }}
+                        disabled={bridgeLoading || selectedWallets.length === 0}
+                        className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {bridgeLoading ? 'Processing...' : 'Start Private Funding'}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Intermediary Wallets</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="50"
+                          value={intermediaryCount}
+                          onChange={(e) => setIntermediaryCount(Math.min(50, Math.max(1, parseInt(e.target.value) || 10)))}
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm"
+                          placeholder="10"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          More wallets = better privacy • Recommended: 10-20
+                        </p>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="reuseIntermediaries"
+                          checked={reuseSavedIntermediaries}
+                          onChange={(e) => setReuseSavedIntermediaries(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 bg-gray-800 border-gray-600 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="reuseIntermediaries" className="text-xs text-gray-400">
+                          Reuse saved wallets if available
+                        </label>
+                      </div>
+                      
+                      {bridgeStatus && (
+                        <div className={`p-3 rounded-lg border text-sm ${
+                          bridgeStatus.error 
+                            ? 'bg-red-900/20 border-red-700/50 text-red-300' 
+                            : bridgeStatus.success 
+                              ? 'bg-green-900/20 border-green-700/50 text-green-300'
+                              : 'bg-gray-800/50 border-gray-700 text-gray-300'
+                        }`}>
+                          {bridgeStatus.message}
+                        </div>
+                      )}
+                      
+                      <button
+                        onClick={async () => {
+                          if (selectedWallets.length === 0) {
+                            setBridgeStatus({ error: true, message: 'Please select wallets first' });
+                            return;
+                          }
+                          setBridgeLoading(true);
+                          setBridgeStatus({ message: 'Generating intermediary wallets and routing funds...' });
+                          try {
+                            const res = await apiService.fundWalletsViaSolIntermediaries(
+                              'main',
+                              selectedWallets,
+                              parseFloat(bridgeAmount),
+                              intermediaryCount,
+                              reuseSavedIntermediaries
+                            );
+                            
+                            if (res.data.success) {
+                              setBridgeStatus({ 
+                                success: true, 
+                                message: `Private funding complete! ${res.data.chainResults?.filter(r => r.success).length || 0}/${selectedWallets.length} wallets funded via ${intermediaryCount} intermediaries.` 
+                              });
+                              setTimeout(() => {
+                                loadWallets(true);
+                              }, 2000);
+                            } else {
+                              setBridgeStatus({ error: true, message: res.data.error });
+                            }
+                          } catch (error) {
+                            setBridgeStatus({ error: true, message: error.response?.data?.error || error.message });
+                          } finally {
+                            setBridgeLoading(false);
+                          }
+                        }}
+                        disabled={bridgeLoading || selectedWallets.length === 0}
+                        className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {bridgeLoading ? 'Processing...' : 'Start Private Funding'}
+                      </button>
+                    </>
                   )}
                   
-                  <button
-                    onClick={async () => {
-                      if (selectedWallets.length === 0) {
-                        setBridgeStatus({ error: true, message: '⚠️ Select wallets first' });
-                        return;
-                      }
-                      setBridgeLoading(true);
-                      setBridgeStatus({ message: '🔄 Starting bridge... SOL → ETH (this may take 2-5 minutes)' });
-                      try {
-                        const res = await apiService.autoFundWallets('main', selectedWallets, parseFloat(bridgeAmount), bridgeChain);
-                        if (res.data.success) {
-                          setBridgeStatus({ success: true, message: `✅ Private funding complete! Funded ${selectedWallets.length} wallet(s)` });
-                          loadWallets(true);
-                        } else {
-                          setBridgeStatus({ error: true, message: `❌ ${res.data.error}` });
+                  {/* Recover SOL from Intermediaries - available in Fund tab too */}
+                  <div className="pt-3 border-t border-gray-700">
+                    <div className="text-xs text-gray-400 mb-2">Recover from failed intermediary chain:</div>
+                    <button
+                      onClick={async () => {
+                        setBridgeLoading(true);
+                        setBridgeStatus({ message: 'Checking intermediary wallets...' });
+                        try {
+                          const res = await apiService.recoverSolIntermediaries('main');
+                          if (res.data.success) {
+                            setBridgeStatus({ 
+                              success: true, 
+                              message: `Recovered ${res.data.totalRecovered?.toFixed(6) || 0} SOL from ${res.data.successCount || 0} wallets` 
+                            });
+                            setTimeout(() => {
+                              loadWallets(true);
+                              loadFundingWallet();
+                            }, 2000);
+                          } else {
+                            setBridgeStatus({ error: true, message: res.data.error });
+                          }
+                        } catch (error) {
+                          setBridgeStatus({ error: true, message: error.response?.data?.error || error.message });
+                        } finally {
+                          setBridgeLoading(false);
                         }
-                      } catch (error) {
-                        setBridgeStatus({ error: true, message: `❌ ${error.response?.data?.error || error.message}` });
-                      } finally {
-                        setBridgeLoading(false);
-                      }
-                    }}
-                    disabled={bridgeLoading || selectedWallets.length === 0}
-                    className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {bridgeLoading ? (
-                      <>
-                        <span className="animate-spin">⏳</span>
-                        Bridging... (2-5 min)
-                      </>
-                    ) : (
-                      <>
-                        🐍 Fund via Mayan Bridge
-                      </>
-                    )}
-                  </button>
+                      }}
+                      disabled={bridgeLoading}
+                      className="w-full px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium rounded-lg transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {bridgeLoading ? 'Processing...' : 'Recover SOL from Intermediaries'}
+                    </button>
+                  </div>
                 </div>
               )}
               
-              {/* Withdraw Mode */}
+              {/* Withdraw & Recover - Simplified */}
               {privateFundingStep === 2 && (
                 <div className="space-y-3">
-                  <div className="p-3 bg-gray-800/50 rounded-lg">
-                    <div className="text-sm text-gray-400 mb-1">Selected Wallets to Withdraw:</div>
+                  <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                    <div className="text-xs text-gray-400 mb-1">Wallets to withdraw from:</div>
                     <div className="text-white font-medium">
                       {selectedWallets.length > 0 ? (
-                        <>
-                          <span>{selectedWallets.length} wallet{selectedWallets.length > 1 ? 's' : ''}</span>
-                          <span className="text-gray-400 ml-2">({selectedSol.toFixed(4)} SOL total)</span>
-                        </>
+                        <span>{selectedWallets.length} wallet{selectedWallets.length > 1 ? 's' : ''} • {selectedSol.toFixed(4)} SOL</span>
                       ) : (
-                        <span className="text-yellow-400">⚠️ Select wallets first</span>
+                        <span className="text-gray-500 text-sm">Select wallets from the list above</span>
                       )}
                     </div>
                   </div>
                   
                   <div>
-                    <label className="text-sm text-gray-400 mb-1 block">Bridge Chain</label>
+                    <label className="text-xs text-gray-400 mb-1 block">Chain</label>
                     <select
                       value={bridgeChain}
                       onChange={(e) => setBridgeChain(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white"
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white text-sm"
                     >
-                      <option value="base">Base (Low fees, ~2-5 min)</option>
-                      <option value="ethereum">Ethereum (Higher fees)</option>
+                      <option value="base">Base</option>
+                      <option value="bsc">BSC</option>
+                      <option value="ethereum">Ethereum</option>
+                      <option value="polygon">Polygon</option>
+                      <option value="avalanche">Avalanche</option>
+                      <option value="arbitrum">Arbitrum</option>
+                      <option value="optimism">Optimism</option>
                     </select>
-                  </div>
-                  
-                  <div className="p-3 bg-cyan-900/20 border border-cyan-700/50 rounded-lg text-sm text-cyan-300">
-                    SOL will be privately withdrawn from selected wallets → bridged to ETH → bridged back to your main funding wallet.
                   </div>
                   
                   {bridgeStatus && (
                     <div className={`p-3 rounded-lg border text-sm ${
                       bridgeStatus.error 
-                        ? 'bg-red-900/20 border-red-700 text-red-300' 
+                        ? 'bg-red-900/20 border-red-700/50 text-red-300' 
                         : bridgeStatus.success 
-                          ? 'bg-green-900/20 border-green-700 text-green-300'
-                          : 'bg-blue-900/20 border-blue-700 text-blue-300'
+                          ? 'bg-green-900/20 border-green-700/50 text-green-300'
+                          : 'bg-gray-800/50 border-gray-700 text-gray-300'
                     }`}>
                       {bridgeStatus.message}
                     </div>
@@ -1559,51 +1986,106 @@ export default function WalletWarming() {
                   <button
                     onClick={async () => {
                       if (selectedWallets.length === 0) {
-                        setBridgeStatus({ error: true, message: '⚠️ Select wallets first' });
+                        setBridgeStatus({ error: true, message: 'Please select wallets first' });
                         return;
                       }
                       setBridgeLoading(true);
-                      setBridgeStatus({ message: '🔄 Starting withdrawal bridge... (this may take 2-5 minutes)' });
+                      setBridgeStatus({ message: 'Starting withdrawal... This takes 2-5 minutes' });
                       try {
                         const res = await apiService.autoWithdrawWallets(selectedWallets, 'main', bridgeChain);
-                        if (res.data.success) {
-                          setBridgeStatus({ success: true, message: `✅ Private withdrawal complete!` });
-                          loadWallets(true);
-                        } else {
-                          setBridgeStatus({ error: true, message: `❌ ${res.data.error}` });
-                        }
+                      if (res.data.success) {
+                        setBridgeStatus({ 
+                          success: true, 
+                          message: `Withdrawal initiated! Funds will arrive in 2-5 minutes.` 
+                        });
+                        setTimeout(() => {
+                          setBridgeStatus({ 
+                            message: `Withdrawal in progress...` 
+                          });
+                        }, 60000);
+                      } else {
+                        setBridgeStatus({ error: true, message: res.data.error });
+                      }
                       } catch (error) {
-                        setBridgeStatus({ error: true, message: `❌ ${error.response?.data?.error || error.message}` });
+                        setBridgeStatus({ error: true, message: error.response?.data?.error || error.message });
                       } finally {
                         setBridgeLoading(false);
                       }
                     }}
                     disabled={bridgeLoading || selectedWallets.length === 0}
-                    className="w-full px-4 py-3 bg-cyan-600 hover:bg-cyan-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {bridgeLoading ? (
-                      <>
-                        <span className="animate-spin">⏳</span>
-                        Withdrawing... (2-5 min)
-                      </>
-                    ) : (
-                      <>
-                        📤 Withdraw via Mayan Bridge
-                      </>
-                    )}
+                    {bridgeLoading ? 'Processing...' : 'Withdraw Privately'}
                   </button>
+                  
+                  <div className="pt-3 border-t border-gray-700">
+                    <div className="text-xs text-gray-400 mb-2">Recover from intermediaries:</div>
+                    <button
+                      onClick={async () => {
+                        setBridgeLoading(true);
+                        setBridgeStatus({ message: 'Checking intermediary wallets...' });
+                        try {
+                          const res = await apiService.recoverSolIntermediaries('main');
+                          if (res.data.success) {
+                            setBridgeStatus({ 
+                              success: true, 
+                              message: `Recovered ${res.data.totalRecovered?.toFixed(6) || 0} SOL from ${res.data.successCount || 0} wallets` 
+                            });
+                            setTimeout(() => {
+                              loadWallets(true);
+                              loadFundingWallet();
+                            }, 2000);
+                          } else {
+                            setBridgeStatus({ error: true, message: res.data.error });
+                          }
+                        } catch (error) {
+                          setBridgeStatus({ error: true, message: error.response?.data?.error || error.message });
+                        } finally {
+                          setBridgeLoading(false);
+                        }
+                      }}
+                      disabled={bridgeLoading}
+                      className="w-full px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium rounded-lg transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {bridgeLoading ? 'Processing...' : 'Recover SOL from Intermediaries'}
+                    </button>
+                  </div>
                 </div>
               )}
               
-              {/* Resume Mode - Recover Stuck ETH from Intermediary Wallets */}
+              {/* Resume Mode - Simplified */}
               {privateFundingStep === 3 && (
                 <div className="space-y-3">
-                  <div className="p-3 bg-orange-900/20 border border-orange-700/50 rounded-lg text-sm text-orange-300">
-                    🔧 <strong>Resume Failed Bridges:</strong> If ETH got stuck in an intermediary wallet, you can continue the bridge to SOL here.
+                  
+                  {/* Chain Selector */}
+                  <div className="p-3 bg-gray-800/50 rounded-lg border border-orange-700/30">
+                    <label className="text-sm font-semibold text-orange-300 mb-2 block">
+                      🔗 Select Chain to Recover From:
+                    </label>
+                    <select
+                      value={bridgeChain}
+                      onChange={(e) => {
+                        setBridgeChain(e.target.value);
+                        // Reload intermediaries for the new chain
+                        setTimeout(() => loadStuckIntermediaries(), 100);
+                      }}
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-medium"
+                    >
+                      <option value="base">Base (Low fees, ~2-5 min)</option>
+                      <option value="bsc">BSC (Low fees, ~2-5 min)</option>
+                      <option value="ethereum">Ethereum (Higher fees)</option>
+                      <option value="polygon">Polygon (Low fees, ~2-5 min)</option>
+                      <option value="avalanche">Avalanche (Moderate fees, ~2-5 min)</option>
+                      <option value="arbitrum">Arbitrum (Moderate fees, ~2-5 min)</option>
+                      <option value="optimism">Optimism (Moderate fees, ~2-5 min)</option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-2">
+                      💡 Only wallets on <strong className="text-orange-400">{bridgeChain.toUpperCase()}</strong> will be shown below. Each wallet displays its chain badge.
+                    </p>
                   </div>
                   
                   <div className="p-3 bg-gray-800/50 rounded-lg">
-                    <div className="text-sm text-gray-400 mb-1">Destination Wallet (select one):</div>
+                    <div className="text-sm text-gray-400 mb-1">Destination Wallet (select one from wallet list):</div>
                     <div className="text-white font-medium">
                       {selectedWallets.length > 0 ? (
                         <span className="text-emerald-400">{selectedWallets[0].substring(0, 12)}...</span>
@@ -1626,57 +2108,40 @@ export default function WalletWarming() {
                   )}
                   
                   {loadingIntermediaries ? (
-                    <div className="text-center py-4 text-gray-400">
-                      <span className="animate-spin inline-block">⏳</span> Loading intermediary wallets...
+                    <div className="text-center py-4 text-gray-500 text-sm">
+                      Loading intermediary wallets...
                     </div>
                   ) : stuckIntermediaries.length === 0 ? (
-                    <div className="text-center py-4 text-gray-400">
-                      ✅ No stuck intermediary wallets found
+                    <div className="text-center py-4 text-gray-500 text-sm">
+                      No stuck intermediary wallets found
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto">
                       {stuckIntermediaries.map((wallet) => (
                         <div
                           key={wallet.id}
-                          className="p-3 bg-gray-800/70 rounded-lg border border-gray-700"
+                          className="p-3 bg-gray-800/50 rounded-lg border border-gray-700"
                         >
                           <div className="flex items-center justify-between mb-2">
-                            <div className="text-sm">
-                              <span className="text-gray-400">EVM:</span>{' '}
-                              <a 
-                                href={`https://basescan.org/address/${wallet.address}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-400 hover:underline font-mono"
-                              >
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-300 font-mono">
                                 {wallet.address.substring(0, 10)}...{wallet.address.substring(38)}
-                              </a>
+                              </span>
+                              <span className="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300">
+                                {wallet.chain?.toUpperCase() || 'BASE'}
+                              </span>
                             </div>
-                            <span className={`text-xs px-2 py-0.5 rounded ${
-                              wallet.status === 'created' ? 'bg-yellow-500/20 text-yellow-400' :
-                              wallet.status === 'pending_inbound' ? 'bg-blue-500/20 text-blue-400' :
-                              'bg-gray-500/20 text-gray-400'
-                            }`}>
-                              {wallet.status}
+                            <span className="text-xs text-gray-500">
+                              {wallet.inboundAmount ? `${wallet.inboundAmount} SOL` : 'No balance'}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <div className="text-xs text-gray-500">
-                              Chain: <span className="text-gray-300">{wallet.chain || 'base'}</span>
-                              {wallet.inboundAmount && (
-                                <span className="ml-2">
-                                  | Amount: <span className="text-gray-300">{wallet.inboundAmount} SOL</span>
-                                </span>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => handleRecoverIntermediary(wallet.address, wallet.chain || 'base')}
-                              disabled={bridgeLoading || selectedWallets.length === 0}
-                              className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
-                            >
-                              {bridgeLoading ? '⏳' : '🔧 Continue Bridge'}
-                            </button>
-                          </div>
+                          <button
+                            onClick={() => handleRecoverIntermediary(wallet.address, wallet.chain || bridgeChain)}
+                            disabled={bridgeLoading || selectedWallets.length === 0}
+                            className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {bridgeLoading ? 'Processing...' : 'Continue Bridge'}
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -1685,9 +2150,9 @@ export default function WalletWarming() {
                   <button
                     onClick={loadStuckIntermediaries}
                     disabled={loadingIntermediaries}
-                    className="w-full px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+                    className="w-full px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors disabled:opacity-50"
                   >
-                    🔄 Refresh Intermediary Wallets
+                    Refresh List
                   </button>
                 </div>
               )}

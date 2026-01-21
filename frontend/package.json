@@ -9,18 +9,18 @@
     "start": "serve dist -s -l $PORT"
   },
   "dependencies": {
-    "serve": "^14.2.0",
     "@heroicons/react": "^2.2.0",
     "@solana/spl-token": "^0.4.0",
-    "@solana/web3.js": "^1.89.1",
     "@solana/wallet-adapter-base": "^0.9.23",
+    "@solana/wallet-adapter-phantom": "^0.9.24",
     "@solana/wallet-adapter-react": "^0.15.35",
     "@solana/wallet-adapter-react-ui": "^0.9.35",
-    "@solana/wallet-adapter-phantom": "^0.9.24",
+    "@solana/web3.js": "^1.89.1",
     "axios": "^1.6.8",
     "bs58": "^6.0.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "serve": "^14.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

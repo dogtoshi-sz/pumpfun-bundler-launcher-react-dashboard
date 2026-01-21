@@ -3,7 +3,6 @@
  * 
  * A simplified launcher for rapid token deployment:
  * - Dev buy only (no bundle wallets, no Jito)
- * - Twitter API integration for instant posts
  * - Uses same pump-addresses.json pool
  * - Uses same .env configuration
  * - Proper address marking as used
@@ -20,7 +19,6 @@ import readline from "readline";
 
 import { getNextPumpAddress, markPumpAddressAsUsed, saveDataToFile, sleep } from "../utils";
 import { createTokenTx, makeBuyIx } from "../src/main";
-import { postToTwitter, getTwitterAccountInfo } from "../marketing/twitter/twitter-poster";
 
 // Load constants
 const {
@@ -33,12 +31,6 @@ const {
   TWITTER,
   TELEGRAM,
   WEBSITE,
-  TWITTER_API_KEY,
-  TWITTER_API_SECRET,
-  TWITTER_ACCESS_TOKEN,
-  TWITTER_ACCESS_TOKEN_SECRET,
-  TWITTER_TWEETS,
-  ENABLE_TWITTER_POSTING,
   FILE,
 } = process.env;
 
@@ -87,15 +79,6 @@ function displaySettings() {
     console.log(`   ⚠️  No available addresses`);
   }
   
-  console.log("\n🐦 TWITTER POSTING:");
-  const twitterEnabled = ENABLE_TWITTER_POSTING === 'true';
-  console.log(`   Enabled: ${twitterEnabled ? '✅ Yes' : '❌ No'}`);
-  if (twitterEnabled && TWITTER_API_KEY) {
-    console.log(`   API Key: ${TWITTER_API_KEY.substring(0, 8)}...`);
-    const tweets = (TWITTER_TWEETS || '').split('|||').filter(t => t.trim());
-    console.log(`   Scheduled Tweets: ${tweets.length}`);
-  }
-  
   console.log("\n💰 DEV BUY:");
   const buyerAmount = parseFloat(process.env.BUYER_AMOUNT || '0.1');
   console.log(`   Amount: ${buyerAmount} SOL`);
@@ -107,89 +90,6 @@ function displaySettings() {
   console.log(`   Holder Wallets: ❌ None (Quick Launch)`);
   
   console.log("=".repeat(70));
-}
-
-// Verify Twitter connection
-async function verifyTwitter(): Promise<boolean> {
-  if (ENABLE_TWITTER_POSTING !== 'true') {
-    console.log("📱 Twitter posting is disabled");
-    return false;
-  }
-  
-  if (!TWITTER_API_KEY || !TWITTER_API_SECRET || !TWITTER_ACCESS_TOKEN || !TWITTER_ACCESS_TOKEN_SECRET) {
-    console.log("⚠️  Twitter API credentials not configured");
-    return false;
-  }
-  
-  try {
-    console.log("🔄 Verifying Twitter connection...");
-    const result = await getTwitterAccountInfo({
-      apiKey: TWITTER_API_KEY,
-      apiSecret: TWITTER_API_SECRET,
-      accessToken: TWITTER_ACCESS_TOKEN,
-      accessTokenSecret: TWITTER_ACCESS_TOKEN_SECRET,
-    });
-    
-    if (result.success && result.account) {
-      console.log(`✅ Twitter connected: @${result.account.username} (${result.account.name})`);
-      return true;
-    } else {
-      console.log(`⚠️  Twitter connection failed: ${result.error}`);
-      return false;
-    }
-  } catch (error: any) {
-    console.log(`⚠️  Twitter verification error: ${error.message}`);
-    return false;
-  }
-}
-
-// Post to Twitter after successful launch
-async function postLaunchTweets(contractAddress: string): Promise<void> {
-  if (ENABLE_TWITTER_POSTING !== 'true') {
-    return;
-  }
-  
-  const tweets = (TWITTER_TWEETS || '').split('|||').filter(t => t.trim());
-  if (tweets.length === 0) {
-    console.log("📱 No tweets configured in TWITTER_TWEETS");
-    return;
-  }
-  
-  console.log(`\n🐦 Posting ${tweets.length} tweet(s) to Twitter...`);
-  
-  try {
-    const result = await postToTwitter({
-      apiKey: TWITTER_API_KEY!,
-      apiSecret: TWITTER_API_SECRET!,
-      accessToken: TWITTER_ACCESS_TOKEN!,
-      accessTokenSecret: TWITTER_ACCESS_TOKEN_SECRET!,
-      tweets: tweets,
-      tweetDelays: [5, 10], // 5s, 10s delays between tweets
-      updateProfile: true,
-      tokenConfig: {
-        tokenName: TOKEN_NAME,
-        tokenSymbol: TOKEN_SYMBOL,
-        tokenAddress: contractAddress,
-        pumpVanityPublicKey: contractAddress,
-        website: WEBSITE,
-        telegram: TELEGRAM,
-        twitter: TWITTER,
-        description: DESCRIPTION,
-        chain: 'Solana',
-      },
-    });
-    
-    if (result.success) {
-      console.log(`✅ ${result.message}`);
-      if (result.tweets?.tweetIds.length) {
-        console.log(`   Tweet IDs: ${result.tweets.tweetIds.join(', ')}`);
-      }
-    } else {
-      console.log(`⚠️  Twitter error: ${result.error}`);
-    }
-  } catch (error: any) {
-    console.log(`⚠️  Twitter posting failed: ${error.message}`);
-  }
 }
 
 // Main quick launch function
@@ -232,9 +132,6 @@ async function quickLaunch() {
     process.exit(1);
   }
   
-  // Verify Twitter if enabled
-  const twitterReady = await verifyTwitter();
-  
   // Confirmation prompt
   console.log("\n" + "=".repeat(70));
   console.log("🚀 READY TO LAUNCH");
@@ -242,7 +139,6 @@ async function quickLaunch() {
   console.log(`   Token: ${TOKEN_NAME} ($${TOKEN_SYMBOL})`);
   console.log(`   Contract: ${pumpAddress.publicKey}`);
   console.log(`   Dev Buy: ${buyerAmount} SOL`);
-  console.log(`   Twitter: ${twitterReady ? '✅ Will post' : '❌ Disabled'}`);
   console.log("=".repeat(70));
   
   // Auto-confirm if called from API (QUICK_LAUNCH_AUTO_CONFIRM env var)
@@ -415,11 +311,6 @@ async function quickLaunch() {
       JSON.stringify(currentRunData, null, 2)
     );
     console.log("✅ Saved current-run.json");
-    
-    // Post to Twitter
-    if (twitterReady) {
-      await postLaunchTweets(pumpAddress.publicKey);
-    }
     
     console.log("\n🎉 Quick Launch complete! Your token is live.\n");
     

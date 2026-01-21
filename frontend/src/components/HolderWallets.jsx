@@ -21,6 +21,8 @@ import {
   RocketLaunchIcon,
   CommandLineIcon,
   PlusIcon,
+  QuestionMarkCircleIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import {
   WalletIcon as WalletIconSolid,
@@ -28,6 +30,7 @@ import {
   SparklesIcon as SparklesIconSolid,
 } from '@heroicons/react/24/solid';
 import PnLTracker from './PnLTracker';
+import LaunchProgress from './LaunchProgress';
 
 export default function HolderWallets() {
   const [wallets, setWallets] = useState([]);
@@ -68,6 +71,15 @@ export default function HolderWallets() {
   const [autoSellEnabled, setAutoSellEnabled] = useState(false);
   const [autoSellConfig, setAutoSellConfig] = useState({});
   const autoSellEventSourceRef = useRef(null);
+  
+  // Batch sell state (instant parallel sells)
+  const [batchSellRunning, setBatchSellRunning] = useState({
+    all: false,
+    bundles: false,
+    holders: false
+  });
+  
+  // Chart type: always use Birdeye (removed local chart to avoid rate limits)
   
   // Refs for debouncing and request cancellation
   const loadWalletsTimeoutRef = useRef(null);
@@ -165,7 +177,7 @@ export default function HolderWallets() {
           setAutoSellConfig(data.wallets || {});
         } else if (data.type === 'sellTriggered') {
           // Just log it - no browser notification needed (in-app toast handles it)
-          console.log(`🎯 Auto-Sell Triggered: ${data.walletAddress?.slice(0, 8)}... at ${data.externalNetVolume?.toFixed(2)} SOL`);
+          console.log(` Auto-Sell Triggered: ${data.walletAddress?.slice(0, 8)}... at ${data.externalNetVolume?.toFixed(2)} SOL`);
           loadAutoSellConfig();
         } else if (data.type === 'sellComplete' || data.type === 'sellFailed') {
           loadAutoSellConfig();
@@ -236,7 +248,7 @@ export default function HolderWallets() {
     const progressEventSource = new EventSource('http://localhost:3001/api/launch-progress');
     
     progressEventSource.onopen = () => {
-      console.log('[HolderWallets] ✅ Connected to launch progress SSE');
+      console.log('[HolderWallets] [ok] Connected to launch progress SSE');
     };
     
     progressEventSource.onmessage = (event) => {
@@ -293,7 +305,7 @@ export default function HolderWallets() {
             } else if (msgLower.includes('signature') || msgLower.includes('confirmed')) {
               setLaunchStatus('Transaction confirmed!');
             } else if (msgLower.includes('bundle confirmed') || msgLower.includes('launch complete') || msgLower.includes('launched successfully')) {
-              setLaunchStatus('Launch complete! 🎉');
+              setLaunchStatus('Launch complete! ');
               // Keep toast visible longer on success - user should see this
               setTimeout(() => {
                 setIsLaunching(false);
@@ -301,7 +313,7 @@ export default function HolderWallets() {
               }, 8000);
             } else if (msgLower.includes('fatal error') || msgLower.includes('launch failed')) {
               // Only hide on FATAL errors, not warnings
-              setLaunchStatus('Error occurred ❌');
+              setLaunchStatus('Error occurred [x]');
               setTimeout(() => {
                 setIsLaunching(false);
                 setLaunchStatus('');
@@ -319,7 +331,7 @@ export default function HolderWallets() {
           console.log('[HolderWallets] Launch progress stream closed');
           // Don't immediately hide the toast - keep it visible until user sees result
           // Only hide if we haven't received a success/error message
-          if (!launchStatus.includes('🎉') && !launchStatus.includes('❌')) {
+          if (!launchStatus.includes('') && !launchStatus.includes('[x]')) {
             setLaunchStatus('Waiting for blockchain confirmation...');
             // Auto-hide after 30 seconds if stream closes without result
             setTimeout(() => {
@@ -362,7 +374,7 @@ export default function HolderWallets() {
     const eventSource = new EventSource(`http://localhost:3001/api/live-trades?mint=${mintAddress}`);
     
     eventSource.onopen = () => {
-      console.log(`[HolderWallets] ✅ Connected to live trades SSE`);
+      console.log(`[HolderWallets] [ok] Connected to live trades SSE`);
     };
 
     eventSource.onmessage = (event) => {
@@ -456,7 +468,18 @@ export default function HolderWallets() {
   const loadCurrentRunInfo = async () => {
     try {
       const res = await apiService.getCurrentRun();
-      const currentRun = res.data.data;
+      const currentRun = res.data.data || res.data;
+      
+      // Detect if launch is in progress (PENDING status or no mint yet but has wallets)
+      if (currentRun) {
+        if (currentRun.launchStatus === 'PENDING' && !currentRun.mintAddress) {
+          // Launch in progress - show LaunchProgress UI
+          setIsLaunching(true);
+        } else if (currentRun.launchStatus === 'SUCCESS' && currentRun.mintAddress) {
+          // Launch complete
+          setIsLaunching(false);
+        }
+      }
       
       if (currentRun && currentRun.mintAddress) {
         const mintAddr = currentRun.mintAddress || '';
@@ -751,7 +774,7 @@ export default function HolderWallets() {
     try {
       await apiService.sellTokens(wallet.address, mintAddress, sellPercent, priorityFee);
       const feeText = priorityFee === 'high' ? 'HIGH' : priorityFee === 'ultra' ? 'ULTRA' : priorityFee === 'none' ? 'NONE' : 'NORMAL';
-      addTerminalMessage(`✅ Sell successful! ${sellPercent}% from ${wallet.address.substring(0, 8)} (${feeText} priority)`, 'success');
+      addTerminalMessage(`[ok] Sell successful! ${sellPercent}% from ${wallet.address.substring(0, 8)} (${feeText} priority)`, 'success');
       setManualInputs(prev => ({ ...prev, [inputKey]: '' }));
       loadWallets();
     } catch (error) {
@@ -776,50 +799,139 @@ export default function HolderWallets() {
     
     // Confirmation messages with clear descriptions
     const confirmMessages = {
-      'rapid-sell': '⚠️ SELL ALL TOKENS (100%)\n\nThis will sell ALL tokens from ALL bundle/holder wallets immediately.\n\nAre you sure?',
-      'rapid-sell-50-percent': '⚠️ SELL 50% OF TOKENS\n\nThis will sell 50% of tokens from ALL bundle/holder wallets.\n\nAre you sure?',
-      'rapid-sell-remaining': '⚠️ SELL REMAINING TOKENS\n\nThis will sell any remaining tokens from ALL bundle/holder wallets.\n\nAre you sure?',
-      'gather-new-only': '✅ GATHER NEW WALLETS ONLY\n\nThis will:\n• Sell tokens & gather SOL from AUTO-CREATED wallets\n• SKIP warming wallets (preserves Mayan anonymity)\n\nSafe for warming wallet protection. Continue?',
-      'gather': '⚠️ GATHER ALL SOL (INCLUDING WARMING WALLETS!)\n\nThis will gather SOL from ALL wallets including warming wallets!\n\n🚨 WARNING: This will BREAK Mayan swap anonymity!\n\nUse "Gather New Only" instead to protect warming wallets.\n\nAre you SURE you want to gather from ALL wallets?',
-      'gather-all': '⚠️ GATHER FROM ALL WALLETS\n\nThis will gather SOL from ALL wallets in the system.\n\n🚨 WARNING: This may affect warming wallets!\n\nAre you sure?',
-      'collect-fees': '💰 COLLECT CREATOR FEES\n\nThis will collect any accumulated creator fees from your tokens.\n\nContinue?'
+      'rapid-sell': '[!] SELL ALL TOKENS (100%)\n\nThis will sell ALL tokens from ALL bundle/holder wallets immediately.\n\nAre you sure?',
+      'rapid-sell-50-percent': '[!] SELL 50% OF TOKENS\n\nThis will sell 50% of tokens from ALL bundle/holder wallets.\n\nAre you sure?',
+      'rapid-sell-remaining': '[!] SELL REMAINING TOKENS\n\nThis will sell any remaining tokens from ALL bundle/holder wallets.\n\nAre you sure?',
+      'gather-new-only': '[ok] GATHER NEW WALLETS ONLY\n\nThis will:\n- Transfer ALL tokens & gather ALL SOL from AUTO-CREATED wallets\n- SKIP warming wallets (preserves Mayan anonymity)\n\n⚠️ WARNING: This transfers tokens and SOL, breaking anonymity links!\n\nSafe for warming wallet protection. Continue?',
+      'gather': '[!] GATHER ALL SOL & TOKENS (INCLUDING WARMING WALLETS!)\n\nThis will transfer ALL tokens & gather ALL SOL from ALL wallets including warming wallets!\n\n[!] WARNING: This will BREAK Mayan swap anonymity!\n\n⚠️ This transfers tokens and SOL, creating on-chain links between wallets!\n\nUse "Gather New Only" instead to protect warming wallets.\n\nAre you SURE you want to gather from ALL wallets?',
+      'gather-all': '[!] GATHER FROM ALL WALLETS\n\nThis will transfer ALL tokens & gather ALL SOL from ALL wallets in the system.\n\n[!] WARNING: This may affect warming wallets!\n\n⚠️ This transfers tokens and SOL, creating on-chain links!\n\nAre you sure?',
+      'collect-fees': ' COLLECT CREATOR FEES\n\nThis will collect any accumulated creator fees from your tokens.\n\nContinue?'
     };
     
     // Commands that require confirmation
     const requiresConfirmation = ['rapid-sell', 'rapid-sell-50-percent', 'rapid-sell-remaining', 'gather-new-only', 'gather', 'gather-all', 'collect-fees'];
+    
+    // Commands that require DOUBLE confirmation (for anonymity protection)
+    const requiresDoubleConfirmation = ['gather-new-only', 'gather', 'gather-all'];
     
     if (requiresConfirmation.includes(commandId)) {
       const message = confirmMessages[commandId] || `Are you sure you want to execute: ${commandNames[commandId]}?`;
       if (!window.confirm(message)) {
         return; // User cancelled
       }
+      
+      // Double confirmation for gather commands (anonymity protection)
+      if (requiresDoubleConfirmation.includes(commandId)) {
+        const doubleConfirmMessage = `⚠️ FINAL CONFIRMATION ⚠️\n\nYou are about to ${commandNames[commandId]}.\n\nThis will:\n- Transfer ALL tokens from selected wallets to your funding wallet\n- Transfer ALL SOL from selected wallets to your funding wallet\n- Create on-chain links that BREAK wallet anonymity\n\n🚨 This action CANNOT be undone and will COMPROMISE your wallet privacy!\n\nType "CONFIRM" to proceed:`;
+        
+        // Use prompt for second confirmation (forces user to type)
+        const userInput = window.prompt(doubleConfirmMessage);
+        if (userInput !== 'CONFIRM') {
+          addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled - confirmation not provided`, 'info');
+          return; // User didn't type "CONFIRM"
+        }
+      }
     }
     
     setMenuRunning({ ...menuRunning, [commandId]: true });
     addTerminalMessage(`Executing: ${commandNames[commandId] || commandId}...`, 'info');
     
-    try {
-      const res = await apiService.executeCommand(commandId);
-      const output = res.data.output || res.data.message || 'Command executed';
-      
-      // Parse output and add each line to terminal
+    // Helper to parse and display output
+    const displayOutput = (output) => {
       const lines = output.split('\n').filter(line => line.trim());
       lines.forEach(line => {
         if (line.trim()) {
           const type = line.includes('SUCCESS') || line.toLowerCase().includes('success') ? 'success' :
                       line.includes('FAILED') || line.includes('Error') || line.toLowerCase().includes('failed') ? 'error' :
                       'info';
-          // Remove emojis from messages
-          const cleanLine = line.trim().replace(/[✅❌⚡💸📊🔄💰🔄🔍💵]/g, '').trim();
+          const cleanLine = line.trim().replace(/[[ok][x]]/g, '').trim();
           addTerminalMessage(cleanLine, type);
         }
       });
+    };
+    
+    try {
+      const res = await apiService.executeCommand(commandId);
+      const output = res.data.output || res.data.message || 'Command executed';
+      displayOutput(output);
       
-      setTimeout(loadWallets, 500); // Refresh wallets after command (reduced delay)
+      // Auto-collect fees after any gather command (collects from dev wallet)
+      const gatherCommands = ['gather-new-only', 'gather', 'gather-all'];
+      if (gatherCommands.includes(commandId)) {
+        addTerminalMessage('Auto-collecting creator fees...', 'info');
+        try {
+          const feesRes = await apiService.executeCommand('collect-fees');
+          const feesOutput = feesRes.data.output || feesRes.data.message || 'Fees collected';
+          displayOutput(feesOutput);
+        } catch (feeError) {
+          addTerminalMessage(`Fee collection skipped: ${feeError.message || 'No fees to collect'}`, 'info');
+        }
+      }
+      
+      setTimeout(loadWallets, 500);
     } catch (error) {
       addTerminalMessage(`${commandNames[commandId] || commandId} failed: ${error.response?.data?.error || error.message}`, 'error');
     } finally {
       setMenuRunning({ ...menuRunning, [commandId]: false });
+    }
+  };
+
+  // ============================================================================
+  // BATCH SELL HANDLERS - Instant parallel sells (no process spawn!)
+  // ============================================================================
+  
+  const handleBatchSell = async (type) => {
+    const typeNames = {
+      all: 'ALL WALLETS',
+      bundles: 'BUNDLE WALLETS',
+      holders: 'HOLDER WALLETS'
+    };
+    
+    const confirmMessages = {
+      all: ' INSTANT SELL ALL WALLETS\n\nThis will sell 100% from DEV + Bundle + Holder wallets IN PARALLEL.\n\nAre you sure?',
+      bundles: ' INSTANT SELL BUNDLES\n\nThis will sell 100% from DEV + Bundle wallets IN PARALLEL.\n\nAre you sure?',
+      holders: ' INSTANT SELL HOLDERS\n\nThis will sell 100% from Holder wallets IN PARALLEL.\n\nAre you sure?'
+    };
+    
+    if (!window.confirm(confirmMessages[type])) return;
+    
+    setBatchSellRunning(prev => ({ ...prev, [type]: true }));
+    addTerminalMessage(` ${typeNames[type]} - Firing parallel sells...`, 'info');
+    
+    try {
+      let res;
+      if (type === 'all') {
+        res = await apiService.batchSellAll(100, priorityFee);
+      } else if (type === 'bundles') {
+        res = await apiService.batchSellBundles(100, priorityFee);
+      } else {
+        res = await apiService.batchSellHolders(100, priorityFee);
+      }
+      
+      if (res.data.success) {
+        addTerminalMessage(`[ok] ${typeNames[type]} COMPLETE!`, 'success');
+        addTerminalMessage(`   Successful: ${res.data.successful} | Failed: ${res.data.failed}`, 'info');
+        addTerminalMessage(`   Time: ${res.data.elapsed}ms (${(res.data.elapsed / 1000).toFixed(2)}s)`, 'info');
+        
+        // Show individual results
+        if (res.data.results) {
+          res.data.results.forEach(r => {
+            if (r.success) {
+              addTerminalMessage(`   [ok] ${r.wallet.substring(0, 8)}... sold`, 'success');
+            } else if (r.error !== 'No tokens to sell') {
+              addTerminalMessage(`   [x] ${r.wallet.substring(0, 8)}... ${r.error}`, 'error');
+            }
+          });
+        }
+      } else {
+        addTerminalMessage(`[x] ${typeNames[type]} failed: ${res.data.error}`, 'error');
+      }
+      
+      setTimeout(loadWallets, 500);
+    } catch (error) {
+      addTerminalMessage(`[x] ${typeNames[type]} failed: ${error.response?.data?.error || error.message}`, 'error');
+    } finally {
+      setBatchSellRunning(prev => ({ ...prev, [type]: false }));
     }
   };
 
@@ -865,7 +977,7 @@ export default function HolderWallets() {
 
       const res = await apiService.addTestWallets(wallets);
       if (res.data.success) {
-        addTerminalMessage(`✅ Added ${res.data.added} test wallet(s) for stream testing`, 'success');
+        addTerminalMessage(`[ok] Added ${res.data.added} test wallet(s) for stream testing`, 'success');
         setTestWalletInput('');
         // Reload test wallets list
         const testRes = await apiService.getTestWallets();
@@ -887,7 +999,7 @@ export default function HolderWallets() {
     try {
       const res = await apiService.clearTestWallets();
       if (res.data.success) {
-        addTerminalMessage(`🗑️ Cleared ${res.data.cleared} test wallet(s)`, 'success');
+        addTerminalMessage(` Cleared ${res.data.cleared} test wallet(s)`, 'success');
         setTestWallets([]);
       } else {
         addTerminalMessage(`Failed to clear test wallets: ${res.data.error}`, 'error');
@@ -922,7 +1034,7 @@ export default function HolderWallets() {
     try {
       const res = await apiService.transferSol(fromWallet.privateKey, transferTo, amount);
       if (res.data.success) {
-        addTerminalMessage(`✅ Transferred ${amount.toFixed(6)} SOL from ${fromWallet.address ? fromWallet.address.slice(0, 8) : 'unknown'}... to ${transferTo ? transferTo.slice(0, 8) : 'unknown'}...`, 'success');
+        addTerminalMessage(`[ok] Transferred ${amount.toFixed(6)} SOL from ${fromWallet.address ? fromWallet.address.slice(0, 8) : 'unknown'}... to ${transferTo ? transferTo.slice(0, 8) : 'unknown'}...`, 'success');
         addTerminalMessage(`Signature: ${res.data.signature}`, 'info');
         setShowTransferModal(false);
         setTransferFrom('');
@@ -939,155 +1051,243 @@ export default function HolderWallets() {
     }
   };
 
-  // Check if we're launching (show progressive terminal)
+  // Detect important events from launch messages
+  const walletsSaved = launchProgressMessages.some(m => 
+    m.message.toLowerCase().includes('saved') && 
+    (m.message.toLowerCase().includes('wallet') || m.message.toLowerCase().includes('keys'))
+  );
+  const fundingComplete = launchProgressMessages.some(m => 
+    m.message.toLowerCase().includes('funding complete') || 
+    m.message.toLowerCase().includes('distributed') ||
+    m.message.toLowerCase().includes('hop') && m.message.toLowerCase().includes('complete')
+  );
+  const bundleSent = launchProgressMessages.some(m => 
+    m.message.toLowerCase().includes('bundle') && 
+    (m.message.toLowerCase().includes('sent') || m.message.toLowerCase().includes('submit'))
+  );
+  const bundleSuccess = launchProgressMessages.some(m => 
+    m.message.toLowerCase().includes('bundle') && m.message.toLowerCase().includes('success')
+  );
+
+  // Check if we're launching (show clean progress UI)
   if (!mintAddress) {
     return (
-      <div className="w-full h-full bg-gradient-to-br from-gray-900/90 via-gray-900/80 to-gray-950/90 backdrop-blur-xl rounded-xl border border-gray-800/50 shadow-2xl relative flex flex-col">
+      <div className="w-full h-full bg-gray-950 flex flex-col">
         
-        {/* Header - Always visible */}
-        <div className="flex justify-between items-center p-4 border-b border-gray-800/50">
-          <div className="flex items-center gap-2">
-            <div className={`p-2 rounded-lg ${isLaunching ? 'bg-gradient-to-br from-purple-600/30 to-blue-600/30 animate-pulse' : 'bg-gradient-to-br from-gray-700/50 to-gray-800/50'}`}>
-              <span className="text-xl">{isLaunching ? '🚀' : '🎯'}</span>
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">
+        {/* Header */}
+        <div className="bg-gray-900 border-b border-gray-800 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${isLaunching ? 'bg-yellow-500 animate-pulse' : 'bg-gray-600'}`} />
+              <h1 className="text-xl font-bold text-white">
                 {isLaunching ? 'Launching Token...' : 'Trading Terminal'}
-              </h2>
-              <p className="text-xs text-gray-500">
-                {isLaunching ? launchStatus || 'Initializing...' : 'Ready and waiting for launch'}
-              </p>
+              </h1>
             </div>
-          </div>
-          {isLaunching && (
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-purple-500 animate-ping"></div>
-              <span className="text-xs text-purple-400 font-medium">LIVE</span>
-            </div>
-          )}
-        </div>
-
-        {/* Progress bar during launch */}
-        {isLaunching && (
-          <div className="h-1 bg-gray-800">
-            <div className="h-full bg-gradient-to-r from-purple-600 via-blue-500 to-purple-600 animate-pulse" style={{ width: '100%' }}></div>
-          </div>
-        )}
-
-        {/* Main Content Area */}
-        <div className="flex-1 flex gap-4 p-4 overflow-hidden">
-          
-          {/* Left: Placeholder Wallet Cards */}
-          <div className="flex-1 flex flex-col gap-3">
-            {isLaunching ? (
-              <>
-                {/* Show placeholder wallet cards that will "fill in" */}
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                  {['DEV', 'Bundle', 'Holder 1', 'Holder 2'].map((label, idx) => (
-                    <div 
-                      key={label}
-                      className={`p-3 rounded-lg border transition-all duration-500 ${
-                        launchProgressMessages.some(m => 
-                          m.message.toLowerCase().includes(label.toLowerCase().replace(' ', '')) ||
-                          (label === 'DEV' && m.message.toLowerCase().includes('creator')) ||
-                          (label.includes('Holder') && m.message.toLowerCase().includes('holder'))
-                        )
-                          ? 'bg-gradient-to-br from-green-900/30 to-emerald-900/30 border-green-500/50'
-                          : 'bg-gray-800/30 border-gray-700/30 opacity-50'
-                      }`}
-                      style={{ animationDelay: `${idx * 150}ms` }}
-                    >
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className={`w-2 h-2 rounded-full ${
-                          launchProgressMessages.some(m => 
-                            m.message.toLowerCase().includes(label.toLowerCase().replace(' ', ''))
-                          ) ? 'bg-green-500' : 'bg-gray-600'
-                        }`}></div>
-                        <span className="text-xs font-bold text-gray-400">{label}</span>
-                      </div>
-                      <div className="text-lg font-mono text-gray-500">--</div>
-                      <div className="text-[10px] text-gray-600">Waiting...</div>
-                    </div>
-                  ))}
-                </div>
-                
-                {/* Chart placeholder */}
-                <div className="flex-1 rounded-lg bg-gray-800/20 border border-gray-700/30 flex items-center justify-center min-h-[150px]">
-                  <div className="text-center">
-                    <div className="text-3xl mb-2 opacity-30">📈</div>
-                    <p className="text-xs text-gray-600">Chart will appear after launch</p>
-                  </div>
-                </div>
-              </>
-            ) : (
-              /* Idle state - Show nice waiting screen */
-              <div className="flex-1 flex flex-col items-center justify-center text-center">
-                <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-gray-800 to-gray-700 flex items-center justify-center mb-6 border border-gray-600/50 shadow-xl">
-                  <span className="text-5xl">🎯</span>
-                </div>
-                <h2 className="text-2xl font-bold text-white mb-2">Ready to Launch</h2>
-                <p className="text-gray-400 mb-6 max-w-md">
-                  Go to the <span className="text-purple-400 font-semibold">Launch</span> tab to create a token. 
-                  The terminal will show live updates as your token launches.
-                </p>
-                <div className="flex items-center gap-2 text-gray-500 text-sm bg-gray-800/50 px-4 py-2 rounded-full border border-gray-700/50">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                  <span>Terminal connected and waiting...</span>
-                </div>
-              </div>
+            {isLaunching && (
+              <span className="text-xs text-yellow-400 bg-yellow-400/10 px-3 py-1 rounded-full">LIVE</span>
             )}
           </div>
+        </div>
 
-          {/* Right: Live Terminal Output */}
-          {isLaunching && (
-            <div className="w-80 flex flex-col bg-gray-950/80 rounded-lg border border-gray-700/50 overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/50 border-b border-gray-700/30">
-                <div className="flex gap-1">
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-500/60"></div>
-                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60"></div>
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500/60"></div>
-                </div>
-                <span className="text-[10px] text-gray-500 font-mono">launch-output</span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed">
-                {launchProgressMessages.length === 0 ? (
-                  <div className="text-gray-600 animate-pulse">Waiting for output...</div>
-                ) : (
-                  launchProgressMessages.slice(-30).map((msg, idx) => (
-                    <div 
-                      key={idx} 
-                      className={`py-0.5 ${
-                        msg.type === 'stderr' ? 'text-red-400' : 
-                        msg.message.includes('✅') || msg.message.includes('success') ? 'text-green-400' :
-                        msg.message.includes('⚠️') || msg.message.includes('Warning') ? 'text-yellow-400' :
-                        'text-gray-400'
-                      }`}
-                    >
-                      <span className="text-gray-600 mr-2">{String(idx + 1).padStart(2, '0')}</span>
-                      {msg.message}
+        {/* Main Content */}
+        <div className="flex-1 overflow-auto p-6">
+          {isLaunching ? (
+            <div className="max-w-2xl mx-auto space-y-4">
+              
+              {/* STEP 1: Creating Wallets */}
+              <div className={`p-4 rounded-xl border ${
+                walletsSaved 
+                  ? 'bg-green-500/10 border-green-500/30' 
+                  : 'bg-gray-900 border-gray-800'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    walletsSaved ? 'bg-green-500' : 'bg-gray-700'
+                  }`}>
+                    {walletsSaved ? (
+                      <CheckCircleIcon className="w-6 h-6 text-white" />
+                    ) : (
+                      <ArrowPathIcon className="w-5 h-5 text-gray-400 animate-spin" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <div className={`font-semibold ${walletsSaved ? 'text-green-400' : 'text-white'}`}>
+                      Creating & Saving Wallets
                     </div>
-                  ))
-                )}
+                    <div className={`text-sm ${walletsSaved ? 'text-green-400/70' : 'text-gray-500'}`}>
+                      {walletsSaved ? '✓ All wallet keys saved to current-run.json' : 'Generating bundle and holder wallets...'}
+                    </div>
+                  </div>
+                  {walletsSaved && (
+                    <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded">SAVED</span>
+                  )}
+                </div>
+              </div>
+
+              {/* WALLET SAVED CONFIRMATION - Big and obvious */}
+              {walletsSaved && (
+                <div className="bg-green-500/10 border-2 border-green-500/50 rounded-xl p-4 flex items-center gap-4">
+                  <ShieldCheckIcon className="w-10 h-10 text-green-400 flex-shrink-0" />
+                  <div>
+                    <div className="text-green-400 font-bold text-lg">Wallets Saved Securely</div>
+                    <div className="text-green-400/70 text-sm">
+                      Your funds are safe. Even if launch fails, SOL can be recovered with `npm run gather`
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 2: Funding Wallets */}
+              <div className={`p-4 rounded-xl border ${
+                fundingComplete 
+                  ? 'bg-green-500/10 border-green-500/30' 
+                  : walletsSaved 
+                    ? 'bg-gray-900 border-gray-800' 
+                    : 'bg-gray-900/50 border-gray-800/50 opacity-50'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    fundingComplete ? 'bg-green-500' : walletsSaved ? 'bg-indigo-500' : 'bg-gray-700'
+                  }`}>
+                    {fundingComplete ? (
+                      <CheckCircleIcon className="w-6 h-6 text-white" />
+                    ) : walletsSaved ? (
+                      <ArrowPathIcon className="w-5 h-5 text-white animate-spin" />
+                    ) : (
+                      <CurrencyDollarIcon className="w-5 h-5 text-gray-500" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <div className={`font-semibold ${fundingComplete ? 'text-green-400' : walletsSaved ? 'text-white' : 'text-gray-500'}`}>
+                      Funding Wallets
+                    </div>
+                    <div className={`text-sm ${fundingComplete ? 'text-green-400/70' : 'text-gray-500'}`}>
+                      {fundingComplete ? '✓ SOL distributed to all wallets' : 'Sending SOL to bundle and holder wallets...'}
+                    </div>
+                  </div>
+                  {fundingComplete && (
+                    <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded">DONE</span>
+                  )}
+                </div>
+              </div>
+
+              {/* STEP 3: Sending Bundle */}
+              <div className={`p-4 rounded-xl border ${
+                bundleSuccess 
+                  ? 'bg-green-500/10 border-green-500/30' 
+                  : bundleSent
+                    ? 'bg-yellow-500/10 border-yellow-500/30'
+                    : fundingComplete 
+                      ? 'bg-gray-900 border-gray-800' 
+                      : 'bg-gray-900/50 border-gray-800/50 opacity-50'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    bundleSuccess ? 'bg-green-500' : bundleSent ? 'bg-yellow-500' : fundingComplete ? 'bg-indigo-500' : 'bg-gray-700'
+                  }`}>
+                    {bundleSuccess ? (
+                      <CheckCircleIcon className="w-6 h-6 text-white" />
+                    ) : fundingComplete ? (
+                      <ArrowPathIcon className="w-5 h-5 text-white animate-spin" />
+                    ) : (
+                      <RocketLaunchIcon className="w-5 h-5 text-gray-500" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <div className={`font-semibold ${bundleSuccess ? 'text-green-400' : bundleSent ? 'text-yellow-400' : fundingComplete ? 'text-white' : 'text-gray-500'}`}>
+                      Sending Bundle via Jito
+                    </div>
+                    <div className={`text-sm ${bundleSuccess ? 'text-green-400/70' : bundleSent ? 'text-yellow-400/70' : 'text-gray-500'}`}>
+                      {bundleSuccess ? '✓ Bundle confirmed on-chain!' : bundleSent ? 'Waiting for confirmation...' : 'Submitting token creation + buys...'}
+                    </div>
+                  </div>
+                  {bundleSuccess && (
+                    <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded">SUCCESS</span>
+                  )}
+                  {bundleSent && !bundleSuccess && (
+                    <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs font-bold rounded animate-pulse">PENDING</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Activity Log - Clean, minimal */}
+              <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mt-6">
+                <div className="px-4 py-3 bg-gray-800/50 border-b border-gray-800 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-400">Activity Log</span>
+                  <span className="text-xs text-gray-600">{launchProgressMessages.length} events</span>
+                </div>
+                <div className="p-4 max-h-48 overflow-y-auto space-y-1">
+                  {launchProgressMessages.length === 0 ? (
+                    <div className="text-gray-600 text-sm">Waiting for events...</div>
+                  ) : (
+                    launchProgressMessages.slice(-15).map((msg, idx) => {
+                      // Filter to show only important messages
+                      const isImportant = 
+                        msg.message.includes('✅') || 
+                        msg.message.includes('saved') ||
+                        msg.message.includes('complete') ||
+                        msg.message.includes('success') ||
+                        msg.message.includes('Bundle') ||
+                        msg.message.includes('Hop') ||
+                        msg.message.includes('Transaction');
+                      
+                      if (!isImportant && launchProgressMessages.length > 10) return null;
+                      
+                      return (
+                        <div key={idx} className="flex items-start gap-2 text-sm">
+                          <span className="text-gray-600 text-xs font-mono w-8 flex-shrink-0">{String(idx + 1).padStart(2, '0')}</span>
+                          <span className={`${
+                            msg.message.includes('✅') || msg.message.includes('success') ? 'text-green-400' :
+                            msg.message.includes('⚠') || msg.message.includes('Warning') ? 'text-yellow-400' :
+                            msg.message.includes('❌') || msg.type === 'stderr' ? 'text-red-400' :
+                            'text-gray-400'
+                          }`}>
+                            {msg.message.length > 80 ? msg.message.substring(0, 80) + '...' : msg.message}
+                          </span>
+                        </div>
+                      );
+                    }).filter(Boolean)
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Idle state - Waiting for launch */
+            <div className="flex-1 flex flex-col items-center justify-center text-center py-20">
+              <div className="w-20 h-20 rounded-2xl bg-gray-800 flex items-center justify-center mb-6 border border-gray-700">
+                <RocketLaunchIcon className="w-10 h-10 text-gray-500" />
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Ready to Launch</h2>
+              <p className="text-gray-400 mb-6 max-w-md">
+                Go to the <span className="text-indigo-400 font-semibold">Launch</span> tab to create a token.
+              </p>
+              <div className="flex items-center gap-2 text-gray-500 text-sm bg-gray-900 px-4 py-2 rounded-full border border-gray-800">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                <span>Connected and waiting...</span>
               </div>
             </div>
           )}
         </div>
-
-        {/* Bottom: Disabled Quick Actions during launch */}
-        {isLaunching && (
-          <div className="p-3 border-t border-gray-800/50">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs text-gray-500">Quick Actions</span>
-              <span className="text-[10px] text-yellow-500 bg-yellow-500/10 px-2 py-0.5 rounded">Disabled during launch</span>
-            </div>
-            <div className="flex gap-2 opacity-40 pointer-events-none">
-              <button className="px-3 py-1.5 bg-red-600/50 text-gray-400 text-xs rounded">Sell All</button>
-              <button className="px-3 py-1.5 bg-green-600/50 text-gray-400 text-xs rounded">Gather</button>
-              <button className="px-3 py-1.5 bg-blue-600/50 text-gray-400 text-xs rounded">Status</button>
-            </div>
-          </div>
         )}
       </div>
+    );
+  }
+
+  // Show beautiful launch progress UI when launching (no mint yet)
+  if (isLaunching && !mintAddress) {
+    return (
+      <LaunchProgress 
+        onComplete={() => {
+          setIsLaunching(false);
+          // Refresh data after launch completes
+          fetchCurrentRun();
+        }}
+        tokenInfo={tokenInfo ? {
+          name: tokenInfo.name || 'New Token',
+          symbol: tokenInfo.symbol || 'TOKEN',
+          image: tokenInfo.image
+        } : null}
+      />
     );
   }
 
@@ -1111,16 +1311,16 @@ export default function HolderWallets() {
                 if (res.data.success && res.data.wallet) {
                   const walletAddress = res.data.wallet.address;
                   if (walletAddress) {
-                    addTerminalMessage(`✅ New wallet created and saved: ${walletAddress.slice(0, 8)}...`, 'success');
+                    addTerminalMessage(`[ok] New wallet created and saved: ${walletAddress.slice(0, 8)}...`, 'success');
                     loadWallets();
                   } else {
-                    addTerminalMessage(`❌ Wallet created but address missing`, 'error');
+                    addTerminalMessage(`[x] Wallet created but address missing`, 'error');
                   }
                 } else {
-                  addTerminalMessage(`❌ Failed to create wallet: ${res.data.error || 'Unknown error'}`, 'error');
+                  addTerminalMessage(`[x] Failed to create wallet: ${res.data.error || 'Unknown error'}`, 'error');
                 }
               } catch (error) {
-                addTerminalMessage(`❌ Error: ${error.response?.data?.error || error.message}`, 'error');
+                addTerminalMessage(`[x] Error: ${error.response?.data?.error || error.message}`, 'error');
               }
             }}
             className="px-2 py-1 bg-gradient-to-r from-green-600/80 to-green-700/80 hover:from-green-500/80 hover:to-green-600/80 text-white rounded transition-all border border-green-500/30 flex items-center gap-1 shadow-lg"
@@ -1142,11 +1342,111 @@ export default function HolderWallets() {
 
       {/* Compact Header Bar - Token + Priority Fee */}
       <div className="mb-2 flex flex-wrap items-center gap-2 p-2 bg-gray-800/30 rounded-lg border border-gray-700/30">
-        {/* Token Mint */}
+        {/* Token Mint - With Load Input */}
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <CubeIcon className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
           <span className="text-[10px] text-gray-400">Token:</span>
-          <span className="text-[10px] font-mono text-white truncate">{mintAddress}</span>
+          {mintAddress ? (
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              <span className="text-[10px] font-mono text-white truncate">{mintAddress}</span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(mintAddress);
+                  addTerminalMessage(' Token address copied!', 'success');
+                }}
+                className="p-0.5 hover:bg-gray-700/50 rounded transition-all"
+                title="Copy address"
+              >
+                <svg className="w-3 h-3 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+              <a
+                href={`https://pump.fun/${mintAddress}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-0.5 hover:bg-gray-700/50 rounded transition-all"
+                title="View on Pump.fun"
+              >
+                <svg className="w-3 h-3 text-gray-400 hover:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            </div>
+          ) : (
+            <span className="text-[10px] text-gray-500 italic">No token loaded</span>
+          )}
+          {/* Load Token Button - Always visible */}
+          <div className="relative group">
+            <button
+              className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-600/30 hover:bg-blue-600/50 text-blue-400 rounded border border-blue-500/30 transition-all"
+              title="Load any token to trade"
+            >
+              {mintAddress ? '↻ LOAD' : '+ LOAD'}
+            </button>
+            {/* Dropdown input */}
+            <div className="absolute top-full left-0 mt-1 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-2">
+              <p className="text-[9px] text-gray-400 mb-1">Paste token address:</p>
+              <input
+                type="text"
+                placeholder="Token mint address..."
+                className="w-full px-2 py-1 text-[10px] font-mono bg-gray-800 border border-gray-600 rounded focus:border-blue-500 focus:outline-none text-white placeholder-gray-500"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter' && e.target.value.trim()) {
+                    e.stopPropagation();
+                    const addr = e.target.value.trim();
+                    if (addr.length > 30 && addr.length < 50) {
+                      addTerminalMessage(` Loading token: ${addr.slice(0, 8)}...`, 'info');
+                      setMintAddress(addr);
+                      setLiveTrades([]); // Clear old trades
+                      try {
+                        await apiService.startTracking(addr);
+                        addTerminalMessage(`[ok] Now tracking ${addr.slice(0, 8)}...`, 'success');
+                      } catch (err) {
+                        addTerminalMessage(`[!] Tracking started locally`, 'warning');
+                      }
+                      e.target.value = '';
+                    } else {
+                      addTerminalMessage('[x] Invalid token address', 'error');
+                    }
+                  }
+                }}
+                onPaste={async (e) => {
+                  e.stopPropagation();
+                  setTimeout(async () => {
+                    const addr = e.target.value.trim();
+                    if (addr.length > 30 && addr.length < 50) {
+                      addTerminalMessage(` Loading token: ${addr.slice(0, 8)}...`, 'info');
+                      setMintAddress(addr);
+                      setLiveTrades([]);
+                      try {
+                        await apiService.startTracking(addr);
+                        addTerminalMessage(`[ok] Now tracking ${addr.slice(0, 8)}...`, 'success');
+                      } catch (err) {
+                        addTerminalMessage(`[!] Tracking started locally`, 'warning');
+                      }
+                      e.target.value = '';
+                    }
+                  }, 100);
+                }}
+              />
+              <p className="text-[8px] text-gray-500 mt-1">Press Enter or paste to load</p>
+            </div>
+          </div>
+          {mintAddress && (
+            <button
+              onClick={() => {
+                setMintAddress(null);
+                setLiveTrades([]);
+                addTerminalMessage(' Token cleared', 'info');
+              }}
+              className="p-0.5 hover:bg-red-500/20 rounded transition-all"
+              title="Clear token"
+            >
+              <XCircleIcon className="w-3.5 h-3.5 text-gray-400 hover:text-red-400" />
+            </button>
+          )}
         </div>
         
         {/* Priority Fee - Inline */}
@@ -1192,222 +1492,180 @@ export default function HolderWallets() {
       </div>
 
 
-      {/* Quick Actions - Organized & Compact */}
-      <div className="mb-2 p-2 bg-gray-800/30 rounded-lg border border-gray-700/30">
-        <div className="flex flex-wrap gap-1">
-          {/* SELL GROUP - Most Important, Larger */}
-          <div className="flex gap-1 pr-2 border-r border-gray-700/50">
-            <button
-              onClick={() => handleMenuCommand('rapid-sell')}
-              disabled={menuRunning['rapid-sell']}
-              className="px-3 py-1.5 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-xs font-bold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg shadow-red-500/30"
-              title="Sell 100% of tokens from ALL wallets immediately"
-            >
-              {menuRunning['rapid-sell'] ? (
-                <ArrowPathIcon className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  <ArrowDownTrayIcon className="w-4 h-4" />
-                  <span>SELL ALL</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleMenuCommand('rapid-sell-50-percent')}
-              disabled={menuRunning['rapid-sell-50-percent']}
-              className="px-2 py-1 bg-gradient-to-br from-orange-600/80 to-orange-700/80 hover:from-orange-500/80 hover:to-orange-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Sell 100% from half of wallets, keep the other half"
-            >
-              {menuRunning['rapid-sell-50-percent'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <span>50%</span>
-              )}
-            </button>
-            <button
-              onClick={() => handleMenuCommand('rapid-sell-remaining')}
-              disabled={menuRunning['rapid-sell-remaining']}
-              className="px-2 py-1 bg-gradient-to-br from-red-500/80 to-red-600/80 hover:from-red-400/80 hover:to-red-500/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Sell remaining wallets that weren't sold in 50% split"
-            >
-              {menuRunning['rapid-sell-remaining'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <span>Remaining</span>
-              )}
-            </button>
+      {/* Quick Actions - Organized with Labels & Tooltips */}
+      <div className="mb-2 p-3 bg-gray-800/40 rounded-lg border border-gray-700/30">
+        <div className="flex flex-wrap gap-3">
+          
+          {/* BATCH SELL Section - INSTANT PARALLEL SELLS */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1 mb-1">
+              <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider"> Instant Sell</span>
+              <div className="group relative">
+                <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-56 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                  <p className="font-bold text-red-400 mb-1"> INSTANT parallel sells (no delay!)</p>
+                  <p><strong>SELL ALL:</strong> DEV + Bundle + Holder wallets</p>
+                  <p><strong>Bundles:</strong> DEV + Bundle wallets only</p>
+                  <p><strong>Holders:</strong> Holder wallets only</p>
+                  <p className="mt-1 text-yellow-400">All wallets sell simultaneously!</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleBatchSell('all')}
+                disabled={batchSellRunning.all}
+                className="px-3 py-1.5 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-xs font-bold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg shadow-red-500/20"
+              >
+                {batchSellRunning.all ? <ArrowPathIcon className="w-4 h-4 animate-spin" /> : <><BoltIcon className="w-4 h-4" /><span>SELL ALL</span></>}
+              </button>
+              <button
+                onClick={() => handleBatchSell('bundles')}
+                disabled={batchSellRunning.bundles}
+                className="px-2 py-1.5 bg-gradient-to-br from-orange-600/80 to-orange-700/80 hover:from-orange-500/80 hover:to-orange-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {batchSellRunning.bundles ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><CubeIcon className="w-3 h-3" /><span>Bundles</span></>}
+              </button>
+              <button
+                onClick={() => handleBatchSell('holders')}
+                disabled={batchSellRunning.holders}
+                className="px-2 py-1.5 bg-gradient-to-br from-purple-600/80 to-purple-700/80 hover:from-purple-500/80 hover:to-purple-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {batchSellRunning.holders ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><UserGroupIcon className="w-3 h-3" /><span>Holders</span></>}
+              </button>
+            </div>
           </div>
 
-          {/* GATHER GROUP */}
-          <div className="flex gap-1 pr-2 border-r border-gray-700/50">
-            <button
-              onClick={() => handleMenuCommand('gather-new-only')}
-              disabled={menuRunning['gather-new-only']}
-              className="px-2 py-1 bg-gradient-to-br from-emerald-600/80 to-emerald-700/80 hover:from-emerald-500/80 hover:to-emerald-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Gather SOL from new wallets only (preserves warmed wallets)"
-            >
-              {menuRunning['gather-new-only'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <>
-                  <ArrowUpTrayIcon className="w-3 h-3" />
-                  <span>New</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleMenuCommand('gather')}
-              disabled={menuRunning['gather']}
-              className="px-2 py-1 bg-gradient-to-br from-green-600/80 to-green-700/80 hover:from-green-500/80 hover:to-green-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Gather SOL from current run wallets (incl. warmed)"
-            >
-              {menuRunning['gather'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <>
-                  <ArrowUpTrayIcon className="w-3 h-3" />
-                  <span>Run</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleMenuCommand('gather-all')}
-              disabled={menuRunning['gather-all']}
-              className="px-2 py-1 bg-gradient-to-br from-green-500/80 to-green-600/80 hover:from-green-400/80 hover:to-green-500/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Gather SOL from ALL wallets ever created"
-            >
-              {menuRunning['gather-all'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <>
-                  <ArrowUpTrayIcon className="w-3 h-3" />
-                  <span>All</span>
-                </>
-              )}
-            </button>
+          <div className="w-px bg-gray-700/50 self-stretch"></div>
+
+          {/* COLLECT SOL Section */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1 mb-1">
+              <span className="text-[10px] font-bold text-green-400 uppercase tracking-wider">Collect SOL & Tokens</span>
+              <div className="group relative">
+                <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-52 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                  <p className="font-bold text-green-400 mb-1">Gather SOL & Tokens back to funding wallet</p>
+                  <p className="mb-1"><strong>⚠️ WARNING:</strong> This will TRANSFER all tokens and SOL from wallets to your funding wallet, breaking anonymity links!</p>
+                  <p><strong>New:</strong> Only wallets created this run (safe for warmed)</p>
+                  <p><strong>Run:</strong> All wallets from current run (incl. warmed)</p>
+                  <p><strong>All:</strong> Every wallet ever created ([!] breaks anonymity)</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleMenuCommand('gather-new-only')}
+                disabled={menuRunning['gather-new-only']}
+                className="px-2 py-1.5 bg-gradient-to-br from-emerald-600/80 to-emerald-700/80 hover:from-emerald-500/80 hover:to-emerald-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {menuRunning['gather-new-only'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowUpTrayIcon className="w-3 h-3" /><span>New</span></>}
+              </button>
+              <button
+                onClick={() => handleMenuCommand('gather')}
+                disabled={menuRunning['gather']}
+                className="px-2 py-1.5 bg-gradient-to-br from-green-600/80 to-green-700/80 hover:from-green-500/80 hover:to-green-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {menuRunning['gather'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowUpTrayIcon className="w-3 h-3" /><span>Run</span></>}
+              </button>
+              <button
+                onClick={() => handleMenuCommand('gather-all')}
+                disabled={menuRunning['gather-all']}
+                className="px-2 py-1.5 bg-gradient-to-br from-green-500/80 to-green-600/80 hover:from-green-400/80 hover:to-green-500/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {menuRunning['gather-all'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowUpTrayIcon className="w-3 h-3" /><span>All</span></>}
+              </button>
+            </div>
           </div>
 
-          {/* UTILITY GROUP */}
-          <div className="flex gap-1">
-            <button
-              onClick={() => handleMenuCommand('collect-fees')}
-              disabled={menuRunning['collect-fees']}
-              className="px-2 py-1 bg-gradient-to-br from-purple-600/80 to-purple-700/80 hover:from-purple-500/80 hover:to-purple-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Collect referral fees from launched tokens"
-            >
-              {menuRunning['collect-fees'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <>
-                  <BanknotesIcon className="w-3 h-3" />
-                  <span>Collect Fees</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => setShowTransferModal(true)}
-              disabled={wallets.length === 0}
-              className="px-2 py-1 bg-gradient-to-br from-cyan-600/80 to-cyan-700/80 hover:from-cyan-500/80 hover:to-cyan-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Transfer SOL between wallets"
-            >
-              <CurrencyDollarIcon className="w-3 h-3" />
-              <span>Send</span>
-            </button>
-            <button
-              onClick={handleRetryBundle}
-              disabled={menuRunning['retry-bundle'] || !mintAddress}
-              className="px-2 py-1 bg-gradient-to-br from-orange-600/80 to-orange-700/80 hover:from-orange-500/80 hover:to-orange-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Retry failed bundle transactions"
-            >
-              {menuRunning['retry-bundle'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <>
-                  <RocketLaunchIcon className="w-3 h-3" />
-                  <span>Retry</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => handleMenuCommand('check-bundle')}
-              disabled={menuRunning['check-bundle']}
-              className="px-2 py-1 bg-gradient-to-br from-blue-600/80 to-blue-700/80 hover:from-blue-500/80 hover:to-blue-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-0.5"
-              title="Check transaction and bundle status"
-            >
-              {menuRunning['check-bundle'] ? (
-                <ArrowPathIcon className="w-3 h-3 animate-spin" />
-              ) : (
-                <>
-                  <MagnifyingGlassIcon className="w-3 h-3" />
-                  <span>Status</span>
-                </>
-              )}
-            </button>
+          <div className="w-px bg-gray-700/50 self-stretch"></div>
+
+          {/* UTILITIES Section */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1 mb-1">
+              <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Utilities</span>
+              <div className="group relative">
+                <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-48 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                  <p><strong>Fees:</strong> Collect pump.fun creator fees</p>
+                  <p><strong>Send:</strong> Transfer SOL between wallets</p>
+                  <p><strong>Status:</strong> Check bundle/tx status</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleMenuCommand('collect-fees')}
+                disabled={menuRunning['collect-fees']}
+                className="px-2 py-1.5 bg-gradient-to-br from-purple-600/80 to-purple-700/80 hover:from-purple-500/80 hover:to-purple-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {menuRunning['collect-fees'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><BanknotesIcon className="w-3 h-3" /><span>Fees</span></>}
+              </button>
+              <button
+                onClick={() => setShowTransferModal(true)}
+                disabled={wallets.length === 0}
+                className="px-2 py-1.5 bg-gradient-to-br from-cyan-600/80 to-cyan-700/80 hover:from-cyan-500/80 hover:to-cyan-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                <CurrencyDollarIcon className="w-3 h-3" /><span>Send</span>
+              </button>
+              <button
+                onClick={() => handleMenuCommand('check-bundle')}
+                disabled={menuRunning['check-bundle']}
+                className="px-2 py-1.5 bg-gradient-to-br from-blue-600/80 to-blue-700/80 hover:from-blue-500/80 hover:to-blue-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {menuRunning['check-bundle'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><MagnifyingGlassIcon className="w-3 h-3" /><span>Status</span></>}
+              </button>
+            </div>
           </div>
 
-          {/* RELAUNCH + VOLUME GROUP */}
-          <div className="flex gap-1 pl-2 border-l border-gray-700/50">
-            <button
-              onClick={async () => {
-                if (!confirm('RELAUNCH with same wallets but NEW pump address?\n\nThis will:\n• Keep all your current wallets (DEV, Bundle, Holder)\n• Get a fresh pump address\n• Resubmit the bundle\n• Update website config')) {
-                  return;
-                }
-                addTerminalMessage('🔄 Relaunching with same wallets...', 'info');
-                try {
-                  const res = await apiService.relaunchToken();
-                  if (res.data.success) {
-                    addTerminalMessage(`✅ Relaunch started!`, 'success');
-                    addTerminalMessage(`🎯 New mint: ${res.data.newMintAddress}`, 'success');
-                    addTerminalMessage(`📦 Wallets: ${res.data.walletCount.dev} DEV + ${res.data.walletCount.bundle} Bundle + ${res.data.walletCount.holder} Holder`, 'info');
-                    // Reload to get new mint
-                    setTimeout(() => loadWallets(), 3000);
-                  } else {
-                    addTerminalMessage(`❌ Relaunch failed: ${res.data.error}`, 'error');
+          <div className="w-px bg-gray-700/50 self-stretch"></div>
+
+          {/* RECOVERY Section */}
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1 mb-1">
+              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Recovery</span>
+              <div className="group relative">
+                <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
+                <div className="absolute bottom-full right-0 mb-1 hidden group-hover:block w-56 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                  <p className="font-bold text-amber-400 mb-1">Fix failed launches</p>
+                  <p><strong>Retry:</strong> Resubmit SAME bundle (same token). Use when Jito bundle didn't land.</p>
+                  <p className="mt-1"><strong>Relaunch:</strong> Same wallets but NEW token address. Use when token is broken/rugged.</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={handleRetryBundle}
+                disabled={menuRunning['retry-bundle'] || !mintAddress}
+                className="px-2 py-1.5 bg-gradient-to-br from-orange-600/80 to-orange-700/80 hover:from-orange-500/80 hover:to-orange-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                {menuRunning['retry-bundle'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowPathIcon className="w-3 h-3" /><span>Retry</span></>}
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm(' RELAUNCH with NEW token address?\n\nThis will:\n- Keep ALL your current wallets (already funded)\n- Generate a NEW pump.fun address\n- Resubmit the bundle with fresh token\n\nUse when token creation failed completely.')) {
+                    return;
                   }
-                } catch (error) {
-                  addTerminalMessage(`❌ Error: ${error.response?.data?.error || error.message}`, 'error');
-                }
-              }}
-              className="px-2 py-1 bg-gradient-to-br from-amber-600/80 to-yellow-700/80 hover:from-amber-500/80 hover:to-yellow-600/80 text-white text-[10px] font-semibold rounded transition-all flex items-center gap-0.5"
-              title="Relaunch with same wallets but new pump address (for failed launches)"
-            >
-              <RocketLaunchIcon className="w-3 h-3" />
-              <span>Relaunch</span>
-            </button>
-            <button
-              onClick={async () => {
-                const count = prompt('How many volume wallets to spawn? (1-10)', '3');
-                const amount = prompt('SOL per wallet? (0.01-1)', '0.05');
-                if (count && amount) {
-                  const c = parseInt(count);
-                  const a = parseFloat(amount);
-                  if (c >= 1 && c <= 10 && a >= 0.01 && a <= 1) {
-                    addTerminalMessage(`🚀 Spawning ${c} volume wallets with ${a} SOL each (2 hops)...`, 'info');
-                    try {
-                      const res = await apiService.spawnVolumeWallets(c, a, 2, 2000);
-                      if (res.data.success) {
-                        addTerminalMessage(`✅ Spawned ${res.data.spawned}/${res.data.total} volume wallets!`, 'success');
-                        res.data.wallets.forEach(w => {
-                          addTerminalMessage(`  💎 ${w.address.slice(0, 12)}... funded with ${w.fundedAmount} SOL`, 'success');
-                        });
-                        loadWallets();
-                      } else {
-                        addTerminalMessage(`❌ Failed: ${res.data.error}`, 'error');
-                      }
-                    } catch (error) {
-                      addTerminalMessage(`❌ Error: ${error.response?.data?.error || error.message}`, 'error');
+                  addTerminalMessage('Relaunching with same wallets, new token...', 'info');
+                  try {
+                    const res = await apiService.relaunchToken();
+                    if (res.data.success) {
+                      addTerminalMessage(`Relaunch started!`, 'success');
+                      addTerminalMessage(`New mint: ${res.data.newMintAddress}`, 'success');
+                      addTerminalMessage(`Wallets: ${res.data.walletCount.dev} DEV + ${res.data.walletCount.bundle} Bundle + ${res.data.walletCount.holder} Holder`, 'info');
+                      setTimeout(() => loadWallets(), 3000);
+                    } else {
+                      addTerminalMessage(`Relaunch failed: ${res.data.error}`, 'error');
                     }
-                  } else {
-                    addTerminalMessage('❌ Invalid input. Count: 1-10, Amount: 0.01-1 SOL', 'error');
+                  } catch (error) {
+                    addTerminalMessage(`Error: ${error.response?.data?.error || error.message}`, 'error');
                   }
-                }
-              }}
-              className="px-2 py-1 bg-gradient-to-br from-pink-600/80 to-purple-700/80 hover:from-pink-500/80 hover:to-purple-600/80 text-white text-[10px] font-semibold rounded transition-all flex items-center gap-0.5"
-              title="Create fresh wallets with multi-hop funding for volume trading"
-            >
-              <SparklesIcon className="w-3 h-3" />
-              <span>+Volume</span>
-            </button>
+                }}
+                className="px-2 py-1.5 bg-gradient-to-br from-amber-600/80 to-yellow-700/80 hover:from-amber-500/80 hover:to-yellow-600/80 text-white text-[10px] font-semibold rounded transition-all flex items-center gap-1"
+              >
+                <RocketLaunchIcon className="w-3 h-3" /><span>Relaunch</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1507,6 +1765,14 @@ export default function HolderWallets() {
             const isHolder = wallet.type === 'holder';
             const hasTokens = wallet.tokenBalance && wallet.tokenBalance > 0;
             
+            // Check auto-buy status (from wallet object)
+            const hasAutoBuy = wallet.hasAutoBuy || false;
+            
+            // Check auto-sell status (from autoSellConfig state)
+            const walletAutoSellConfig = autoSellConfig[wallet.address?.toLowerCase()] || null;
+            const hasAutoSell = walletAutoSellConfig && walletAutoSellConfig.enabled && walletAutoSellConfig.threshold > 0;
+            const autoSellThreshold = walletAutoSellConfig?.threshold || null;
+            
             return (
               <div
                 key={index}
@@ -1534,7 +1800,7 @@ export default function HolderWallets() {
                         ? 'bg-gradient-to-r from-green-600 to-green-500 shadow-lg shadow-green-500/30' 
                         : styles.badgeColor
                     } text-white`}>
-                      {isFunding ? '💰 FUNDING' : isDev ? '⭐ DEV' : styles.label}
+                      {isFunding ? ' FUNDING' : isDev ? '⭐ DEV' : styles.label}
                     </span>
                   </div>
                   {hasTokens && (() => {
@@ -1552,9 +1818,31 @@ export default function HolderWallets() {
                     );
                   })()}
                 </div>
-                <p className="text-[10px] font-mono text-gray-300 mb-1.5 truncate">
+                <p className="text-[10px] font-mono text-gray-300 mb-1 truncate">
                   {wallet.address.substring(0, 8)}...{wallet.address.substring(wallet.address.length - 8)}
                 </p>
+                
+                {/* Auto-Buy / Auto-Sell Badges */}
+                {(hasAutoBuy || hasAutoSell) && (
+                  <div className="flex items-center gap-1 mb-1 flex-wrap">
+                    {hasAutoBuy && (
+                      <span 
+                        className="px-1 py-0.5 text-[8px] font-bold rounded bg-gradient-to-r from-blue-500/80 to-blue-600/80 text-white border border-blue-400/50"
+                        title="Auto-Buy Enabled"
+                      >
+                        🔵 AUTO-BUY
+                      </span>
+                    )}
+                    {hasAutoSell && (
+                      <span 
+                        className="px-1 py-0.5 text-[8px] font-bold rounded bg-gradient-to-r from-orange-500/80 to-red-600/80 text-white border border-orange-400/50"
+                        title={`Auto-Sell: ${autoSellThreshold} SOL threshold`}
+                      >
+                        🔴 AUTO-SELL {autoSellThreshold ? `(${autoSellThreshold.toFixed(2)} SOL)` : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Balances - Compact */}
                 <div className="mb-2 space-y-0.5">
@@ -1872,22 +2160,25 @@ export default function HolderWallets() {
             )}
           </div>
           
-          {/* Birdeye Chart */}
-          <div className="flex-1 min-h-[200px] border-b border-gray-700/50">
-            <iframe
-              src={`https://birdeye.so/tv-widget/${mintAddress}?chain=solana&viewMode=pair&chartInterval=1&chartType=CANDLE&chartTimezone=America%2FLos_Angeles&chartLeftToolbar=show&theme=dark`}
-              className="w-full h-full border-0"
-              frameBorder="0"
-              allow="clipboard-write"
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-              title="Birdeye Chart (Live - 1s interval)"
-              onLoad={() => {
-                console.log("[HolderWallets] Birdeye chart loaded successfully");
-              }}
-              onError={(e) => {
-                console.error("[HolderWallets] Birdeye chart failed to load:", e);
-              }}
-            />
+          {/* Chart Section - Birdeye Only */}
+          <div className="flex-1 min-h-[200px] border-b border-gray-700/50 flex flex-col">
+            <div className="flex items-center justify-between px-2 py-1 bg-gray-900/50 border-b border-gray-700/30">
+              <span className="text-[10px] text-gray-400">Price Chart (Birdeye)</span>
+            </div>
+            
+            {/* Chart Content */}
+            <div className="flex-1 min-h-[180px]">
+              <iframe
+                src={`https://birdeye.so/tv-widget/${mintAddress}?chain=solana&viewMode=pair&chartInterval=1&chartType=CANDLE&chartTimezone=America%2FLos_Angeles&chartLeftToolbar=show&theme=dark`}
+                className="w-full h-full border-0"
+                frameBorder="0"
+                allow="clipboard-write"
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                title="Birdeye Chart (Live - 1s interval)"
+                onLoad={() => console.log("[HolderWallets] Birdeye chart loaded")}
+                onError={(e) => console.error("[HolderWallets] Birdeye chart failed:", e)}
+              />
+            </div>
           </div>
           
           {/* Combined Stats Bar - External Volume, Our P&L, Live Trades */}
@@ -1935,7 +2226,7 @@ export default function HolderWallets() {
                   
                   {/* Our P&L */}
                   <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-purple-400 font-medium">💎 Ours:</span>
+                    <span className="text-[9px] text-purple-400 font-medium"> Ours:</span>
                     <span className="text-[10px] text-red-400">-{ourProfits.buys.toFixed(2)}</span>
                     <span className="text-[10px] text-green-400">+{ourProfits.sells.toFixed(2)}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
@@ -2008,7 +2299,7 @@ export default function HolderWallets() {
                         }`}>
                           {/* Type - Most important, first */}
                           <td className={`p-1.5 font-bold text-[12px] ${trade.type === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
-                            {trade.type === 'buy' ? '🟢 Buy' : '🔴 Sell'}
+                            {trade.type === 'buy' ? ' Buy' : ' Sell'}
                           </td>
                           {/* SOL amount - Right after type */}
                           <td className={`p-1.5 text-right font-bold ${trade.type === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
@@ -2034,10 +2325,10 @@ export default function HolderWallets() {
                                   'bg-blue-500/20 text-blue-300 border border-blue-500/40'
                                 }`}>
                                   <span className="text-[12px]">
-                                    {trade.walletType === 'FUNDING' && '💰'}
-                                    {trade.walletType === 'DEV' && '👨‍🍳'}
-                                    {trade.walletType === 'Bundle' && '📦'}
-                                    {trade.walletType === 'Holder' && '🎯'}
+                                    {trade.walletType === 'FUNDING' && ''}
+                                    {trade.walletType === 'DEV' && '‍'}
+                                    {trade.walletType === 'Bundle' && ''}
+                                    {trade.walletType === 'Holder' && ''}
                                     {!['FUNDING', 'DEV', 'Bundle', 'Holder'].includes(trade.walletType) && '⭐'}
                                   </span>
                                   <span>{trade.walletLabel || trade.walletType || 'OURS'}</span>

@@ -33,7 +33,8 @@ let tradingTerminal = null;
 function getTradingTerminal() {
   if (!tradingTerminal) {
     try {
-      tradingTerminal = require(path.join(projectRoot, 'trading-terminal.ts'));
+      // Trading terminal is now in cli/ directory
+      tradingTerminal = require(path.join(projectRoot, 'cli', 'trading-terminal.ts'));
       console.log('[Trading] ✅ Trading terminal loaded (fast mode)');
     } catch (e) {
       console.error('[Trading] ❌ Failed to load trading-terminal:', e.message);

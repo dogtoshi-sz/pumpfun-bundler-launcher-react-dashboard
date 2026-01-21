@@ -72,7 +72,7 @@ const checkBundleStatus = async () => {
   }
   
   // Add DEV wallet
-  const { BUYER_WALLET } = require("./constants")
+  const { BUYER_WALLET } = require("../constants/constants")
   walletsToCheck.push(BUYER_WALLET)
   
   console.log(`   Checking ${walletsToCheck.length} wallets...\n`)

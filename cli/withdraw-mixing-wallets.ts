@@ -54,7 +54,7 @@ const execute = async (tx: VersionedTransaction, blockhash: any, retries: number
   return null;
 };
 
-async function drainMixingWallets() {
+async function withdrawFromMixingWallets() {
   try {
     console.log('🔍 Loading mixing wallets...');
     const mixingWallets = loadMixingWallets();
@@ -100,13 +100,13 @@ async function drainMixingWallets() {
           continue;
         }
         
-        console.log(`💸 Draining mixer ${i + 1}/${mixingWallets.length} (${mixerPubkey.slice(0, 8)}...${mixerPubkey.slice(-8)})`);
+        console.log(`💸 Withdrawing from mixer ${i + 1}/${mixingWallets.length} (${mixerPubkey.slice(0, 8)}...${mixerPubkey.slice(-8)})`);
         console.log(`   Balance: ${(balance / 1e9).toFixed(6)} SOL`);
         console.log(`   Recoverable: ${(availableBalance / 1e9).toFixed(6)} SOL`);
         console.log(`   Keeping: ${(minBalanceToKeep / 1e9).toFixed(6)} SOL (rent + fees)`);
         
         const blockhash = await connection.getLatestBlockhash('confirmed');
-        const drainTx = new TransactionMessage({
+        const withdrawTx = new TransactionMessage({
           payerKey: mixer.publicKey,
           recentBlockhash: blockhash.blockhash,
           instructions: [
@@ -120,10 +120,10 @@ async function drainMixingWallets() {
           ]
         }).compileToV0Message();
         
-        const drainV0 = new VersionedTransaction(drainTx);
-        drainV0.sign([mixer]);
+        const withdrawV0 = new VersionedTransaction(withdrawTx);
+        withdrawV0.sign([mixer]);
         
-        const signature = await execute(drainV0, blockhash, 3);
+        const signature = await execute(withdrawV0, blockhash, 3);
         
         if (signature) {
           console.log(`   ✅ Success! Signature: ${signature}`);
@@ -131,7 +131,7 @@ async function drainMixingWallets() {
           totalRecovered += availableBalance;
           successCount++;
         } else {
-          console.log(`   ❌ Failed to drain mixer\n`);
+          console.log(`   ❌ Failed to withdraw from mixer\n`);
           failedCount++;
         }
         
@@ -139,22 +139,22 @@ async function drainMixingWallets() {
         await new Promise(resolve => setTimeout(resolve, 500));
         
       } catch (error: any) {
-        console.log(`   ❌ Error draining mixer: ${error.message}\n`);
+        console.log(`   ❌ Error withdrawing from mixer: ${error.message}\n`);
         failedCount++;
       }
     }
     
     // Summary
     console.log('\n' + '='.repeat(60));
-    console.log('📊 DRAIN SUMMARY');
+    console.log('📊 WITHDRAWAL SUMMARY');
     console.log('='.repeat(60));
-    console.log(`✅ Successfully drained: ${successCount} wallet(s)`);
+    console.log(`✅ Successfully withdrawn: ${successCount} wallet(s)`);
     console.log(`❌ Failed: ${failedCount} wallet(s)`);
     console.log(`💰 Total recovered: ${(totalRecovered / 1e9).toFixed(6)} SOL`);
     
     // Get final main wallet balance
     const finalBalance = await connection.getBalance(mainKp.publicKey);
-    console.log(`\n💰 Main wallet balance after drain: ${(finalBalance / 1e9).toFixed(6)} SOL`);
+    console.log(`\n💰 Main wallet balance after withdrawal: ${(finalBalance / 1e9).toFixed(6)} SOL`);
     console.log(`📈 Balance increase: ${((finalBalance - mainBalance) / 1e9).toFixed(6)} SOL`);
     
   } catch (error: any) {
@@ -163,14 +163,13 @@ async function drainMixingWallets() {
   }
 }
 
-// Run the drain
-drainMixingWallets()
+// Run the withdrawal
+withdrawFromMixingWallets()
   .then(() => {
-    console.log('\n✅ Drain complete!');
+    console.log('\n✅ Withdrawal complete!');
     process.exit(0);
   })
   .catch((error) => {
     console.error('❌ Error:', error);
     process.exit(1);
   });
-

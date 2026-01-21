@@ -417,8 +417,17 @@ const main = async () => {
   // This ensures we use the values that were just saved by the API server
   const bundleWalletCount = Number(process.env.BUNDLE_WALLET_COUNT || process.env.DISTRIBUTION_WALLETNUM || '0');
   const bundleSwapAmountsString = process.env.BUNDLE_SWAP_AMOUNTS || '';
-  let bundleSwapAmounts = bundleSwapAmountsString
-    ? bundleSwapAmountsString.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
+  // CRITICAL: Preserve array positions even for invalid values to detect which wallets should be skipped
+  // Map each value (including empty/invalid) to preserve index alignment
+  let bundleSwapAmounts: (number | null)[] = bundleSwapAmountsString
+    ? bundleSwapAmountsString.split(',').map(s => {
+        const trimmed = s.trim();
+        if (trimmed === '' || trimmed === '0') {
+          return null; // Empty or 0 means skip this wallet
+        }
+        const num = Number(trimmed);
+        return isNaN(num) ? null : num; // Invalid values become null (skip)
+      })
     : [];
   const holderWalletCount = Number(process.env.HOLDER_WALLET_COUNT || '0');
   const holderSwapAmountsString = process.env.HOLDER_SWAP_AMOUNTS || '';
@@ -436,21 +445,29 @@ const main = async () => {
   console.log(`   - BUYER_AMOUNT (DEV buy): ${buyerAmount}`);
   console.log(`   - DISTRIBUTION_WALLETNUM (legacy): ${DISTRIBUTION_WALLETNUM}`);
   
-  let swapAmountsToUse: number[];
+  let swapAmountsToUse: (number | null)[];
   if (bundleSwapAmounts.length > 0) {
     swapAmountsToUse = [...bundleSwapAmounts];
-    // Pad with SWAP_AMOUNT if we have fewer amounts than wallets
+    // Pad with null (which will use SWAP_AMOUNT) if we have fewer amounts than wallets
     while (swapAmountsToUse.length < bundleWalletCount) {
       console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS has ${swapAmountsToUse.length} values but need ${bundleWalletCount}. Padding with SWAP_AMOUNT (${SWAP_AMOUNT})`);
-      swapAmountsToUse.push(SWAP_AMOUNT);
+      swapAmountsToUse.push(null);
     }
     // Trim if we have more amounts than wallets (shouldn't happen, but be safe)
     swapAmountsToUse = swapAmountsToUse.slice(0, bundleWalletCount);
-    console.log(`   ✅ Using custom amounts: [${swapAmountsToUse.join(', ')}]`);
+    const displayAmounts = swapAmountsToUse.map(a => a === null ? 'SWAP_AMOUNT' : a.toString());
+    console.log(`   ✅ Using custom amounts: [${displayAmounts.join(', ')}]`);
+    const skippedCount = swapAmountsToUse.filter(a => a === null || a === 0).length;
+    if (skippedCount > 0) {
+      console.warn(`   ⚠️  ${skippedCount} wallet(s) will be skipped (null or 0 amount)`);
+    }
   } else {
     console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS is empty! All wallets will use SWAP_AMOUNT (${SWAP_AMOUNT})`);
-    swapAmountsToUse = Array(bundleWalletCount).fill(SWAP_AMOUNT);
+    swapAmountsToUse = Array(bundleWalletCount).fill(null); // null means use SWAP_AMOUNT
   }
+  
+  // Create a number[] version for places that need it (convert null to SWAP_AMOUNT)
+  const swapAmountsForUse: number[] = swapAmountsToUse.map(a => a === null ? SWAP_AMOUNT : a);
   
   // Update launch settings now that we have all the info
   const usedWarmedWallets = fs.existsSync(warmedWalletsPath);
@@ -460,7 +477,7 @@ const main = async () => {
     bundleWalletCount,
     holderWalletCount,
     devBuyAmount: buyerAmount,
-    bundleSwapAmounts: swapAmountsToUse,
+    bundleSwapAmounts: swapAmountsForUse,
     holderWalletAmount,
     autoRapidSell: AUTO_RAPID_SELL,
     autoSell50Percent: AUTO_SELL_50_PERCENT,
@@ -587,7 +604,10 @@ const main = async () => {
     }
   } else {
     // Fresh wallets - need full funding
-    bundleFundingNeeded = swapAmountsToUse.reduce((sum, amount) => sum + amount + 0.01, 0)
+    bundleFundingNeeded = swapAmountsToUse.reduce<number>((sum, amount) => {
+      const amt = amount === null ? SWAP_AMOUNT : amount;
+      return sum + amt + 0.01;
+    }, 0)
   }
   
   // Calculate holder funding needed (similar logic)
@@ -967,8 +987,9 @@ const main = async () => {
     // Fund warmed wallets with required amounts
     // Pad/trim amounts array to match number of warmed wallets (same logic as fresh wallets)
     let amountsToUse: number[]
-    if (bundleSwapAmounts.length > 0) {
-      amountsToUse = [...bundleSwapAmounts]
+    if (swapAmountsToUse.length > 0) {
+      // Convert nulls to SWAP_AMOUNT for warmed wallets
+      amountsToUse = swapAmountsToUse.map(a => a === null ? SWAP_AMOUNT : a)
       // Pad with SWAP_AMOUNT if we have fewer amounts than wallets
       while (amountsToUse.length < warmedBundleWallets.length) {
         console.warn(`   ⚠️  BUNDLE_SWAP_AMOUNTS has ${amountsToUse.length} values but need ${warmedBundleWallets.length}. Padding with SWAP_AMOUNT (${SWAP_AMOUNT})`)
@@ -1063,7 +1084,10 @@ const main = async () => {
     console.log(`✅ Funded ${warmedBundleWallets.length} warmed bundle wallet(s)`)
   } else if (bundleWalletCount > 0) {
     console.log("Distributing SOL to fresh bundle wallets...")
-    const swapAmountsForDistribution = bundleSwapAmounts.length > 0 ? bundleSwapAmounts : undefined
+    // Convert nulls to SWAP_AMOUNT for distribution
+    const swapAmountsForDistribution = swapAmountsToUse.length > 0 
+      ? swapAmountsToUse.map(a => a === null ? SWAP_AMOUNT : a)
+      : undefined
     
     let result = await distributeSol(connection, mainKp, bundleWalletCount, swapAmountsForDistribution, USE_MIXING_WALLETS, BUNDLE_INTERMEDIARY_HOPS)
     if (!result) {
@@ -1288,7 +1312,7 @@ const main = async () => {
   let freshAutoBuyAddresses: string[] = []
   let freshAutoBuyDelays: string | null = null
   let freshFrontRunThreshold: number = 0
-  const freshAutoBuyPath = path.join(process.cwd(), 'keys', 'fresh-auto-buy-config.json')
+  const freshAutoBuyPath = path.join(process.cwd(), 'keys', 'trade-configs', 'fresh-auto-buy-config.json')
   if (fs.existsSync(freshAutoBuyPath)) {
     try {
       const freshAutoBuyData = JSON.parse(fs.readFileSync(freshAutoBuyPath, 'utf8'))
@@ -1364,6 +1388,38 @@ const main = async () => {
   initialRunWallets.creatorDevWalletKey = base58.encode(buyerKp.secretKey)
   initialRunWallets.devWalletAddress = buyerKp.publicKey.toBase58() // For live trades tracking
   initialRunWallets.creatorWalletAddress = buyerKp.publicKey.toBase58() // Alternative field name
+  
+  // ============================================
+  // AUTOMATICALLY MAP AUTO-SELL CONFIGS TO WALLETS
+  // ============================================
+  // ARCHITECTURE: Configs were saved BEFORE wallets were created
+  // - Configs contain wallet IDs: either addresses (warmed) or indices like "wallet-1" (fresh)
+  // - Now that wallets are created, we map these IDs to actual addresses
+  // - Example: "wallet-1" → holderWalletAddresses[0]
+  // This ensures configs are connected to wallets automatically
+  try {
+    const autoSellConfigPath = path.join(process.cwd(), 'keys', 'trade-configs', 'launch-auto-sell-config.json')
+    if (fs.existsSync(autoSellConfigPath)) {
+      const autoSellData = JSON.parse(fs.readFileSync(autoSellConfigPath, 'utf8'))
+      
+      // Map configs to wallet addresses and apply them
+      // This connects the pre-saved configs (by ID/index) to actual wallet addresses
+      const pumpPortalTracker = require('./api-server/pumpportal-tracker')
+      if (pumpPortalTracker && typeof pumpPortalTracker.mapAndApplyAutoSellConfigs === 'function') {
+        const appliedCount = pumpPortalTracker.mapAndApplyAutoSellConfigs(autoSellData, {
+          holderWalletAddresses,
+          bundleWalletAddresses,
+          devWalletAddress: buyerKp.publicKey.toBase58()
+        })
+        if (appliedCount > 0) {
+          console.log(`   ✅ Auto-sell configs mapped and applied: ${appliedCount} wallet(s) configured`)
+        }
+      }
+    }
+  } catch (error: any) {
+    console.warn(`   ⚠️  Could not map auto-sell configs: ${error.message}`)
+  }
+  
   fs.writeFileSync(keysPath, JSON.stringify(initialRunWallets, null, 2))
   console.log(`   ✅ Saved ${kps.length} bundle wallets, ${holderWallets.length} holder wallets, and DEV wallet`)
   if (holderWalletAutoBuyKeys.length > 0) {
@@ -1490,16 +1546,42 @@ const main = async () => {
   const walletsUsed: Keypair[] = [] // Track wallets that actually get buy instructions
 
   for (let i = 0; i < bundleWalletCount; i++) {
-    // Use custom amount if provided, otherwise use SWAP_AMOUNT
-    let buyAmount = swapAmountsToUse[i] || SWAP_AMOUNT; // Fallback to SWAP_AMOUNT if undefined
-    if (isNaN(buyAmount) || buyAmount <= 0) {
-      console.error(`Invalid buy amount for wallet ${i}: ${buyAmount}. Using SWAP_AMOUNT instead.`);
+    // Get amount for this wallet
+    const customAmount = swapAmountsToUse[i];
+    
+    // Determine buy amount:
+    // - null or undefined: use SWAP_AMOUNT (fallback)
+    // - 0: skip this wallet (explicit skip)
+    // - > 0: use custom amount
+    // - <= 0 or NaN: skip this wallet (invalid)
+    let buyAmount: number;
+    if (customAmount === null || customAmount === undefined) {
+      // No custom amount specified - use SWAP_AMOUNT
       buyAmount = SWAP_AMOUNT;
+    } else if (customAmount === 0) {
+      // Explicit 0 means skip this wallet
+      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) explicitly set to 0 in BUNDLE_SWAP_AMOUNTS - skipping buy`);
+      continue;
+    } else if (isNaN(customAmount) || customAmount <= 0) {
+      // Invalid amount - skip this wallet
+      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) has invalid amount (${customAmount}) - skipping buy`);
+      continue;
+    } else {
+      // Valid custom amount
+      buyAmount = customAmount;
     }
+    
+    // Final validation (should never fail if we got here, but be safe)
+    if (isNaN(buyAmount) || buyAmount <= 0) {
+      console.error(`❌ CRITICAL: Buy amount validation failed for wallet ${i}: ${buyAmount}. Skipping wallet.`);
+      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) will NOT be used for buying`);
+      continue;
+    }
+    
     const buyAmountLamports = Math.floor(buyAmount * 10 ** 9);
     if (isNaN(buyAmountLamports) || buyAmountLamports <= 0) {
-      console.error(`Invalid buy amount in lamports for wallet ${i}: ${buyAmountLamports}. Skipping wallet.`);
-      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) will NOT be used for buying (skipped due to invalid amount)`);
+      console.error(`❌ Invalid buy amount in lamports for wallet ${i}: ${buyAmountLamports}. Skipping wallet.`);
+      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) will NOT be used for buying (skipped due to invalid lamports)`);
       continue; // Skip this wallet
     }
     // CRITICAL: buyerKp is the token creator (passed to createTokenTx), so it must be the referrer
@@ -1803,6 +1885,20 @@ const main = async () => {
     console.log("   Step 1: Token Creation")
     console.log("   Step 2: DEV Buy (after token creation confirms)")
     
+    // Subscribe to PumpPortal BEFORE sending so we catch all trades
+    try {
+      const axios = (await import('axios')).default
+      const apiUrl = process.env.API_URL || 'http://localhost:3001'
+      console.log(`\n📡 Subscribing to PumpPortal tracking BEFORE launch...`)
+      await axios.post(`${apiUrl}/api/pumpportal/subscribe`, {
+        mintAddress: mintAddress.toBase58()
+      }, { timeout: 3000 }).catch(() => {
+        console.warn(`⚠️ Could not subscribe to PumpPortal (API may not be running)`)
+      })
+    } catch (err) {
+      console.warn(`⚠️ PumpPortal pre-subscribe failed (non-critical)`)
+    }
+    
     // Update stage: Normal launch
     if (fs.existsSync(keysPath)) {
       const stageData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
@@ -1945,6 +2041,20 @@ const main = async () => {
       const stageData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
       stageData.launchStage = "SUBMITTING_BUNDLE"
       fs.writeFileSync(keysPath, JSON.stringify(stageData, null, 2))
+    }
+    
+    // Subscribe to PumpPortal BEFORE sending bundle so we catch all trades
+    try {
+      const axios = (await import('axios')).default
+      const apiUrl = process.env.API_URL || 'http://localhost:3001'
+      console.log(`\n📡 Subscribing to PumpPortal tracking BEFORE bundle send...`)
+      await axios.post(`${apiUrl}/api/pumpportal/subscribe`, {
+        mintAddress: mintAddress.toBase58()
+      }, { timeout: 3000 }).catch(() => {
+        console.warn(`⚠️ Could not subscribe to PumpPortal (API may not be running)`)
+      })
+    } catch (err) {
+      console.warn(`⚠️ PumpPortal pre-subscribe failed (non-critical)`)
     }
     
     // Send bundle IMMEDIATELY after creation to avoid blockhash expiration
@@ -2422,50 +2532,56 @@ const main = async () => {
         console.log(`✅ Marked pump address as used: ${usedPumpAddressPublicKey}`)
       }
       
+      // Bundle buys are now tracked exclusively via PumpPortal WebSocket
+      
       // ============================================
       // AUTO HOLDER WALLET BUYS (After Launch Success)
       // ============================================
-      if (AUTO_HOLDER_WALLET_BUY) {
-        // Check for selected auto-buy wallets from warmed wallets file OR current-run.json (fresh wallets)
-        let autoBuyWallets: Keypair[] = []
-        let autoBuyDelaysConfig: string | null = null
-        
-        // First, try warmed wallets file
-        if (fs.existsSync(warmedWalletsPath)) {
-          try {
-            const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
-            if (warmedData.holderWalletAutoBuyKeys && warmedData.holderWalletAutoBuyKeys.length > 0) {
-              autoBuyWallets = warmedData.holderWalletAutoBuyKeys.map((key: string) => 
-                Keypair.fromSecretKey(base58.decode(key))
-              )
-              autoBuyDelaysConfig = warmedData.holderWalletAutoBuyDelays || null
-              console.log(`\n👥 AUTO HOLDER WALLET BUY: Found ${autoBuyWallets.length} selected wallets from warmed wallets`)
-            }
-          } catch (error: any) {
-            console.warn(`⚠️  Failed to read auto-buy wallets from warmed wallets: ${error.message}`)
+      // Check for selected auto-buy wallets from warmed wallets file OR current-run.json (fresh wallets)
+      let autoBuyWallets: Keypair[] = []
+      let autoBuyDelaysConfig: string | null = null
+      
+      // First, try warmed wallets file
+      if (fs.existsSync(warmedWalletsPath)) {
+        try {
+          const warmedData = JSON.parse(fs.readFileSync(warmedWalletsPath, 'utf8'))
+          if (warmedData.holderWalletAutoBuyKeys && warmedData.holderWalletAutoBuyKeys.length > 0) {
+            autoBuyWallets = warmedData.holderWalletAutoBuyKeys.map((key: string) => 
+              Keypair.fromSecretKey(base58.decode(key))
+            )
+            autoBuyDelaysConfig = warmedData.holderWalletAutoBuyDelays || null
+            console.log(`\n👥 AUTO HOLDER WALLET BUY: Found ${autoBuyWallets.length} selected wallets from warmed wallets`)
           }
+        } catch (error: any) {
+          console.warn(`⚠️  Failed to read auto-buy wallets from warmed wallets: ${error.message}`)
         }
-        
-        // If no warmed wallets, check current-run.json for fresh wallets
-        if (autoBuyWallets.length === 0 && fs.existsSync(keysPath)) {
-          try {
-            const currentRunData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
-            if (currentRunData.holderWalletAutoBuyKeys && currentRunData.holderWalletAutoBuyKeys.length > 0) {
-              autoBuyWallets = currentRunData.holderWalletAutoBuyKeys.map((key: string) => 
-                Keypair.fromSecretKey(base58.decode(key))
-              )
-              autoBuyDelaysConfig = currentRunData.holderWalletAutoBuyDelays || null
-              console.log(`\n👥 AUTO HOLDER WALLET BUY: Found ${autoBuyWallets.length} selected wallets from fresh wallets`)
-            }
-          } catch (error: any) {
-            console.warn(`⚠️  Failed to read auto-buy wallets from current-run.json: ${error.message}`)
+      }
+      
+      // If no warmed wallets, check current-run.json for fresh wallets
+      if (autoBuyWallets.length === 0 && fs.existsSync(keysPath)) {
+        try {
+          const currentRunData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
+          if (currentRunData.holderWalletAutoBuyKeys && currentRunData.holderWalletAutoBuyKeys.length > 0) {
+            autoBuyWallets = currentRunData.holderWalletAutoBuyKeys.map((key: string) => 
+              Keypair.fromSecretKey(base58.decode(key))
+            )
+            autoBuyDelaysConfig = currentRunData.holderWalletAutoBuyDelays || null
+            console.log(`\n👥 AUTO HOLDER WALLET BUY: Found ${autoBuyWallets.length} selected wallets from fresh wallets`)
           }
+        } catch (error: any) {
+          console.warn(`⚠️  Failed to read auto-buy wallets from current-run.json: ${error.message}`)
         }
-        
-        // Fallback: use all holder wallets if no selection was made
-        if (autoBuyWallets.length === 0 && holderWallets.length > 0) {
+      }
+      
+      // Enable auto-buy if wallets are configured OR if AUTO_HOLDER_WALLET_BUY is enabled in .env
+      // This allows the launch form to enable auto-buy without requiring .env setting
+      const shouldEnableAutoBuy = autoBuyWallets.length > 0 || AUTO_HOLDER_WALLET_BUY
+      
+      if (shouldEnableAutoBuy) {
+        // Fallback: use all holder wallets if no selection was made AND AUTO_HOLDER_WALLET_BUY is enabled
+        if (autoBuyWallets.length === 0 && holderWallets.length > 0 && AUTO_HOLDER_WALLET_BUY) {
           autoBuyWallets = holderWallets
-          console.log(`\n👥 AUTO HOLDER WALLET BUY: Using all ${holderWallets.length} holder wallets (no selection made)`)
+          console.log(`\n👥 AUTO HOLDER WALLET BUY: Using all ${holderWallets.length} holder wallets (no selection made, AUTO_HOLDER_WALLET_BUY enabled)`)
         }
         
         if (autoBuyWallets.length > 0) {
@@ -2502,7 +2618,7 @@ const main = async () => {
               }
             }
             // Also check fresh-auto-buy-config.json
-            const freshPath = path.join(process.cwd(), 'keys', 'fresh-auto-buy-config.json')
+            const freshPath = path.join(process.cwd(), 'keys', 'trade-configs', 'fresh-auto-buy-config.json')
             if (frontRunThreshold === 0 && fs.existsSync(freshPath)) {
               const freshData = JSON.parse(fs.readFileSync(freshPath, 'utf8'))
               if (typeof freshData.frontRunThreshold === 'number' && freshData.frontRunThreshold > 0) {
@@ -2511,8 +2627,19 @@ const main = async () => {
             }
           } catch (e) { /* Ignore parse errors */ }
           
+          // Set front-run threshold in PumpPortal tracker (for real-time synchronous checks)
+          try {
+            const pumpPortalTracker = require('./api-server/pumpportal-tracker')
+            if (pumpPortalTracker) {
+              pumpPortalTracker.setFrontRunThreshold(frontRunThreshold)
+            }
+          } catch (e) {
+            console.warn(`   ⚠️  Could not set front-run threshold in PumpPortal: ${e.message}`)
+          }
+          
           if (frontRunThreshold > 0) {
             console.log(`   🛡️  FRONT-RUN PROTECTION ENABLED: Max external buys = ${frontRunThreshold} SOL`)
+            console.log(`      Real-time WebSocket monitoring active - flag set IMMEDIATELY when threshold exceeded`)
             console.log(`      If external buys exceed this, wallets will SKIP buying to avoid front-running`)
           } else {
             console.log(`   ⚠️  Front-run protection DISABLED (threshold = 0)`)
@@ -2603,30 +2730,49 @@ const main = async () => {
                 // ============================================
                 // FRONT-RUN PROTECTION CHECK (for parallel group)
                 // ============================================
+                // Uses REAL-TIME synchronous flag (instant check, no async delay)
                 let groupSkipped = false
                 if (frontRunThreshold > 0) {
-                  // Wait a bit to let external transactions confirm
+                  // Wait a bit to let external transactions be detected by WebSocket
                   if (frontRunCheckDelay > 0) {
                     await sleep(frontRunCheckDelay * 1000)
                   }
                   
                   console.log(`\n   🛡️  Checking for front-runners before parallel group buy...`)
-                  const { externalNetBuys, externalBuyCount } = await checkExternalVolume(
-                    mintAddress, 
-                    ourWalletsSet,
-                    30 // Check last 30 seconds
-                  )
                   
-                  if (externalNetBuys > frontRunThreshold) {
-                    console.log(`      ⚠️  FRONT-RUN DETECTED: External buys = ${externalNetBuys.toFixed(4)} SOL (${externalBuyCount} trades)`)
-                    console.log(`      ❌ SKIPPING ${currentParallelGroup.length} wallet(s) - threshold exceeded (${frontRunThreshold} SOL)`)
-                    for (let i = 0; i < currentParallelGroup.length; i++) {
-                      const actualIndex = walletIndex - currentParallelGroup.length + i
-                      skippedWallets.push(actualIndex + 1)
+                  // CRITICAL: Synchronous check (instant, no async delay)
+                  // PumpPortal WebSocket continuously tracks external buys and sets a flag IMMEDIATELY
+                  // This check is instant - no polling, no async, just a flag check
+                  let isBlocked = false
+                  let externalGrossBuys = 0
+                  
+                  try {
+                    const pumpPortalTracker = require('./api-server/pumpportal-tracker')
+                    if (pumpPortalTracker) {
+                      // SYNCHRONOUS CHECK: Instant flag check (no async delay)
+                      isBlocked = pumpPortalTracker.isFrontRunBlocked()
+                      externalGrossBuys = pumpPortalTracker.getExternalGrossBuyVolume()
+                      
+                      if (isBlocked) {
+                        console.log(`      🚨 FRONT-RUN BLOCKED: External GROSS buys = ${externalGrossBuys.toFixed(4)} SOL >= ${frontRunThreshold} SOL threshold`)
+                        console.log(`      ⚡ Flag was set IMMEDIATELY by WebSocket (real-time detection)`)
+                        console.log(`      ❌ SKIPPING ${currentParallelGroup.length} wallet(s) - threshold exceeded`)
+                        console.log(`      💡 External wallets bought before us - skipping to avoid buying at inflated prices`)
+                        for (let i = 0; i < currentParallelGroup.length; i++) {
+                          const actualIndex = walletIndex - currentParallelGroup.length + i
+                          skippedWallets.push(actualIndex + 1)
+                        }
+                        groupSkipped = true
+                      } else {
+                        console.log(`      ✅ Safe to buy: External GROSS buys = ${externalGrossBuys.toFixed(4)} SOL < ${frontRunThreshold} SOL threshold`)
+                        console.log(`      ⚡ Real-time WebSocket monitoring active - flag will be set instantly if threshold exceeded`)
+                      }
+                    } else {
+                      console.warn(`      ⚠️  PumpPortal tracker not available - front-run protection disabled`)
                     }
-                    groupSkipped = true
-                  } else {
-                    console.log(`      ✅ Safe to buy: External = ${externalNetBuys.toFixed(4)} SOL < ${frontRunThreshold} SOL threshold`)
+                  } catch (e) {
+                    console.warn(`      ⚠️  Could not check front-run flag: ${e.message}`)
+                    // Fallback: Don't block if we can't check (safer to allow buy than block incorrectly)
                   }
                 }
                 
@@ -2692,22 +2838,41 @@ const main = async () => {
             // ============================================
             // FRONT-RUN PROTECTION CHECK (for sequential wallet)
             // ============================================
+            // Uses REAL-TIME synchronous flag (instant check, no async delay)
             let shouldSkip = false
             if (frontRunThreshold > 0) {
               console.log(`\n   🛡️  Checking for front-runners before wallet ${walletIndex + 1} buy...`)
-              const { externalNetBuys, externalBuyCount } = await checkExternalVolume(
-                mintAddress, 
-                ourWalletsSet,
-                30 // Check last 30 seconds
-              )
               
-              if (externalNetBuys > frontRunThreshold) {
-                console.log(`      ⚠️  FRONT-RUN DETECTED: External buys = ${externalNetBuys.toFixed(4)} SOL (${externalBuyCount} trades)`)
-                console.log(`      ❌ SKIPPING wallet ${walletIndex + 1} - threshold exceeded (${frontRunThreshold} SOL)`)
-                skippedWallets.push(walletIndex + 1)
-                shouldSkip = true
-              } else {
-                console.log(`      ✅ Safe to buy: External = ${externalNetBuys.toFixed(4)} SOL < ${frontRunThreshold} SOL threshold`)
+              // CRITICAL: Synchronous check (instant, no async delay)
+              // PumpPortal WebSocket continuously tracks external buys and sets a flag IMMEDIATELY
+              // This check is instant - no polling, no async, just a flag check
+              let isBlocked = false
+              let externalGrossBuys = 0
+              
+              try {
+                const pumpPortalTracker = require('./api-server/pumpportal-tracker')
+                if (pumpPortalTracker) {
+                  // SYNCHRONOUS CHECK: Instant flag check (no async delay)
+                  isBlocked = pumpPortalTracker.isFrontRunBlocked()
+                  externalGrossBuys = pumpPortalTracker.getExternalGrossBuyVolume()
+                  
+                  if (isBlocked) {
+                    console.log(`      🚨 FRONT-RUN BLOCKED: External GROSS buys = ${externalGrossBuys.toFixed(4)} SOL >= ${frontRunThreshold} SOL threshold`)
+                    console.log(`      ⚡ Flag was set IMMEDIATELY by WebSocket (real-time detection)`)
+                    console.log(`      ❌ SKIPPING wallet ${walletIndex + 1} - threshold exceeded`)
+                    console.log(`      💡 External wallets bought before us - skipping to avoid buying at inflated prices`)
+                    skippedWallets.push(walletIndex + 1)
+                    shouldSkip = true
+                  } else {
+                    console.log(`      ✅ Safe to buy: External GROSS buys = ${externalGrossBuys.toFixed(4)} SOL < ${frontRunThreshold} SOL threshold`)
+                    console.log(`      ⚡ Real-time WebSocket monitoring active - flag will be set instantly if threshold exceeded`)
+                  }
+                } else {
+                  console.warn(`      ⚠️  PumpPortal tracker not available - front-run protection disabled`)
+                }
+              } catch (e) {
+                console.warn(`      ⚠️  Could not check front-run flag: ${e.message}`)
+                // Fallback: Don't block if we can't check (safer to allow buy than block incorrectly)
               }
             }
             
@@ -2788,8 +2953,11 @@ const main = async () => {
           console.log(`\n👥 No holder wallets selected for auto-buy`)
         }
       } else if (holderWallets.length > 0) {
-        console.log(`\n👥 Holder wallets ready (${holderWallets.length} wallets) - AUTO_HOLDER_WALLET_BUY is disabled`)
-        console.log(`   💡 Enable AUTO_HOLDER_WALLET_BUY=true in .env to auto-buy after launch`)
+        // Only show this message if AUTO_HOLDER_WALLET_BUY is disabled AND no wallets were configured for auto-buy
+        if (!AUTO_HOLDER_WALLET_BUY && autoBuyWallets.length === 0) {
+          console.log(`\n👥 Holder wallets ready (${holderWallets.length} wallets) - AUTO_HOLDER_WALLET_BUY is disabled`)
+          console.log(`   💡 Enable AUTO_HOLDER_WALLET_BUY=true in .env OR enable auto-buy per wallet in the launch form`)
+        }
       }
       
       // ============================================
