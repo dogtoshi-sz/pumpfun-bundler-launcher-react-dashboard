@@ -87,19 +87,27 @@ cd ..
    RPC_WEBSOCKET_ENDPOINT=wss://mainnet.helius-rpc.com/?api-key=YOUR_KEY
    ```
 
-3. **Start the API server** (Terminal 1):
+3. **Start both frontend + API server (single command):**
    ```bash
-   cd api-server
-   node control-panel-server.js
+   npm run dev
    ```
 
-4. **Start the frontend** (Terminal 2):
+   - This is the fastest way to get running.
+   - For debugging and cleaner logs, running them separately is recommended (below).
+
+4. **Start the API server** (Terminal 1):
+   ```bash
+   cd api-server
+   npm run dev
+   ```
+
+5. **Start the frontend** (Terminal 2):
    ```bash
    cd frontend
    npm run dev
    ```
 
-5. **Open your browser:**
+6. **Open your browser:**
    ```
    http://localhost:5173
    ```
