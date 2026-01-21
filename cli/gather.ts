@@ -487,6 +487,65 @@ const main = async () => {
         }
       }
       
+      // Close any remaining empty token accounts to recover rent
+      // This recovers ~0.002 SOL per empty token account
+      try {
+        const remainingTokenAccounts = await connection.getTokenAccountsByOwner(kp.publicKey, {
+          programId: TOKEN_PROGRAM_ID,
+        }, "confirmed")
+        
+        if (remainingTokenAccounts.value.length > 0) {
+          let closedCount = 0
+          let totalRentRecovered = 0
+          
+          for (const { pubkey, account } of remainingTokenAccounts.value) {
+            try {
+              const balance = await connection.getTokenAccountBalance(pubkey)
+              
+              // Only close if account is empty (balance is 0)
+              if (balance.value.amount === '0' || balance.value.uiAmount === 0) {
+                const closeIx = createCloseAccountInstruction(
+                  pubkey,
+                  mainKp.publicKey, // Rent recipient
+                  kp.publicKey // Owner
+                )
+                
+                const closeTx = new Transaction().add(
+                  ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+                  closeIx
+                )
+                closeTx.feePayer = mainKp.publicKey
+                closeTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash
+                
+                const sig = await sendAndConfirmTransaction(connection, closeTx, [mainKp, kp], {
+                  commitment: "confirmed",
+                  skipPreflight: false
+                })
+                
+                // Estimate rent recovered (~0.002 SOL per token account)
+                const estimatedRent = 2_039_280 // Typical rent for token account
+                totalRentRecovered += estimatedRent
+                closedCount++
+                
+                console.log(`[${index + 1}/${total}]   🧹 Closed empty token account, recovered ~${(estimatedRent / 1e9).toFixed(6)} SOL rent: https://solscan.io/tx/${sig}`)
+              }
+            } catch (closeError: any) {
+              const errorMsg = closeError.message || String(closeError)
+              if (!errorMsg.includes('AccountNotFound') && !errorMsg.includes('no record')) {
+                console.log(`[${index + 1}/${total}]   ⚠️  Could not close token account ${pubkey.toBase58()}: ${errorMsg}`)
+              }
+            }
+          }
+          
+          if (closedCount > 0) {
+            console.log(`[${index + 1}/${total}]   ✅ Closed ${closedCount} empty token account(s), recovered ~${(totalRentRecovered / 1e9).toFixed(6)} SOL rent`)
+          }
+        }
+      } catch (closeAccountsError: any) {
+        // Non-critical - just log and continue
+        console.log(`[${index + 1}/${total}]   ⚠️  Could not check/close remaining token accounts: ${closeAccountsError.message || closeAccountsError}`)
+      }
+      
       console.log(`[${index + 1}/${total}]   ✅ ✅ ✅ Completed ${walletLabel} successfully!`)
       
     } catch (error: any) {
