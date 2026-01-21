@@ -827,19 +827,33 @@ export default function HolderWallets() {
       
       // Double confirmation for gather commands (anonymity protection)
       if (requiresDoubleConfirmation.includes(commandId)) {
-        const doubleConfirmMessage = `⚠️ FINAL CONFIRMATION ⚠️\n\nYou are about to ${commandNames[commandId]}.\n\nThis will:\n- Transfer ALL tokens from selected wallets to your funding wallet\n- Transfer ALL SOL from selected wallets to your funding wallet\n- Create on-chain links that BREAK wallet anonymity\n\n🚨 This action CANNOT be undone and will COMPROMISE your wallet privacy!\n\nType "CONFIRM" to proceed:`;
+        const doubleConfirmMessage = `⚠️ FINAL CONFIRMATION ⚠️\n\nYou are about to ${commandNames[commandId]}.\n\nThis will:\n- Transfer ALL tokens from selected wallets to your funding wallet\n- Transfer ALL SOL from selected wallets to your funding wallet\n- Create on-chain links that BREAK wallet anonymity\n\n🚨 This action CANNOT be undone and will COMPROMISE your wallet privacy!\n\nType "CONFIRM" (case-insensitive) to proceed:`;
         
         // Use prompt for second confirmation (forces user to type)
-        const userInput = window.prompt(doubleConfirmMessage);
-        if (userInput !== 'CONFIRM') {
-          addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled - confirmation not provided`, 'info');
-          return; // User didn't type "CONFIRM"
+        // Make it case-insensitive for better UX
+        let userInput = null;
+        try {
+          userInput = window.prompt(doubleConfirmMessage);
+        } catch (error) {
+          console.error('[HolderWallets] Prompt blocked or failed:', error);
+          addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled - browser blocked the confirmation prompt. Please allow popups and try again.`, 'error');
+          return;
         }
+        
+        if (!userInput || userInput.trim().toUpperCase() !== 'CONFIRM') {
+          const reason = !userInput ? 'cancelled' : 'confirmation text incorrect';
+          addTerminalMessage(`⚠️ ${commandNames[commandId]} cancelled - ${reason}. You must type "CONFIRM" to proceed.`, 'info');
+          console.log(`[HolderWallets] Gather command cancelled: ${reason}. User input: "${userInput}"`);
+          return; // User didn't type "CONFIRM" or cancelled
+        }
+        
+        console.log(`[HolderWallets] Double confirmation passed for ${commandId}`);
       }
     }
     
     setMenuRunning({ ...menuRunning, [commandId]: true });
     addTerminalMessage(`Executing: ${commandNames[commandId] || commandId}...`, 'info');
+    console.log(`[HolderWallets] Starting command: ${commandId}`);
     
     // Helper to parse and display output
     const displayOutput = (output) => {
@@ -856,7 +870,9 @@ export default function HolderWallets() {
     };
     
     try {
+      console.log(`[HolderWallets] Calling API: executeCommand(${commandId})`);
       const res = await apiService.executeCommand(commandId);
+      console.log(`[HolderWallets] API response received:`, res.data);
       const output = res.data.output || res.data.message || 'Command executed';
       displayOutput(output);
       
@@ -875,9 +891,21 @@ export default function HolderWallets() {
       
       setTimeout(loadWallets, 500);
     } catch (error) {
-      addTerminalMessage(`${commandNames[commandId] || commandId} failed: ${error.response?.data?.error || error.message}`, 'error');
+      console.error(`[HolderWallets] Command ${commandId} failed:`, error);
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || error.message || 'Unknown error';
+      addTerminalMessage(`${commandNames[commandId] || commandId} failed: ${errorMessage}`, 'error');
+      
+      // Provide helpful error messages
+      if (error.response?.status === 400) {
+        addTerminalMessage(`💡 Tip: Check that the command "${commandId}" is valid and your .env file is configured correctly.`, 'info');
+      } else if (error.response?.status === 500) {
+        addTerminalMessage(`💡 Tip: Check the server console for detailed error messages.`, 'info');
+      } else if (!error.response) {
+        addTerminalMessage(`💡 Tip: Check your network connection and ensure the API server is running.`, 'info');
+      }
     } finally {
       setMenuRunning({ ...menuRunning, [commandId]: false });
+      console.log(`[HolderWallets] Command ${commandId} finished`);
     }
   };
 
