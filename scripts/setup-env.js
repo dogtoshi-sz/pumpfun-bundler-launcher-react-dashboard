@@ -34,8 +34,8 @@ if (fs.existsSync(envPath)) {
 
 // Create necessary directory structure
 try {
-  const keysDir = path.join(__dirname, '..', 'keys');
-  const tradeConfigsDir = path.join(keysDir, 'trade-configs');
+  const projectRoot = path.join(__dirname, '..');
+  const keysDir = path.join(projectRoot, 'keys');
   
   // Create keys directory if it doesn't exist
   if (!fs.existsSync(keysDir)) {
@@ -43,11 +43,43 @@ try {
     console.log('✓ Created keys directory');
   }
   
-  // Create trade-configs directory if it doesn't exist
-  if (!fs.existsSync(tradeConfigsDir)) {
-    fs.mkdirSync(tradeConfigsDir, { recursive: true });
-    console.log('✓ Created keys/trade-configs directory');
+  // Create all necessary subdirectories in keys/
+  const requiredDirs = [
+    'trade-configs',    // For auto-sell and auto-buy configs
+    'token-configs',    // For saved token configurations
+    'wallet-profiles',  // For wallet profile management
+    'pnl'               // For profit/loss tracking
+  ];
+  
+  for (const dir of requiredDirs) {
+    const dirPath = path.join(keysDir, dir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+      console.log(`✓ Created keys/${dir} directory`);
+    }
   }
+  
+  // Create image directory if it doesn't exist (for logo uploads)
+  const imageDir = path.join(projectRoot, 'image');
+  if (!fs.existsSync(imageDir)) {
+    fs.mkdirSync(imageDir, { recursive: true });
+    console.log('✓ Created image directory');
+  }
+  
+  // Create image/createdlogos subdirectory (for generated logos)
+  const createdLogosDir = path.join(imageDir, 'createdlogos');
+  if (!fs.existsSync(createdLogosDir)) {
+    fs.mkdirSync(createdLogosDir, { recursive: true });
+    console.log('✓ Created image/createdlogos directory');
+  }
+  
+  // Create psd-assets directory if it doesn't exist (for PSD uploads)
+  const psdAssetsDir = path.join(projectRoot, 'psd-assets');
+  if (!fs.existsSync(psdAssetsDir)) {
+    fs.mkdirSync(psdAssetsDir, { recursive: true });
+    console.log('✓ Created psd-assets directory');
+  }
+  
 } catch (error) {
   console.error('✗ Error creating directory structure:', error.message);
   // Don't exit on directory creation errors - they're not critical
