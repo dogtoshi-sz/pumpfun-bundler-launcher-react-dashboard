@@ -41,6 +41,7 @@ export default function HolderWallets() {
   const [terminalMessages, setTerminalMessages] = useState([]); // Terminal log messages
   const terminalRef = useRef(null);
   const [liveTrades, setLiveTrades] = useState([]);
+  const [liveTradesError, setLiveTradesError] = useState('');
   const [hideMyWallets, setHideMyWallets] = useState(false);
   const [tradesEventSource, setTradesEventSource] = useState(null);
   const [tokenInfo, setTokenInfo] = useState(null);
@@ -365,6 +366,7 @@ export default function HolderWallets() {
         setTradesEventSource(null);
       }
       setLiveTrades([]);
+      setLiveTradesError('');
       return;
     }
 
@@ -375,6 +377,7 @@ export default function HolderWallets() {
     
     eventSource.onopen = () => {
       console.log(`[HolderWallets] [ok] Connected to live trades SSE`);
+      setLiveTradesError('');
     };
 
     eventSource.onmessage = (event) => {
@@ -393,6 +396,7 @@ export default function HolderWallets() {
         } else if (data.type === 'error') {
           console.error('[HolderWallets] SSE error:', data.error);
           addTerminalMessage(`Live trades error: ${data.error}`, 'error');
+          setLiveTradesError(String(data.error || 'Live trades error'));
         } else {
           // New trade - add to beginning and sort by timestamp (newest first)
           setLiveTrades(prev => {
@@ -407,6 +411,7 @@ export default function HolderWallets() {
 
     eventSource.onerror = (error) => {
       console.error('[HolderWallets] SSE connection error:', error);
+      setLiveTradesError('Live trades connection failed. Start the API server and ensure your .env (RPC + PRIVATE_KEY) is configured.');
       eventSource.close();
     };
 
@@ -1923,22 +1928,22 @@ export default function HolderWallets() {
                     </button>
                   </div>
                   
-                  {/* Manual Buy Input - Compact */}
-                  <div className="flex gap-0.5">
+                  {/* Manual Buy Input - Compact - Responsive */}
+                  <div className="flex flex-wrap gap-0.5 sm:flex-nowrap">
                     <input
                       type="number"
                       step="0.001"
                       value={manualInputs[`${wallet.address}-buy-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-buy-manual`]: e.target.value })}
                       placeholder="SOL"
-                      className="flex-1 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-700/50 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-green-500/50 focus:border-green-500/50"
+                      className="flex-1 min-w-0 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-700/50 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-green-500/50 focus:border-green-500/50"
                     />
                     <button
                       onClick={() => handleManualBuy(wallet)}
                       disabled={loading[`${wallet.address}-buy-manual`] || !manualInputs[`${wallet.address}-buy-manual`]}
-                      className="px-1.5 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                      className="px-2 py-0.5 min-w-[50px] text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30 flex-shrink-0"
                     >
-                      {loading[`${wallet.address}-buy-manual`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin" /> : 'Buy'}
+                      {loading[`${wallet.address}-buy-manual`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : 'Buy'}
                     </button>
                   </div>
                 </div>
@@ -1976,21 +1981,21 @@ export default function HolderWallets() {
                     </button>
                   </div>
                   
-                  {/* Manual Sell Input - Compact */}
-                  <div className="flex gap-0.5">
+                  {/* Manual Sell Input - Compact - Responsive */}
+                  <div className="flex flex-wrap gap-0.5 sm:flex-nowrap">
                     <input
                       type="text"
                       value={manualInputs[`${wallet.address}-sell-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-sell-manual`]: e.target.value })}
                       placeholder="%"
-                      className="flex-1 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-700/50 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500/50 focus:border-red-500/50"
+                      className="flex-1 min-w-0 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-700/50 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500/50 focus:border-red-500/50"
                     />
                     <button
                       onClick={() => handleManualSell(wallet)}
                       disabled={loading[`${wallet.address}-sell-manual`] || !manualInputs[`${wallet.address}-sell-manual`]}
-                      className="px-1.5 py-0.5 text-[9px] bg-gradient-to-br from-red-600/90 to-red-700/90 hover:from-red-500/90 hover:to-red-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
+                      className="px-2 py-0.5 min-w-[50px] text-[9px] bg-gradient-to-br from-red-600/90 to-red-700/90 hover:from-red-500/90 hover:to-red-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30 flex-shrink-0"
                     >
-                      {loading[`${wallet.address}-sell-manual`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin" /> : 'Sell'}
+                      {loading[`${wallet.address}-sell-manual`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : 'Sell'}
                     </button>
                   </div>
                 </div>
@@ -2191,6 +2196,13 @@ export default function HolderWallets() {
                     <ArrowPathIcon className="w-3 h-3 text-green-400" />
                     <span className="text-xs font-bold text-white">Live Trades</span>
                   </div>
+                  {liveTradesError && (
+                    <span className="px-2 py-0.5 text-[9px] bg-red-900/40 text-red-300 rounded border border-red-500/30">
+                      {liveTradesError.includes('API server')
+                        ? 'API server / .env missing'
+                        : 'Live error'}
+                    </span>
+                  )}
                   <label className="flex items-center gap-1 cursor-pointer">
                     <input
                       type="checkbox"
@@ -2208,6 +2220,15 @@ export default function HolderWallets() {
                     </span>
                   )}
                 </div>
+
+                {liveTradesError && (
+                  <div className="w-full mt-2 text-[10px] text-red-300">
+                    {liveTradesError}
+                    {liveTradesError.toLowerCase().includes('.env') || liveTradesError.toLowerCase().includes('private_key') || liveTradesError.toLowerCase().includes('rpc')
+                      ? ' (Create `.env` from `.env.example`, set `RPC_ENDPOINT` + `PRIVATE_KEY`, then restart the API server.)'
+                      : ''}
+                  </div>
+                )}
                 
                 {/* Right: Stats */}
                 <div className="flex items-center gap-4">
