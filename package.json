@@ -2,6 +2,7 @@
   "name": "pumpfun-bundler-launcher-react-dashboard",
   "author": "SZ",
   "scripts": {
+    "postinstall": "node scripts/setup-env.js",
     "dev": "concurrently -n API,UI -c blue,green \"npm:dev:api\" \"npm:dev:ui\"",
     "dev:api": "npm --prefix api-server run dev",
     "dev:ui": "npm --prefix frontend run dev",

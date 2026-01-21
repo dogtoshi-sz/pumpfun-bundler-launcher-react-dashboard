@@ -26,6 +26,10 @@ Pump.fun bundler that handles everything from launch to profit-taking with a bea
 
 ## 📸 Screenshots
 
+### Trading Terminal - Main Dashboard
+![Trading Terminal](./docs/images/tradingterminal.png)
+*Real-time trading, P&L tracking, and position management - Our main selling point*
+
 ### Token Launch Configuration
 ![Token Launch](./docs/images/tokenlaunch.png)
 *Configure and launch your token with bundled buys*
@@ -37,10 +41,6 @@ Pump.fun bundler that handles everything from launch to profit-taking with a bea
 ### DEV, Bundle & Holder Wallet Configuration
 ![Wallet Configuration](./docs/images/devbundleholderwalletconfig.png)
 *Detailed wallet configuration and auto-sell settings*
-
-### Trading Terminal
-![Trading Terminal](./docs/images/tradingterminal.png)
-*Real-time trading, P&L tracking, and position management*
 
 ## ⚡ Quick Start
 
@@ -57,7 +57,7 @@ Pump.fun bundler that handles everything from launch to profit-taking with a bea
 git clone https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard.git
 cd pumpfun-bundler-launcher-react-dashboard
 
-# Install root dependencies
+# Install root dependencies (automatically creates .env from .env.example)
 npm install
 
 # Install API server dependencies
@@ -70,9 +70,26 @@ npm install
 cd ..
 ```
 
+**✨ Auto-Setup:** The `.env` file is automatically created from `.env.example` during `npm install`. No manual copying needed!
+
+**For Cursor IDE Users:**
+- Cursor will automatically detect the `.env.example` file
+- When you open the project, Cursor may prompt you to set up environment variables
+- You can also ask Cursor: *"Set up the environment variables from .env.example"* and it will help you configure them
+- The postinstall script ensures `.env` is created automatically, so you just need to fill in your values
+
+**For Other IDEs (VS Code, WebStorm, etc.):**
+- Most modern IDEs will recognize `.env.example` files
+- The postinstall script handles the file creation automatically
+- Simply edit the auto-generated `.env` file with your credentials
+
 ### Configuration
 
-1. **Copy the example environment file:**
+The `.env` file is **automatically created** from `.env.example` when you run `npm install`. If you're using Cursor IDE or other AI-powered editors, they may also help set this up automatically.
+
+**Manual setup (if needed):**
+
+1. **Copy the example environment file** (only if auto-setup didn't work):
    ```bash
    cp .env.example .env
    ```
