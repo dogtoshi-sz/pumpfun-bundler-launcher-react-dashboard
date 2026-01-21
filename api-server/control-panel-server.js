@@ -1067,7 +1067,9 @@ app.post('/api/launch-token', async (req, res) => {
     // When wallets are created, these configs are automatically mapped to actual addresses
     // This ensures configs are ready BEFORE launch starts
     if (holderWalletAutoSellConfigs || bundleWalletAutoSellConfigs || devAutoSellConfig) {
-      const autoSellConfigPath = path.join(projectRoot, 'keys', 'trade-configs', 'launch-auto-sell-config.json');
+      const tradeConfigsDir = path.join(projectRoot, 'keys', 'trade-configs');
+      fs.mkdirSync(tradeConfigsDir, { recursive: true });
+      const autoSellConfigPath = path.join(tradeConfigsDir, 'launch-auto-sell-config.json');
       const autoSellData = {
         holderWalletAutoSellConfigs: holderWalletAutoSellConfigs || null,
         bundleWalletAutoSellConfigs: bundleWalletAutoSellConfigs || null,
@@ -1239,7 +1241,9 @@ app.post('/api/launch-token', async (req, res) => {
       // Use indices (for fresh wallets) or addresses (if provided for some reason)
       if ((holderWalletAutoBuyIndices && holderWalletAutoBuyIndices.length > 0) || 
           (holderWalletAutoBuyAddresses && holderWalletAutoBuyAddresses.length > 0)) {
-        const freshAutoBuyPath = path.join(projectRoot, 'keys', 'trade-configs', 'fresh-auto-buy-config.json');
+        const tradeConfigsDir = path.join(projectRoot, 'keys', 'trade-configs');
+        fs.mkdirSync(tradeConfigsDir, { recursive: true });
+        const freshAutoBuyPath = path.join(tradeConfigsDir, 'fresh-auto-buy-config.json');
         const freshAutoBuyData = {
           holderWalletAutoBuyIndices: holderWalletAutoBuyIndices || [], // Wallet indices (1, 2, 3, etc.)
           holderWalletAutoBuyAddresses: holderWalletAutoBuyAddresses || [], // Fallback: addresses if provided
