@@ -296,12 +296,16 @@ export default function TokenLaunch({ onLaunch }) {
   const [launchMode, setLaunchMode] = useState('bundle');
   
   // Vanity generator state
-  const [vanityAddressPool, setVanityAddressPool] = useState({ available: 0, total: 0, generating: false });
+  const [vanityAddressPool, setVanityAddressPool] = useState({ available: 0, total: 0, generating: false, checked: 0 });
   const [showVanityGenerator, setShowVanityGenerator] = useState(false);
   const [vanityGeneratorStatus, setVanityGeneratorStatus] = useState(null);
   
   // Address mode: 'vanity' (use pump address pool) or 'random' (generate fresh)
-  const [addressMode, setAddressMode] = useState('vanity');
+  // Load from localStorage or default to 'vanity'
+  const [addressMode, setAddressMode] = useState(() => {
+    const saved = localStorage.getItem('tokenLaunchAddressMode');
+    return saved || 'vanity';
+  });
   
   // Toast notifications
   const [toasts, setToasts] = useState([]);
@@ -350,8 +354,24 @@ export default function TokenLaunch({ onLaunch }) {
     };
   }, []);
 
-  // When address mode changes, load appropriate address
+  // When address mode changes, load appropriate address and update env var
   useEffect(() => {
+    // Persist to localStorage
+    localStorage.setItem('tokenLaunchAddressMode', addressMode);
+    
+    // Update VANITY_MODE env var
+    const updateVanityMode = async () => {
+      try {
+        const vanityModeValue = addressMode === 'vanity' ? 'true' : 'false';
+        await apiService.updateSettings({ VANITY_MODE: vanityModeValue });
+        console.log(`[TokenLaunch] Updated VANITY_MODE to ${vanityModeValue}`);
+      } catch (error) {
+        console.error('[TokenLaunch] Failed to update VANITY_MODE:', error);
+      }
+    };
+    updateVanityMode();
+    
+    // Load appropriate address
     if (addressMode === 'random') {
       // Generate a random address preview
       generateRandomAddressPreview();
@@ -749,6 +769,21 @@ export default function TokenLaunch({ onLaunch }) {
       // Restore front-run threshold from .env
       if (loadedSettings.HOLDER_FRONT_RUN_THRESHOLD !== undefined) {
         setFrontRunThreshold(parseFloat(loadedSettings.HOLDER_FRONT_RUN_THRESHOLD) || 0);
+      }
+      
+      // Sync addressMode with VANITY_MODE from settings (only on initial load)
+      // Priority: localStorage > env value
+      if (loadedSettings.VANITY_MODE !== undefined) {
+        const vanityModeFromEnv = loadedSettings.VANITY_MODE === 'true' || loadedSettings.VANITY_MODE === true;
+        const modeFromEnv = vanityModeFromEnv ? 'vanity' : 'random';
+        const savedMode = localStorage.getItem('tokenLaunchAddressMode');
+        // Use saved preference if exists, otherwise use env value
+        const finalMode = savedMode || modeFromEnv;
+        // Only update if different to avoid unnecessary re-renders
+        const currentMode = localStorage.getItem('tokenLaunchAddressMode') || modeFromEnv;
+        if (finalMode !== currentMode) {
+          setAddressMode(finalMode);
+        }
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -1561,7 +1596,12 @@ export default function TokenLaunch({ onLaunch }) {
     try {
       const res = await apiService.getVanityPoolStatus();
       if (res.data) {
-        setVanityAddressPool(res.data);
+        // Backward compatible: older servers may not return `checked`
+        setVanityAddressPool(prev => ({
+          ...prev,
+          ...res.data,
+          checked: res.data.checked ?? res.data.checkedCount ?? res.data.totalChecked ?? prev.checked ?? 0,
+        }));
       }
     } catch (error) {
       console.error('Failed to load vanity pool status:', error);
@@ -2014,6 +2054,9 @@ export default function TokenLaunch({ onLaunch }) {
 
   // Fetch Vercel projects and domains on component mount
   useEffect(() => {
+    // Disabled in the clean bundler build (no Vercel/domain management in this repo).
+    // Keeping the rest of the bundler UI focused on launching/trading/warming.
+    return;
     const fetchVercelProjects = async () => {
       setLoadingProjects(true);
       try {
@@ -3628,7 +3671,7 @@ export default function TokenLaunch({ onLaunch }) {
                       {addressMode === 'vanity' && vanityAddressPool.available > 0 
                         ? 'Will use next vanity address from pool'
                         : addressMode === 'vanity' && vanityAddressPool.available === 0
-                        ? 'No vanity addresses - generating random...'
+                        ? 'No vanity addresses available. Run the generator locally or switch to Random.'
                         : 'Generating random address...'
                       }
                     </span>
@@ -3704,6 +3747,9 @@ export default function TokenLaunch({ onLaunch }) {
                     <span className="text-sm font-bold text-emerald-400">{vanityAddressPool.available}</span>
                     <span className="text-xs text-gray-500">/ {vanityAddressPool.total}</span>
                   </div>
+                  <div className="text-[10px] text-gray-500">
+                    Checked: <span className="text-gray-300 font-mono">{vanityAddressPool.checked || 0}</span>
+                  </div>
                   {vanityAddressPool.generating && (
                     <span className="flex items-center gap-1 text-[10px] text-green-400 bg-green-900/30 px-2 py-0.5 rounded animate-pulse">
                       <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
@@ -3766,6 +3812,11 @@ export default function TokenLaunch({ onLaunch }) {
                     <ArrowPathIcon className="w-3.5 h-3.5" />
                   </button>
                 </div>
+              </div>
+            )}
+            {addressMode === 'vanity' && vanityAddressPool.available === 0 && (
+              <div className="mt-2 text-[10px] text-gray-400">
+                Vanity generation runs on your machine (local). Click <span className="text-white font-semibold">Generate More</span> to build a small pool, or switch to <span className="text-white font-semibold">Random</span> to proceed without vanity addresses.
               </div>
             )}
           </div>
