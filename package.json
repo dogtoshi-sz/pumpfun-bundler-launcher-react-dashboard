@@ -2,6 +2,9 @@
   "name": "pumpfun-bundler-launcher-react-dashboard",
   "author": "SZ",
   "scripts": {
+    "dev": "concurrently -n API,UI -c blue,green \"npm:dev:api\" \"npm:dev:ui\"",
+    "dev:api": "npm --prefix api-server run dev",
+    "dev:ui": "npm --prefix frontend run dev",
     "start": "ts-node index.ts",
     "quick-launch": "ts-node cli/quick-launch.ts",
     "single": "ts-node cli/oneWalletBundle.ts",
@@ -59,6 +62,7 @@
     "@types/bn.js": "^5.1.5",
     "@types/node": "^20.14.1",
     "axios": "^1.6.8",
+    "concurrently": "^9.2.1",
     "dotenv": "^16.4.5",
     "js-sha256": "^0.11.0",
     "pino": "^8.18.0",
