@@ -4,7 +4,7 @@
 >
 > **V1 has been updated to work with pump.fun's February 2026 SDK update** — the migration to Token Extensions (`TOKEN_2022_PROGRAM_ID`) and the new V2 program instructions broke most existing bundlers. This repo has been patched so it functions again.
 >
-> **However, all active development is moving to [Trencher Bundler V2](https://trencherbundler.fun)** — a completely rewritten, more streamlined bundler built on the official `@pump-fun/pump-sdk` from the ground up. V2 is faster, cleaner, and has significantly better architecture.
+> **However, all active development is moving to [Trencher Bundler V2](https://trenchytools.lol)** — a completely rewritten, more streamlined bundler built on the official `@pump-fun/pump-sdk` from the ground up. V2 is faster, cleaner, and has significantly better architecture.
 >
 > **V1 (this repo)** will only receive critical bug fixes going forward. No new features will be added here.
 >
@@ -18,7 +18,7 @@
 > - Creator fee collection and scanning across all launches
 > - Better wallet lifecycle — generate, import, archive, gather, close accounts
 >
-> **Get V2:** [trencherbundler.fun](https://trencherbundler.fun) | Twitter: [@trencherbundler_x](https://x.com/trencherbundler_x) | Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
+> **Get V2:** [trenchytools.lol](https://trenchytools.lol) | Twitter: [@trenchytools_x](https://x.com/trenchytools_x) | Dev Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
 
 ---
 
@@ -38,9 +38,9 @@ Pump.fun bundler that handles everything from launch to profit-taking with a bea
 *Click the image above to download and watch the demo video*
 
 **Connect with us:**
-- Website: [trencherbundler.fun](https://trencherbundler.fun)
-- Twitter: [@trencherbundler_x](https://x.com/trencherbundler_x)
-- Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
+- Website: [trenchytools.lol](https://trenchytools.lol)
+- Twitter: [@trenchytools_x](https://x.com/trenchytools_x)
+- Dev Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
 
 ## ✨ Key Features
 
@@ -83,8 +83,8 @@ Pump.fun bundler that handles everything from launch to profit-taking with a bea
 
 ```bash
 # Clone the repository
-git clone https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard.git
-cd pumpfun-bundler-launcher-react-dashboard
+git clone https://github.com/dogtoshi-sz/Trenchy-Tools-pumpfun-bundler-launcher-react-dashboard.git
+cd Trenchy-Tools-pumpfun-bundler-launcher-react-dashboard
 
 # Install root dependencies (automatically creates .env from .env.example)
 npm install
@@ -183,8 +183,8 @@ The `.env` file is **automatically created** from `.env.example` when you run `n
 ## 🆘 Need Help?
 
 - **Full Documentation:** See [USER_GUIDE.md](./USER_GUIDE.md)
-- **Issues:** [GitHub Issues](https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard/issues)
-- **Telegram:** [@dogtoshi_x](https://t.me/dogtoshi_x)
+- **Issues:** [GitHub Issues](https://github.com/dogtoshi-sz/Trenchy-Tools-pumpfun-bundler-launcher-react-dashboard/issues)
+- **Dev Telegram:** [@dogtoshi_x](https://t.me/dogtoshi_x)
 
 ## 📄 License
 

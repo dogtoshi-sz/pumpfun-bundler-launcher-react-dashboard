@@ -217,7 +217,7 @@ function App() {
           <div className="bg-gradient-to-r from-purple-900/90 to-indigo-900/90 border-b border-purple-500/40 px-4 py-1.5 flex items-center justify-center gap-3 relative">
             <span className="text-gray-300 text-xs">Working as of March 1, 2026. Future Pump.fun / Jito updates will not be patched here.</span>
             <a
-              href="https://trencherbundler.fun"
+              href="https://trenchytools.lol"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-md px-2.5 py-0.5 text-xs font-semibold text-white transition-colors"
