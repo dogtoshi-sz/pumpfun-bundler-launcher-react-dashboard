@@ -2052,10 +2052,7 @@ async function batchFetchBalances(walletKeys, mintAddress) {
           }
         }
       } catch (err) {
-        const msg = err?.message || String(err);
-        if (!msg.includes('could not find account') && !msg.includes('AccountNotFound')) {
-          console.warn(`[Batch Fetch] Token lookup failed for ${w.address.slice(0, 8)}...: ${msg.slice(0, 120)}`);
-        }
+      
       }
     }
     

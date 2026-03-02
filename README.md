@@ -22,6 +22,8 @@
 
 ---
 
+![Trencher Bundler](./docs/images/introimage.png)
+
 **The ONLY Pump.fun bundler with a full web dashboard.** Launch tokens, manage wallets, auto-sell, and track P&L — all from one page.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -29,6 +31,10 @@
 ## 🚀 Quick Overview
 
 Pump.fun bundler that handles everything from launch to profit-taking with a beautiful React dashboard. Uses Jito bundles for coordinated buys, includes auto-sell, wallet management, and real-time P&L tracking.
+
+### Launching a token with LUT
+
+<video src="https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard/raw/clean-v1.1/docs/images/lut-launch-demo.mp4" controls width="100%"></video>
 
 **Connect with us:**
 - Website: [trencherbundler.fun](https://trencherbundler.fun)
