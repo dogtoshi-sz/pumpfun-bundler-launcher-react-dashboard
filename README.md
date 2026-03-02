@@ -101,20 +101,9 @@ cd ..
 
 **✨ Auto-Setup:** The `.env` file is automatically created from `.env.example` during `npm install`. No manual copying needed!
 
-**For Cursor IDE Users:**
-- Cursor will automatically detect the `.env.example` file
-- When you open the project, Cursor may prompt you to set up environment variables
-- You can also ask Cursor: *"Set up the environment variables from .env.example"* and it will help you configure them
-- The postinstall script ensures `.env` is created automatically, so you just need to fill in your values
-
-**For Other IDEs (VS Code, WebStorm, etc.):**
-- Most modern IDEs will recognize `.env.example` files
-- The postinstall script handles the file creation automatically
-- Simply edit the auto-generated `.env` file with your credentials
-
 ### Configuration
 
-The `.env` file is **automatically created** from `.env.example` when you run `npm install`. If you're using Cursor IDE or other AI-powered editors, they may also help set this up automatically.
+The `.env` file is **automatically created** from `.env.example` when you run `npm install`.
 
 **Manual setup (if needed):**
 
