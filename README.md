@@ -34,7 +34,8 @@ Pump.fun bundler that handles everything from launch to profit-taking with a bea
 
 ### Launching a token with LUT
 
-<video src="https://github.com/dogtoshi-sz/pumpfun-bundler-launcher-react-dashboard/raw/clean-v1.1/docs/images/lut-launch-demo.mp4" controls width="100%"></video>
+[![Watch Demo](./docs/images/tokenlaunch.png)](./docs/images/lut-launch-demo.mp4)
+*Click the image above to download and watch the demo video*
 
 **Connect with us:**
 - Website: [trencherbundler.fun](https://trencherbundler.fun)
