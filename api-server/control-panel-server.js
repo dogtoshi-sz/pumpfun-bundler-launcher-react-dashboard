@@ -218,7 +218,6 @@ app.use((req, res, next) => {
       });
     }
     
-    console.log(`✅ PRODUCTION: ${req.method} ${req.path} from ${ip}`);
     return next();
   }
 
@@ -513,8 +512,6 @@ function writeEnvFile(env) {
     if (fs.existsSync(possiblePath)) {
       envPath = possiblePath;
       const absolutePath = path.resolve(envPath);
-      console.log(`[Settings] Writing to .env file at: ${envPath}`);
-      console.log(`[Settings] Absolute path: ${absolutePath}`);
       break;
     }
   }
@@ -523,8 +520,6 @@ function writeEnvFile(env) {
     // If no .env exists, create one in root
     envPath = path.join(__dirname, '..', '.env');
     const absolutePath = path.resolve(envPath);
-    console.log(`[Settings] Creating new .env file at: ${envPath}`);
-    console.log(`[Settings] Absolute path: ${absolutePath}`);
   }
   
   // Read existing file to preserve comments and order
@@ -538,8 +533,6 @@ function writeEnvFile(env) {
   const updatedLines = [];
   const keysToUpdate = new Set(Object.keys(env));
   const keysUpdated = new Set();
-  
-  console.log(`[Settings] Updating ${keysToUpdate.size} keys:`, Array.from(keysToUpdate));
   
   for (let i = 0; i < existingLines.length; i++) {
     const line = existingLines[i];
@@ -650,8 +643,6 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
     // Save locally - the pump.fun SDK will handle IPFS upload automatically on launch
     // This is just for preview and storing the file path
     const relativePath = `./image/${req.file.filename}`;
-    console.log('[Upload Image] [ok] Image saved locally:', relativePath);
-    console.log('[Upload Image] Note: Pump.fun SDK will upload to IPFS automatically when launching token');
     
     return res.json({ 
       success: true, 
@@ -669,20 +660,16 @@ app.post('/api/upload-image', upload.single('image'), async (req, res) => {
 app.post('/api/settings', (req, res) => {
   try {
     const updates = req.body.settings;
-    console.log('[Settings] Received update request with keys:', Object.keys(updates));
-    
     // CRITICAL: Clear amounts when wallet count is set to 0
     if (updates.BUNDLE_WALLET_COUNT !== undefined) {
       const bundleCount = parseInt(updates.BUNDLE_WALLET_COUNT) || 0;
       if (bundleCount === 0) {
-        console.log('[Settings] BUNDLE_WALLET_COUNT is 0 - clearing BUNDLE_SWAP_AMOUNTS');
         updates.BUNDLE_SWAP_AMOUNTS = '';
       }
     }
     if (updates.HOLDER_WALLET_COUNT !== undefined) {
       const holderCount = parseInt(updates.HOLDER_WALLET_COUNT) || 0;
       if (holderCount === 0) {
-        console.log('[Settings] HOLDER_WALLET_COUNT is 0 - clearing HOLDER_SWAP_AMOUNTS');
         updates.HOLDER_SWAP_AMOUNTS = '';
       }
     }
@@ -708,15 +695,11 @@ app.post('/api/settings', (req, res) => {
       const key = safeUpdates.BUYER_WALLET;
       safeUpdates.BUYER_WALLET = key.length > 16 ? key.substring(0, 8) + '...' + key.substring(key.length - 8) : '***';
     }
-    console.log('[Settings] Update values (private keys masked):', safeUpdates);
-    
     // Read current .env file
     const currentEnv = readEnvFile();
-    console.log('[Settings] Current env has', Object.keys(currentEnv).length, 'keys');
     
     // Merge updates with current values
     const updatedEnv = { ...currentEnv, ...updates };
-    console.log('[Settings] Merged env has', Object.keys(updatedEnv).length, 'keys');
     
     // Write back to file (this will update existing lines and preserve structure)
     writeEnvFile(updatedEnv);
@@ -756,11 +739,6 @@ app.post('/api/settings', (req, res) => {
       console.warn('[Settings] ⚠️  Verification warnings, but .env file was written. Values may differ due to quote handling.');
     }
     
-    console.log('[Settings] Successfully updated .env file and verified');
-    console.log('[Settings] 📋 Final values after save:');
-    for (const key in updates) {
-      console.log(`[Settings]   ${key} = ${verifyEnv[key]}`);
-    }
     res.json({ success: true, message: 'Settings updated successfully' });
   } catch (error) {
     console.error('[Settings] Error updating .env:', error);
@@ -1818,45 +1796,23 @@ app.get('/api/next-pump-address', (req, res) => {
         const projectRoot = path.join(__dirname, '..');
         const pumpAddressesPath = path.join(projectRoot, 'keys', 'pump-addresses.json');
         const absolutePath = path.resolve(pumpAddressesPath);
-        console.log('[Next Pump Address] Checking pump-addresses.json');
-        console.log('[Next Pump Address] Project root:', projectRoot);
-        console.log('[Next Pump Address] Resolved path:', absolutePath);
-        console.log('[Next Pump Address] File exists:', fs.existsSync(absolutePath));
         
         if (fs.existsSync(absolutePath)) {
           const data = fs.readFileSync(absolutePath, 'utf-8');
           const addresses = JSON.parse(data);
-          console.log('[Next Pump Address] ✅ Loaded', addresses.length, 'addresses from file');
           
           if (!Array.isArray(addresses)) {
             console.error('[Next Pump Address] ❌ File is not an array, got:', typeof addresses);
           } else {
             const available = addresses.find((addr) => {
-              const isAvailable = addr.status === 'available' && addr.used === false;
-              if (!isAvailable && addresses.indexOf(addr) < 3) {
-                console.log('[Next Pump Address] Address', addresses.indexOf(addr), 'not available:', { 
-                  status: addr.status, 
-                  used: addr.used, 
-                  type: typeof addr.used 
-                });
-              }
-              return isAvailable;
+              return addr.status === 'available' && addr.used === false;
             });
             
-            console.log('[Next Pump Address] Available address found:', !!available);
             if (available) {
               address = available.publicKey;
               source = 'Pump address pool (pump-addresses.json)';
-              console.log('[Next Pump Address] ✅ Using address:', address);
             } else {
-              console.log('[Next Pump Address] ❌ No available addresses found. Sample:', 
-                addresses.slice(0, 3).map(a => ({ 
-                  publicKey: a.publicKey?.substring(0, 20) + '...', 
-                  status: a.status, 
-                  used: a.used,
-                  usedType: typeof a.used
-                }))
-              );
+              console.warn('[Next Pump Address] No available addresses in pool');
             }
           }
         } else {
@@ -2058,7 +2014,6 @@ function invalidateBalanceCache(address, mintAddress) {
 // Clear all balance caches (used after batch operations)
 function invalidateAllBalanceCaches() {
   balanceCache.clear();
-  console.log('[Cache] Cleared all balance caches');
 }
 
 // Batch fetch balances (more efficient than individual calls)
@@ -2082,7 +2037,6 @@ async function batchFetchBalances(walletKeys, mintAddress) {
   const tokenBalanceByOwner = new Map();
   if (mintAddress) {
     const mintPubkey = new PublicKey(mintAddress);
-    console.log(`[Batch Fetch] Fetching token balances for ${walletData.length} wallets, mint=${mintAddress.slice(0, 8)}...`);
     
     for (const w of walletData) {
       try {
@@ -2095,7 +2049,6 @@ async function batchFetchBalances(walletKeys, mintAddress) {
           }
           if (total > 0) {
             tokenBalanceByOwner.set(w.address, total);
-            console.log(`[Batch Fetch] ${w.address.slice(0, 8)}... has ${total} tokens (${resp.value.length} account(s))`);
           }
         }
       } catch (err) {
@@ -2106,9 +2059,6 @@ async function batchFetchBalances(walletKeys, mintAddress) {
       }
     }
     
-    console.log(`[Batch Fetch] Token balances found for ${tokenBalanceByOwner.size}/${walletData.length} wallets`);
-  } else {
-    console.log('[Batch Fetch] No mintAddress provided, skipping token balances');
   }
   
   // Process results
@@ -2238,7 +2188,6 @@ app.get('/api/holder-wallets', async (req, res) => {
       walletTypes.push('dev');
     }
     
-    console.log(`[Holder Wallets] Loading ${allWalletKeys.length} wallets, mintAddress=${mintAddress || 'NONE'}`);
     const wallets = await batchFetchBalances(allWalletKeys, mintAddress);
     
     // Add wallet type tags and auto-buy/auto-sell status
@@ -3634,21 +3583,12 @@ app.get('/api/deployer-wallet', async (req, res) => {
     // Try both process.env (from dotenv) and readEnvFile
     let privateKey = process.env.PRIVATE_KEY;
     
-    console.log('[Deployer Wallet] Checking PRIVATE_KEY...');
-    console.log('[Deployer Wallet] process.env.PRIVATE_KEY exists:', !!process.env.PRIVATE_KEY);
-    
     if (!privateKey) {
-      console.log('[Deployer Wallet] Reading from .env file...');
       const env = readEnvFile();
       privateKey = env.PRIVATE_KEY;
-      console.log('[Deployer Wallet] readEnvFile() PRIVATE_KEY exists:', !!privateKey);
-      if (privateKey) {
-        console.log('[Deployer Wallet] PRIVATE_KEY length:', privateKey.length);
-      }
     }
     
     if (!privateKey) {
-      console.log('[Deployer Wallet] PRIVATE_KEY not found');
       return res.json({ 
         success: true, 
         address: null, 
@@ -3661,13 +3601,9 @@ app.get('/api/deployer-wallet', async (req, res) => {
       // Decode private key to get keypair
       const kp = Keypair.fromSecretKey(base58.decode(privateKey));
       const publicKey = kp.publicKey.toBase58();
-      console.log('[Deployer Wallet] Public key derived:', publicKey.substring(0, 8) + '...');
       
-      // Get balance from blockchain
       const connection = getConnection();
-      console.log('[Deployer Wallet] Fetching balance from RPC...');
       const balance = await connection.getBalance(kp.publicKey);
-      console.log('[Deployer Wallet] Balance fetched:', balance / LAMPORTS_PER_SOL, 'SOL');
       
       // SECURITY: Only return public key and balance, NEVER the private key
       res.json({
@@ -5704,7 +5640,6 @@ try {
   console.log(`📡 Balance WebSocket Server running on ws://localhost:${WS_PORT}`);
   
   wss.on('connection', (ws) => {
-    console.log('[Balance WS] Client connected');
     
     ws.on('message', async (message) => {
       try {
@@ -5752,7 +5687,6 @@ try {
     });
     
     ws.on('close', () => {
-      console.log('[Balance WS] Client disconnected');
     });
   });
 } catch (error) {
@@ -5874,22 +5808,18 @@ app.get('/api/launch-progress', (req, res) => {
   
   // Add this client as a listener
   global.launchProgressListeners.push(res);
-  console.log(`[Launch Progress] Client connected (${global.launchProgressListeners.length} listeners)`);
   
   // Send initial connection message
   res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Connected to launch progress stream' })}\n\n`);
   
   // Clean up on client disconnect
   req.on('close', () => {
-    console.log(`[Launch Progress] Client disconnected`);
     global.launchProgressListeners = global.launchProgressListeners.filter(l => l !== res);
   });
 });
 
 app.get('/api/live-trades', async (req, res) => {
   const mintAddress = req.query.mint;
-  
-  console.log(`[API] /api/live-trades called with mint: ${mintAddress} (using PumpPortal)`);
   
   if (!mintAddress) {
     console.error('[API] ❌ No mint address provided');
@@ -5904,7 +5834,6 @@ app.get('/api/live-trades', async (req, res) => {
   
   try {
     // Subscribe to PumpPortal for this token
-    console.log(`[API] Subscribing to ${mintAddress.slice(0, 8)}... via PumpPortal`);
     pumpPortalTracker.subscribeToToken(mintAddress);
     
     // Add this client as a listener
@@ -5912,12 +5841,10 @@ app.get('/api/live-trades', async (req, res) => {
     
     // Send initial cached trades immediately
     const initialTrades = pumpPortalTracker.getTrades(mintAddress);
-    console.log(`[API] Sending ${initialTrades.length} cached trades to client`);
     res.write(`data: ${JSON.stringify({ type: 'initial', trades: initialTrades })}\n\n`);
     
     // Clean up on client disconnect
     req.on('close', () => {
-      console.log(`[API] Client disconnected for ${mintAddress.slice(0, 8)}...`);
       pumpPortalTracker.removeListener(res);
     });
   } catch (error) {

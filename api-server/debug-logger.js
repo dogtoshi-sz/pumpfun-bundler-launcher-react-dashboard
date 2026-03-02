@@ -88,17 +88,19 @@ class DebugLogger {
     '/api/ai/color-schemes',
     '/api/profit-loss',
     '/api/dune/pumpfun-volume',
-    '/api/warming-wallets',      // Polling endpoint - very noisy
-    '/api/token-info',           // Polling endpoint - noisy
-    '/api/live-trades',          // Real-time updates - very noisy
-    '/api/market-cap',           // Polling endpoint
-    '/api/candidates',           // Trend detector polling
-    '/api/tokens',               // Token list polling
-    '/api/stats',                // Stats polling
-    '/api/stream',               // SSE stream
-    '/api/private-funding/status', // Bridge status polling
-    '/api/vanity-pool-status',   // Polling endpoint - noisy
-    // '/api/candles',           // Removed - using Birdeye charts instead
+    '/api/warming-wallets',
+    '/api/token-info',
+    '/api/live-trades',
+    '/api/market-cap',
+    '/api/candidates',
+    '/api/tokens',
+    '/api/stats',
+    '/api/stream',
+    '/api/private-funding/status',
+    '/api/vanity-pool-status',
+    '/api/auto-sell',
+    '/api/launch-progress',
+    '/image/',
   ];
   
   logRequest(req) {

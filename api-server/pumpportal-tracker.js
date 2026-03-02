@@ -892,7 +892,6 @@ class PumpPortalTracker {
       });
       
       if (alreadyExists) {
-        console.log(`[PumpPortal] 📋 Dev buy already tracked for ${devWallet.slice(0, 8)}...`);
         return;
       }
       
@@ -926,8 +925,6 @@ class PumpPortalTracker {
       // Add to cache using centralized method (handles deduplication)
       this.addTradeToCache(mintAddress, syntheticTrade);
       
-      console.log(`[PumpPortal] 💉 Injected dev buy: ${devBuyAmount} SOL from ${devWallet.slice(0, 8)}...`);
-      
       // Update P&L for this wallet
       const addrLower = devWallet.toLowerCase();
       if (this.ourWallets.has(addrLower)) {
@@ -939,7 +936,6 @@ class PumpPortalTracker {
         profits.fees += pumpFee + priorityFee;
         profits.profit = profits.sells - profits.buys - profits.fees;
         this.walletProfits.set(addrLower, profits);
-        console.log(`[PumpPortal] 📊 Updated DEV P&L: buys=${profits.buys.toFixed(4)}, fees=${profits.fees.toFixed(4)}, profit=${profits.profit.toFixed(4)}`);
       }
       
       // Save to disk
@@ -969,7 +965,6 @@ class PumpPortalTracker {
       );
       
       if (alreadyExists) {
-        console.log(`[PumpPortal] 📋 Trade already tracked: ${signature?.slice(0, 12)}...`);
         return;
       }
       
@@ -1004,8 +999,6 @@ class PumpPortalTracker {
       
       // Use addTradeToCache for consistency (handles deduplication)
       this.addTradeToCache(mintAddress, trade);
-      
-      console.log(`[PumpPortal] 💉 Injected ${txType} trade: ${solAmount} SOL from ${traderPublicKey?.slice(0, 8)}... (${source})`);
       
       // Update P&L if this is our wallet
       const addrLower = traderPublicKey?.toLowerCase();
@@ -1336,7 +1329,6 @@ class PumpPortalTracker {
       payload.keys = keys;
     }
 
-    console.log(`[PumpPortal] 📡 Sending: ${JSON.stringify(payload)}`);
     this.ws.send(JSON.stringify(payload));
     return true;
   }
@@ -1429,10 +1421,8 @@ class PumpPortalTracker {
       this.handleTrade(message);
     } else if (message.message) {
       // Status/info messages
-      console.log(`[PumpPortal] 📨 ${message.message}`);
     } else {
-      // Unknown message type - log for debugging
-      console.log('[PumpPortal] 📨 Unknown message:', JSON.stringify(message).slice(0, 200));
+      // Unknown message type
     }
   }
 
@@ -2008,7 +1998,6 @@ class PumpPortalTracker {
       this.sendToListener(res, trade);
     }
 
-    console.log(`[PumpPortal] 👂 Added listener (${this.listeners.length} total)`);
   }
 
   // Remove SSE listener
