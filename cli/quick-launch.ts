@@ -18,7 +18,7 @@ import path from "path";
 import readline from "readline";
 
 import { getNextPumpAddress, markPumpAddressAsUsed, saveDataToFile, sleep } from "../utils";
-import { createTokenTx, makeBuyIx } from "../src/main";
+import { createTokenTx } from "../src/main";
 
 // Load constants
 const {
@@ -162,57 +162,29 @@ async function quickLaunch() {
     const buyerKp = Keypair.fromSecretKey(base58.decode(buyerWallet));
     const mintKp = pumpAddress.keypair;
     
-    console.log("📝 Step 1/4: Creating token transaction...");
+    console.log("Step 1/2: Creating token + dev buy transaction (V2 combined)...");
     
-    // Create token transaction
-    const tokenCreationIxs = await createTokenTx(buyerKp, mintKp, mainKp);
+    // V2: create + dev buy combined in single transaction
+    const tokenCreationIxs = await createTokenTx(buyerKp, mintKp, mainKp, buyerAmount);
     const latestBlockhash = await connection.getLatestBlockhash();
     
-    // Build token creation + dev buy transaction (combined)
-    const buyIx = await makeBuyIx(
-      buyerKp,
-      Math.floor(buyerAmount * 10 ** 9),
-      0,
-      buyerKp.publicKey, // creator is buyer
-      mintKp.publicKey
-    );
-    
-    console.log("📝 Step 2/4: Building transactions...");
-    
-    // Token creation transaction
-    // NOTE: createTokenTx already includes ComputeBudgetProgram instructions, don't add duplicates
     const tokenCreationMsg = new TransactionMessage({
       payerKey: buyerKp.publicKey,
       recentBlockhash: latestBlockhash.blockhash,
-      instructions: tokenCreationIxs // Already has compute budget + jito fee + create instruction
+      instructions: tokenCreationIxs
     }).compileToV0Message();
     
     const tokenCreationTx = new VersionedTransaction(tokenCreationMsg);
     tokenCreationTx.sign([buyerKp, mintKp]);
     
-    // Dev buy transaction
-    const buyMsg = new TransactionMessage({
-      payerKey: buyerKp.publicKey,
-      recentBlockhash: latestBlockhash.blockhash,
-      instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_LAMPORTS }),
-        ...buyIx
-      ]
-    }).compileToV0Message();
+    console.log("Step 2/2: Sending token creation + dev buy...");
     
-    const buyTx = new VersionedTransaction(buyMsg);
-    buyTx.sign([buyerKp]);
-    
-    console.log("📡 Step 3/4: Sending token creation...");
-    
-    // Send token creation first
     const createSig = await connection.sendTransaction(tokenCreationTx, {
       skipPreflight: false,
       preflightCommitment: commitment,
     });
     
-    console.log(`   ⏳ Confirming... (${createSig.slice(0, 20)}...)`);
+    console.log(`   Confirming... (${createSig.slice(0, 20)}...)`);
     
     const createConfirm = await connection.confirmTransaction({
       signature: createSig,
@@ -221,53 +193,11 @@ async function quickLaunch() {
     }, commitment);
     
     if (createConfirm.value.err) {
-      throw new Error(`Token creation failed: ${JSON.stringify(createConfirm.value.err)}`);
+      throw new Error(`Token creation + dev buy failed: ${JSON.stringify(createConfirm.value.err)}`);
     }
     
-    console.log(`   ✅ Token created!`);
-    // Emit mint address immediately for instant tracking subscription
-    console.log(`   📡 TRACKING_SIGNAL: ${pumpAddress.publicKey}`);
-    
-    // Wait for tracker to subscribe before sending dev buy
-    // This ensures the P&L tracker catches the dev buy in real-time
-    console.log(`   ⏳ Waiting for tracker subscription...`);
-    await sleep(1500); // Give tracker time to subscribe via WebSocket
-    
-    console.log("💰 Step 4/4: Sending dev buy...");
-    
-    // Get fresh blockhash for buy tx
-    const freshBlockhash = await connection.getLatestBlockhash();
-    const buyMsgFresh = new TransactionMessage({
-      payerKey: buyerKp.publicKey,
-      recentBlockhash: freshBlockhash.blockhash,
-      instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_LAMPORTS }),
-        ...buyIx
-      ]
-    }).compileToV0Message();
-    
-    const buyTxFresh = new VersionedTransaction(buyMsgFresh);
-    buyTxFresh.sign([buyerKp]);
-    
-    const buySig = await connection.sendTransaction(buyTxFresh, {
-      skipPreflight: false,
-      preflightCommitment: commitment,
-    });
-    
-    console.log(`   ⏳ Confirming... (${buySig.slice(0, 20)}...)`);
-    
-    const buyConfirm = await connection.confirmTransaction({
-      signature: buySig,
-      blockhash: freshBlockhash.blockhash,
-      lastValidBlockHeight: freshBlockhash.lastValidBlockHeight,
-    }, commitment);
-    
-    if (buyConfirm.value.err) {
-      console.log(`   ⚠️  Dev buy failed, but token was created!`);
-    } else {
-      console.log(`   ✅ Dev buy complete!`);
-    }
+    console.log(`   Token created + dev buy complete! (V2)`);
+    console.log(`   TRACKING_SIGNAL: ${pumpAddress.publicKey}`);
     
     // SUCCESS!
     console.log("\n" + "=".repeat(70));

@@ -564,41 +564,41 @@ export default function HolderWallets() {
     const styles = {
       funding: {
         label: 'FUNDING',
-        bgColor: 'bg-gradient-to-br from-purple-900/50 via-purple-900/40 to-pink-900/40',
-        borderColor: 'border-purple-400',
-        textColor: 'text-purple-200',
-        iconColor: 'text-purple-300',
-        shadowColor: 'shadow-purple-500/30',
-        ringColor: 'ring-purple-400/50'
+        bgColor: 'bg-purple-500/5',
+        borderColor: 'border-purple-500/40',
+        textColor: 'text-purple-300',
+        iconColor: 'text-purple-400',
+        shadowColor: '',
+        ringColor: 'ring-purple-400/30'
       },
       holder: { 
         label: 'Holder', 
-        bgColor: 'bg-blue-900/40', 
-        borderColor: 'border-blue-500',
-        badgeColor: 'bg-blue-500',
-        hoverBorder: 'hover:border-blue-400'
+        bgColor: 'bg-gray-900', 
+        borderColor: 'border-cyan-500/40',
+        badgeColor: 'bg-cyan-500',
+        hoverBorder: 'hover:border-cyan-400'
       },
       bundle: { 
         label: 'Bundle', 
-        bgColor: 'bg-purple-900/40', 
-        borderColor: 'border-purple-500',
+        bgColor: 'bg-gray-900', 
+        borderColor: 'border-purple-500/40',
         badgeColor: 'bg-purple-500',
         hoverBorder: 'hover:border-purple-400'
       },
       dev: { 
         label: 'Dev', 
-        bgColor: 'bg-green-900/40', 
-        borderColor: 'border-green-500',
+        bgColor: 'bg-gray-900', 
+        borderColor: 'border-green-500/40',
         badgeColor: 'bg-green-500',
         hoverBorder: 'hover:border-green-400'
       }
     };
     return styles[type] || { 
       label: 'Unknown', 
-      bgColor: 'bg-gray-900/40', 
-      borderColor: 'border-gray-500',
+      bgColor: 'bg-gray-900', 
+      borderColor: 'border-gray-700',
       badgeColor: 'bg-gray-500',
-      hoverBorder: 'hover:border-gray-400'
+      hoverBorder: 'hover:border-gray-600'
     };
   };
 
@@ -1189,7 +1189,7 @@ export default function HolderWallets() {
                   ? 'bg-green-500/10 border-green-500/30' 
                   : walletsSaved 
                     ? 'bg-gray-900 border-gray-800' 
-                    : 'bg-gray-900/50 border-gray-800/50 opacity-50'
+                    : 'bg-gray-900/50 border-gray-800 opacity-50'
               }`}>
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
@@ -1225,7 +1225,7 @@ export default function HolderWallets() {
                     ? 'bg-yellow-500/10 border-yellow-500/30'
                     : fundingComplete 
                       ? 'bg-gray-900 border-gray-800' 
-                      : 'bg-gray-900/50 border-gray-800/50 opacity-50'
+                      : 'bg-gray-900/50 border-gray-800 opacity-50'
               }`}>
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
@@ -1314,7 +1314,6 @@ export default function HolderWallets() {
             </div>
           )}
         </div>
-        )}
       </div>
     );
   }
@@ -1340,16 +1339,14 @@ export default function HolderWallets() {
   return (
     <div className="w-full h-full flex gap-3 relative">
       {/* Wallets Section - Left */}
-      <div className="flex-1 bg-gradient-to-br from-gray-900/90 via-gray-900/80 to-gray-950/90 backdrop-blur-xl rounded-xl p-3 border border-gray-800/50 shadow-2xl overflow-auto">
-        {/* Header - Compact Terminal Style */}
+      <div className="flex-1 bg-gray-950 rounded-xl p-3 border border-gray-800 overflow-auto">
+        {/* Header */}
       <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-1.5">
-          <div className="p-1 bg-gradient-to-br from-blue-600/20 to-purple-600/20 rounded border border-blue-500/30">
-            <WalletIconSolid className="w-3.5 h-3.5 text-blue-400" />
-          </div>
+        <div className="flex items-center gap-2">
+          <WalletIconSolid className="w-4 h-4 text-purple-400" />
           <h2 className="text-base font-bold text-white">Trading Terminal</h2>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           <button
             onClick={async () => {
               try {
@@ -1369,28 +1366,27 @@ export default function HolderWallets() {
                 addTerminalMessage(`[x] Error: ${error.response?.data?.error || error.message}`, 'error');
               }
             }}
-            className="px-2 py-1 bg-gradient-to-r from-green-600/80 to-green-700/80 hover:from-green-500/80 hover:to-green-600/80 text-white rounded transition-all border border-green-500/30 flex items-center gap-1 shadow-lg"
+            className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-all flex items-center gap-1 text-xs font-medium"
             title="Create a new holder wallet"
           >
             <PlusIcon className="w-3 h-3" />
-            <span className="text-xs">Add Wallet</span>
+            Add Wallet
           </button>
           <button
             onClick={loadWallets}
-            className="px-2 py-1 bg-gradient-to-r from-gray-800/80 to-gray-900/80 hover:from-gray-700/80 hover:to-gray-800/80 text-white rounded transition-all border border-gray-700/50 flex items-center gap-1 shadow-lg"
+            className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-all flex items-center gap-1 text-xs"
           >
             <ArrowPathIcon className="w-3 h-3" />
-            <span className="text-xs">Refresh</span>
+            Refresh
           </button>
         </div>
       </div>
 
 
-      {/* Compact Header Bar - Token + Priority Fee */}
-      <div className="mb-2 flex flex-wrap items-center gap-2 p-2 bg-gray-800/30 rounded-lg border border-gray-700/30">
-        {/* Token Mint - With Load Input */}
+      {/* Token + Priority Fee */}
+      <div className="mb-2 flex flex-wrap items-center gap-2 p-2 bg-gray-900 rounded-lg border border-gray-800">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <CubeIcon className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+          <CubeIcon className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
           <span className="text-[10px] text-gray-400">Token:</span>
           {mintAddress ? (
             <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -1400,7 +1396,7 @@ export default function HolderWallets() {
                   navigator.clipboard.writeText(mintAddress);
                   addTerminalMessage(' Token address copied!', 'success');
                 }}
-                className="p-0.5 hover:bg-gray-700/50 rounded transition-all"
+                className="p-0.5 hover:bg-gray-800 rounded transition-all"
                 title="Copy address"
               >
                 <svg className="w-3 h-3 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1411,7 +1407,7 @@ export default function HolderWallets() {
                 href={`https://pump.fun/${mintAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="p-0.5 hover:bg-gray-700/50 rounded transition-all"
+                className="p-0.5 hover:bg-gray-800 rounded transition-all"
                 title="View on Pump.fun"
               >
                 <svg className="w-3 h-3 text-gray-400 hover:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1425,18 +1421,18 @@ export default function HolderWallets() {
           {/* Load Token Button - Always visible */}
           <div className="relative group">
             <button
-              className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-600/30 hover:bg-blue-600/50 text-blue-400 rounded border border-blue-500/30 transition-all"
+              className="px-1.5 py-0.5 text-[9px] font-bold bg-purple-600/30 hover:bg-purple-600/50 text-purple-400 rounded border border-purple-500/30 transition-all"
               title="Load any token to trade"
             >
               {mintAddress ? '↻ LOAD' : '+ LOAD'}
             </button>
             {/* Dropdown input */}
-            <div className="absolute top-full left-0 mt-1 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-2">
+            <div className="absolute top-full left-0 mt-1 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-2">
               <p className="text-[9px] text-gray-400 mb-1">Paste token address:</p>
               <input
                 type="text"
                 placeholder="Token mint address..."
-                className="w-full px-2 py-1 text-[10px] font-mono bg-gray-800 border border-gray-600 rounded focus:border-blue-500 focus:outline-none text-white placeholder-gray-500"
+                className="w-full px-2 py-1 text-[10px] font-mono bg-gray-800 border border-gray-600 rounded focus:border-purple-500 focus:outline-none text-white placeholder-gray-500"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={async (e) => {
                   if (e.key === 'Enter' && e.target.value.trim()) {
@@ -1502,28 +1498,28 @@ export default function HolderWallets() {
             <button
               onClick={() => setPriorityFee('none')}
               className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all ${
-                priorityFee === 'none' ? 'bg-gray-600 text-white' : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600/50'
+                priorityFee === 'none' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-600/50'
               }`}
               title="~0.0002 SOL (Jito tip only)"
             >NONE</button>
             <button
               onClick={() => setPriorityFee('normal')}
               className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all ${
-                priorityFee === 'normal' ? 'bg-green-600 text-white' : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600/50'
+                priorityFee === 'normal' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-600/50'
               }`}
               title="~0.00023-0.0003 SOL - Random variance (recommended)"
             >NORMAL</button>
             <button
               onClick={() => setPriorityFee('high')}
               className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all ${
-                priorityFee === 'high' ? 'bg-yellow-600 text-white' : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600/50'
+                priorityFee === 'high' ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-600/50'
               }`}
               title="~0.0007 SOL - Very fast"
             >HIGH</button>
             <button
               onClick={() => setPriorityFee('ultra')}
               className={`px-1.5 py-0.5 rounded text-[8px] font-bold transition-all ${
-                priorityFee === 'ultra' ? 'bg-red-600 text-white' : 'bg-gray-700/50 text-gray-400 hover:bg-gray-600/50'
+                priorityFee === 'ultra' ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-600/50'
               }`}
               title="~0.01 SOL - Maximum speed"
             >ULTRA</button>
@@ -1539,7 +1535,7 @@ export default function HolderWallets() {
 
 
       {/* Quick Actions - Organized with Labels & Tooltips */}
-      <div className="mb-2 p-3 bg-gray-800/40 rounded-lg border border-gray-700/30">
+      <div className="mb-2 p-3 bg-gray-800/40 rounded-lg border border-gray-800">
         <div className="flex flex-wrap gap-3">
           
           {/* BATCH SELL Section - INSTANT PARALLEL SELLS */}
@@ -1548,7 +1544,7 @@ export default function HolderWallets() {
               <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider"> Instant Sell</span>
               <div className="group relative">
                 <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
-                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-56 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-56 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-sm">
                   <p className="font-bold text-red-400 mb-1"> INSTANT parallel sells (no delay!)</p>
                   <p><strong>SELL ALL:</strong> DEV + Bundle + Holder wallets</p>
                   <p><strong>Bundles:</strong> DEV + Bundle wallets only</p>
@@ -1561,28 +1557,28 @@ export default function HolderWallets() {
               <button
                 onClick={() => handleBatchSell('all')}
                 disabled={batchSellRunning.all}
-                className="px-3 py-1.5 bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-xs font-bold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg shadow-red-500/20"
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-sm shadow-red-500/20"
               >
                 {batchSellRunning.all ? <ArrowPathIcon className="w-4 h-4 animate-spin" /> : <><BoltIcon className="w-4 h-4" /><span>SELL ALL</span></>}
               </button>
               <button
                 onClick={() => handleBatchSell('bundles')}
                 disabled={batchSellRunning.bundles}
-                className="px-2 py-1.5 bg-gradient-to-br from-orange-600/80 to-orange-700/80 hover:from-orange-500/80 hover:to-orange-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {batchSellRunning.bundles ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><CubeIcon className="w-3 h-3" /><span>Bundles</span></>}
               </button>
               <button
                 onClick={() => handleBatchSell('holders')}
                 disabled={batchSellRunning.holders}
-                className="px-2 py-1.5 bg-gradient-to-br from-purple-600/80 to-purple-700/80 hover:from-purple-500/80 hover:to-purple-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {batchSellRunning.holders ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><UserGroupIcon className="w-3 h-3" /><span>Holders</span></>}
               </button>
             </div>
           </div>
 
-          <div className="w-px bg-gray-700/50 self-stretch"></div>
+          <div className="w-px bg-gray-800 self-stretch"></div>
 
           {/* COLLECT SOL Section */}
           <div className="flex flex-col gap-1">
@@ -1590,7 +1586,7 @@ export default function HolderWallets() {
               <span className="text-[10px] font-bold text-green-400 uppercase tracking-wider">Collect SOL & Tokens</span>
               <div className="group relative">
                 <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
-                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-52 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-52 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-sm">
                   <p className="font-bold text-green-400 mb-1">Gather SOL & Tokens back to funding wallet</p>
                   <p className="mb-1"><strong>⚠️ WARNING:</strong> This will TRANSFER all tokens and SOL from wallets to your funding wallet, breaking anonymity links!</p>
                   <p><strong>New:</strong> Only wallets created this run (safe for warmed)</p>
@@ -1603,28 +1599,28 @@ export default function HolderWallets() {
               <button
                 onClick={() => handleMenuCommand('gather-new-only')}
                 disabled={menuRunning['gather-new-only']}
-                className="px-2 py-1.5 bg-gradient-to-br from-emerald-600/80 to-emerald-700/80 hover:from-emerald-500/80 hover:to-emerald-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-green-600 hover:bg-green-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {menuRunning['gather-new-only'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowUpTrayIcon className="w-3 h-3" /><span>New</span></>}
               </button>
               <button
                 onClick={() => handleMenuCommand('gather')}
                 disabled={menuRunning['gather']}
-                className="px-2 py-1.5 bg-gradient-to-br from-green-600/80 to-green-700/80 hover:from-green-500/80 hover:to-green-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-green-600 hover:bg-green-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {menuRunning['gather'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowUpTrayIcon className="w-3 h-3" /><span>Run</span></>}
               </button>
               <button
                 onClick={() => handleMenuCommand('gather-all')}
                 disabled={menuRunning['gather-all']}
-                className="px-2 py-1.5 bg-gradient-to-br from-green-500/80 to-green-600/80 hover:from-green-400/80 hover:to-green-500/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-green-600 hover:bg-green-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {menuRunning['gather-all'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowUpTrayIcon className="w-3 h-3" /><span>All</span></>}
               </button>
             </div>
           </div>
 
-          <div className="w-px bg-gray-700/50 self-stretch"></div>
+          <div className="w-px bg-gray-800 self-stretch"></div>
 
           {/* UTILITIES Section */}
           <div className="flex flex-col gap-1">
@@ -1632,7 +1628,7 @@ export default function HolderWallets() {
               <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Utilities</span>
               <div className="group relative">
                 <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
-                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-48 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-48 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-sm">
                   <p><strong>Fees:</strong> Collect pump.fun creator fees</p>
                   <p><strong>Send:</strong> Transfer SOL between wallets</p>
                   <p><strong>Status:</strong> Check bundle/tx status</p>
@@ -1643,28 +1639,28 @@ export default function HolderWallets() {
               <button
                 onClick={() => handleMenuCommand('collect-fees')}
                 disabled={menuRunning['collect-fees']}
-                className="px-2 py-1.5 bg-gradient-to-br from-purple-600/80 to-purple-700/80 hover:from-purple-500/80 hover:to-purple-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {menuRunning['collect-fees'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><BanknotesIcon className="w-3 h-3" /><span>Fees</span></>}
               </button>
               <button
                 onClick={() => setShowTransferModal(true)}
                 disabled={wallets.length === 0}
-                className="px-2 py-1.5 bg-gradient-to-br from-cyan-600/80 to-cyan-700/80 hover:from-cyan-500/80 hover:to-cyan-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 <CurrencyDollarIcon className="w-3 h-3" /><span>Send</span>
               </button>
               <button
                 onClick={() => handleMenuCommand('check-bundle')}
                 disabled={menuRunning['check-bundle']}
-                className="px-2 py-1.5 bg-gradient-to-br from-blue-600/80 to-blue-700/80 hover:from-blue-500/80 hover:to-blue-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {menuRunning['check-bundle'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><MagnifyingGlassIcon className="w-3 h-3" /><span>Status</span></>}
               </button>
             </div>
           </div>
 
-          <div className="w-px bg-gray-700/50 self-stretch"></div>
+          <div className="w-px bg-gray-800 self-stretch"></div>
 
           {/* RECOVERY Section */}
           <div className="flex flex-col gap-1">
@@ -1672,7 +1668,7 @@ export default function HolderWallets() {
               <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Recovery</span>
               <div className="group relative">
                 <QuestionMarkCircleIcon className="w-3.5 h-3.5 text-gray-500 cursor-help" />
-                <div className="absolute bottom-full right-0 mb-1 hidden group-hover:block w-56 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-xl">
+                <div className="absolute bottom-full right-0 mb-1 hidden group-hover:block w-56 p-2 bg-gray-900 rounded-lg border border-gray-700 text-[10px] text-gray-300 z-50 shadow-sm">
                   <p className="font-bold text-amber-400 mb-1">Fix failed launches</p>
                   <p><strong>Retry:</strong> Resubmit SAME bundle (same token). Use when Jito bundle didn't land.</p>
                   <p className="mt-1"><strong>Relaunch:</strong> Same wallets but NEW token address. Use when token is broken/rugged.</p>
@@ -1683,7 +1679,7 @@ export default function HolderWallets() {
               <button
                 onClick={handleRetryBundle}
                 disabled={menuRunning['retry-bundle'] || !mintAddress}
-                className="px-2 py-1.5 bg-gradient-to-br from-orange-600/80 to-orange-700/80 hover:from-orange-500/80 hover:to-orange-600/80 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-[10px] font-semibold rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
                 {menuRunning['retry-bundle'] ? <ArrowPathIcon className="w-3 h-3 animate-spin" /> : <><ArrowPathIcon className="w-3 h-3" /><span>Retry</span></>}
               </button>
@@ -1707,7 +1703,7 @@ export default function HolderWallets() {
                     addTerminalMessage(`Error: ${error.response?.data?.error || error.message}`, 'error');
                   }
                 }}
-                className="px-2 py-1.5 bg-gradient-to-br from-amber-600/80 to-yellow-700/80 hover:from-amber-500/80 hover:to-yellow-600/80 text-white text-[10px] font-semibold rounded transition-all flex items-center gap-1"
+                className="px-2 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] font-semibold rounded transition-all flex items-center gap-1"
               >
                 <RocketLaunchIcon className="w-3 h-3" /><span>Relaunch</span>
               </button>
@@ -1719,7 +1715,7 @@ export default function HolderWallets() {
       {/* Custom Confirmation Modal */}
       {confirmationModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-gray-900/95 via-gray-900/90 to-gray-950/95 backdrop-blur-xl rounded-xl p-6 border border-gray-700/50 shadow-2xl max-w-md w-full transform transition-all">
+          <div className="bg-gray-900 backdrop-blur-xl rounded-xl p-6 border border-gray-800 shadow-sm max-w-md w-full transform transition-all">
             <div className="flex items-start gap-4 mb-4">
               {confirmationModal.type === 'danger' && (
                 <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center border border-red-500/50">
@@ -1749,7 +1745,7 @@ export default function HolderWallets() {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={confirmationModal.onCancel}
-                className="flex-1 px-4 py-2.5 bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700/50 text-gray-300 hover:text-white font-semibold rounded-lg transition-all"
+                className="flex-1 px-4 py-2.5 bg-gray-800/60 hover:bg-gray-700/60 border border-gray-800 text-gray-300 hover:text-white font-semibold rounded-lg transition-all"
               >
                 Cancel
               </button>
@@ -1757,10 +1753,10 @@ export default function HolderWallets() {
                 onClick={confirmationModal.onConfirm}
                 className={`flex-1 px-4 py-2.5 font-semibold rounded-lg transition-all ${
                   confirmationModal.type === 'danger'
-                    ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white'
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
                     : confirmationModal.type === 'warning'
-                    ? 'bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600 text-white'
-                    : 'bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-500 hover:to-cyan-600 text-white'
+                    ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                    : 'bg-cyan-600 hover:bg-cyan-500 text-white'
                 }`}
               >
                 Confirm
@@ -1773,7 +1769,7 @@ export default function HolderWallets() {
       {/* Transfer SOL Modal */}
       {showTransferModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-gray-900/95 via-gray-900/90 to-gray-950/95 backdrop-blur-xl rounded-xl p-6 border border-gray-700/50 shadow-2xl max-w-md w-full">
+          <div className="bg-gray-900 backdrop-blur-xl rounded-xl p-6 border border-gray-800 shadow-sm max-w-md w-full">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <CurrencyDollarIcon className="w-5 h-5 text-cyan-400" />
@@ -1798,7 +1794,7 @@ export default function HolderWallets() {
                 <select
                   value={transferFrom}
                   onChange={(e) => setTransferFrom(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-800/60 border border-gray-700/50 rounded text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                  className="w-full px-3 py-2 bg-gray-800/60 border border-gray-800 rounded text-white text-sm focus:outline-none focus:border-cyan-500/50"
                 >
                   <option value="">Select wallet...</option>
                   {wallets.map((wallet, idx) => (
@@ -1814,7 +1810,7 @@ export default function HolderWallets() {
                 <select
                   value={transferTo}
                   onChange={(e) => setTransferTo(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-800/60 border border-gray-700/50 rounded text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                  className="w-full px-3 py-2 bg-gray-800/60 border border-gray-800 rounded text-white text-sm focus:outline-none focus:border-cyan-500/50"
                 >
                   <option value="">Select wallet...</option>
                   {wallets.map((wallet, idx) => (
@@ -1833,14 +1829,14 @@ export default function HolderWallets() {
                   value={transferAmount}
                   onChange={(e) => setTransferAmount(e.target.value)}
                   placeholder="0.0"
-                  className="w-full px-3 py-2 bg-gray-800/60 border border-gray-700/50 rounded text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                  className="w-full px-3 py-2 bg-gray-800/60 border border-gray-800 rounded text-white text-sm focus:outline-none focus:border-cyan-500/50"
                 />
               </div>
               
               <button
                 onClick={handleTransferSol}
                 disabled={transferring || !transferFrom || !transferTo || !transferAmount}
-                className="w-full px-4 py-2 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-500 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded transition-all"
+                className="w-full px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded transition-all"
               >
                 {transferring ? 'Transferring...' : 'Transfer SOL'}
               </button>
@@ -1878,26 +1874,26 @@ export default function HolderWallets() {
                 key={index}
                 className={`backdrop-blur-xl rounded-lg p-2 border-2 ${
                   isFunding
-                    ? 'bg-gradient-to-br from-purple-900/40 via-pink-900/30 to-purple-900/40 border-purple-400/80 shadow-xl shadow-purple-500/30 ring-2 ring-purple-400/50' 
+                    ? 'bg-purple-500/5 border-purple-500/40' 
                     : isDev 
-                    ? 'bg-gradient-to-br from-green-900/30 via-gray-900/70 to-gray-950/70 border-green-500/70 shadow-xl shadow-green-500/20 ring-2 ring-green-400/40' 
+                    ? 'bg-gray-900 border-green-500/40' 
                     : isBundle 
-                    ? 'bg-gradient-to-br from-purple-900/20 via-gray-900/70 to-gray-950/70 border-purple-500/50 shadow-lg' 
-                    : 'bg-gradient-to-br from-blue-900/20 via-gray-900/70 to-gray-950/70 border-blue-500/50 shadow-lg ring-1 ring-blue-400/30'
-                } hover:shadow-xl transition-all ${styles.hoverBorder}/70`}
+                    ? 'bg-gray-900 border-purple-500/40' 
+                    : 'bg-gray-900 border-cyan-500/40'
+                } hover:shadow-sm transition-all ${styles.hoverBorder}/70`}
               >
                 {/* Wallet Header - Compact with % Supply */}
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-1">
                     {wallet.type === 'funding' && <CurrencyDollarIcon className="w-3 h-3 text-purple-300" />}
-                    {wallet.type === 'holder' && <UserGroupIcon className="w-3 h-3 text-blue-400" />}
+                    {wallet.type === 'holder' && <UserGroupIcon className="w-3 h-3 text-purple-400" />}
                     {wallet.type === 'bundle' && <CubeIcon className="w-3 h-3 text-purple-400" />}
                     {wallet.type === 'dev' && <RocketLaunchIcon className="w-3 h-3 text-green-400" />}
                     <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
                       isFunding 
-                        ? 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg shadow-purple-500/40' 
+                        ? 'bg-purple-600 shadow-sm shadow-purple-500/40' 
                         : isDev 
-                        ? 'bg-gradient-to-r from-green-600 to-green-500 shadow-lg shadow-green-500/30' 
+                        ? 'bg-green-600 shadow-sm shadow-green-500/30' 
                         : styles.badgeColor
                     } text-white`}>
                       {isFunding ? ' FUNDING' : isDev ? '⭐ DEV' : styles.label}
@@ -1905,7 +1901,7 @@ export default function HolderWallets() {
                   </div>
                   {hasTokens && (() => {
                     const supplyPercent = (wallet.tokenBalance / 1000000000) * 100;
-                    let colorClass = 'text-blue-400'; // Default: < 1%
+                    let colorClass = 'text-purple-400'; // Default: < 1%
                     if (supplyPercent >= 2) {
                       colorClass = 'text-yellow-400 font-extrabold'; // >= 2%: Yellow/Bright
                     } else if (supplyPercent >= 1) {
@@ -1927,7 +1923,7 @@ export default function HolderWallets() {
                   <div className="flex items-center gap-1 mb-1 flex-wrap">
                     {hasAutoBuy && (
                       <span 
-                        className="px-1 py-0.5 text-[8px] font-bold rounded bg-gradient-to-r from-blue-500/80 to-blue-600/80 text-white border border-blue-400/50"
+                        className="px-1 py-0.5 text-[8px] font-bold rounded bg-purple-600 text-white border border-purple-400/50"
                         title="Auto-Buy Enabled"
                       >
                         🔵 AUTO-BUY
@@ -1935,7 +1931,7 @@ export default function HolderWallets() {
                     )}
                     {hasAutoSell && (
                       <span 
-                        className="px-1 py-0.5 text-[8px] font-bold rounded bg-gradient-to-r from-orange-500/80 to-red-600/80 text-white border border-orange-400/50"
+                        className="px-1 py-0.5 text-[8px] font-bold rounded bg-orange-600 text-white border border-orange-500/30"
                         title={`Auto-Sell: ${autoSellThreshold} SOL threshold`}
                       >
                         🔴 AUTO-SELL {autoSellThreshold ? `(${autoSellThreshold.toFixed(2)} SOL)` : ''}
@@ -1970,7 +1966,7 @@ export default function HolderWallets() {
                         key={amount}
                         onClick={() => handleQuickBuy(wallet, amount)}
                         disabled={loading[`${wallet.address}-buy-${amount}`] || wallet.solBalance < amount}
-                        className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                        className="px-1 py-0.5 text-[9px] bg-green-600 hover:bg-green-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
                         title={`${amount} SOL`}
                       >
                         {loading[`${wallet.address}-buy-${amount}`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : amount}
@@ -1983,7 +1979,7 @@ export default function HolderWallets() {
                         key={amount}
                         onClick={() => handleQuickBuy(wallet, amount)}
                         disabled={loading[`${wallet.address}-buy-${amount}`] || wallet.solBalance < amount}
-                        className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                        className="px-1 py-0.5 text-[9px] bg-green-600 hover:bg-green-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
                         title={`${amount} SOL`}
                       >
                         {loading[`${wallet.address}-buy-${amount}`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : amount}
@@ -2000,7 +1996,7 @@ export default function HolderWallets() {
                     <button
                       onClick={() => handlePercentageBuy(wallet, 20)}
                       disabled={loading[`${wallet.address}-buy-percent-20`] || wallet.solBalance <= 0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-500/90 to-green-600/90 hover:from-green-400/90 hover:to-green-500/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                      className="px-1 py-0.5 text-[9px] bg-green-600 hover:bg-green-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
                       title="Buy 20% of SOL balance"
                     >
                       {loading[`${wallet.address}-buy-percent-20`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '20%'}
@@ -2008,7 +2004,7 @@ export default function HolderWallets() {
                     <button
                       onClick={() => handlePercentageBuy(wallet, 50)}
                       disabled={loading[`${wallet.address}-buy-percent-50`] || wallet.solBalance <= 0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-500/90 to-green-600/90 hover:from-green-400/90 hover:to-green-500/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                      className="px-1 py-0.5 text-[9px] bg-green-600 hover:bg-green-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
                       title="Buy 50% of SOL balance"
                     >
                       {loading[`${wallet.address}-buy-percent-50`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '50%'}
@@ -2016,7 +2012,7 @@ export default function HolderWallets() {
                     <button
                       onClick={() => handlePercentageBuy(wallet, 90)}
                       disabled={loading[`${wallet.address}-buy-percent-90`] || wallet.solBalance <= 0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-green-500/90 to-green-600/90 hover:from-green-400/90 hover:to-green-500/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
+                      className="px-1 py-0.5 text-[9px] bg-green-600 hover:bg-green-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30"
                       title="Buy 90% of SOL balance"
                     >
                       {loading[`${wallet.address}-buy-percent-90`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '90%'}
@@ -2031,12 +2027,12 @@ export default function HolderWallets() {
                       value={manualInputs[`${wallet.address}-buy-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-buy-manual`]: e.target.value })}
                       placeholder="SOL"
-                      className="flex-1 min-w-0 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-700/50 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-green-500/50 focus:border-green-500/50"
+                      className="flex-1 min-w-0 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-800 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-green-500/50 focus:border-green-500/50"
                     />
                     <button
                       onClick={() => handleManualBuy(wallet)}
                       disabled={loading[`${wallet.address}-buy-manual`] || !manualInputs[`${wallet.address}-buy-manual`]}
-                      className="px-2 py-0.5 min-w-[50px] text-[9px] bg-gradient-to-br from-green-600/90 to-green-700/90 hover:from-green-500/90 hover:to-green-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30 flex-shrink-0"
+                      className="px-2 py-0.5 min-w-[50px] text-[9px] bg-green-600 hover:bg-green-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-green-500/30 flex-shrink-0"
                     >
                       {loading[`${wallet.address}-buy-manual`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : 'Buy'}
                     </button>
@@ -2053,7 +2049,7 @@ export default function HolderWallets() {
                     <button
                       onClick={() => handleQuickSell(wallet, 20)}
                       disabled={loading[`${wallet.address}-sell-20`] || !wallet.tokenBalance || wallet.tokenBalance === 0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-red-600/90 to-red-700/90 hover:from-red-500/90 hover:to-red-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
+                      className="px-1 py-0.5 text-[9px] bg-red-600 hover:bg-red-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
                       title="Sell 20%"
                     >
                       {loading[`${wallet.address}-sell-20`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '20%'}
@@ -2061,7 +2057,7 @@ export default function HolderWallets() {
                     <button
                       onClick={() => handleQuickSell(wallet, 50)}
                       disabled={loading[`${wallet.address}-sell-50`] || !wallet.tokenBalance || wallet.tokenBalance === 0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-red-600/90 to-red-700/90 hover:from-red-500/90 hover:to-red-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
+                      className="px-1 py-0.5 text-[9px] bg-red-600 hover:bg-red-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
                       title="Sell 50%"
                     >
                       {loading[`${wallet.address}-sell-50`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '50%'}
@@ -2069,7 +2065,7 @@ export default function HolderWallets() {
                     <button
                       onClick={() => handleQuickSell(wallet, 100)}
                       disabled={loading[`${wallet.address}-sell-100`] || !wallet.tokenBalance || wallet.tokenBalance === 0}
-                      className="px-1 py-0.5 text-[9px] bg-gradient-to-br from-red-600/90 to-red-700/90 hover:from-red-500/90 hover:to-red-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
+                      className="px-1 py-0.5 text-[9px] bg-red-600 hover:bg-red-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30"
                       title="Sell 100%"
                     >
                       {loading[`${wallet.address}-sell-100`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : '100%'}
@@ -2083,12 +2079,12 @@ export default function HolderWallets() {
                       value={manualInputs[`${wallet.address}-sell-manual`] || ''}
                       onChange={(e) => setManualInputs({ ...manualInputs, [`${wallet.address}-sell-manual`]: e.target.value })}
                       placeholder="%"
-                      className="flex-1 min-w-0 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-700/50 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500/50 focus:border-red-500/50"
+                      className="flex-1 min-w-0 px-1 py-0.5 text-[9px] bg-gray-800/50 border border-gray-800 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500/50 focus:border-red-500/50"
                     />
                     <button
                       onClick={() => handleManualSell(wallet)}
                       disabled={loading[`${wallet.address}-sell-manual`] || !manualInputs[`${wallet.address}-sell-manual`]}
-                      className="px-2 py-0.5 min-w-[50px] text-[9px] bg-gradient-to-br from-red-600/90 to-red-700/90 hover:from-red-500/90 hover:to-red-600/90 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30 flex-shrink-0"
+                      className="px-2 py-0.5 min-w-[50px] text-[9px] bg-red-600 hover:bg-red-500 text-white rounded transition-all disabled:opacity-30 disabled:cursor-not-allowed border border-red-500/30 flex-shrink-0"
                     >
                       {loading[`${wallet.address}-sell-manual`] ? <ArrowPathIcon className="w-2.5 h-2.5 animate-spin mx-auto" /> : 'Sell'}
                     </button>
@@ -2107,10 +2103,10 @@ export default function HolderWallets() {
       )}
 
         {/* Terminal Console - Ultra Compact */}
-        <div className="mt-2 bg-gradient-to-br from-black/80 via-gray-950/80 to-black/80 backdrop-blur-xl rounded border border-gray-800/50 shadow-2xl overflow-hidden">
-        <div className="flex justify-between items-center p-1 bg-gradient-to-r from-gray-900/80 to-gray-800/80 border-b border-gray-700/50">
+        <div className="mt-2 bg-gray-950 rounded border border-gray-800 shadow-sm overflow-hidden">
+        <div className="flex justify-between items-center p-1 bg-gray-900 border-b border-gray-800">
           <div className="flex items-center gap-1">
-            <CommandLineIcon className="w-3 h-3 text-blue-400" />
+            <CommandLineIcon className="w-3 h-3 text-purple-400" />
             <h3 className="text-[9px] font-bold text-white">Terminal</h3>
             {launchProgressMessages.length > 0 && (
               <span className="text-[8px] text-green-400 ml-1">● Live Launch</span>
@@ -2121,7 +2117,7 @@ export default function HolderWallets() {
               setTerminalMessages([]);
               setLaunchProgressMessages([]);
             }}
-            className="px-1.5 py-0.5 text-[8px] bg-gray-800/50 hover:bg-gray-700/50 text-white rounded transition-all flex items-center gap-0.5 border border-gray-700/50"
+            className="px-1.5 py-0.5 text-[8px] bg-gray-800/50 hover:bg-gray-800 text-white rounded transition-all flex items-center gap-0.5 border border-gray-800"
           >
             <TrashIcon className="w-2.5 h-2.5" />
             <span>Clear</span>
@@ -2172,9 +2168,9 @@ export default function HolderWallets() {
 
       {/* Token Info & Chart Section - Right */}
       {mintAddress && (
-        <div className="w-1/2 bg-gradient-to-br from-gray-900/90 via-gray-900/80 to-gray-950/90 backdrop-blur-xl rounded-xl border border-gray-800/50 shadow-2xl overflow-hidden flex flex-col">
+        <div className="w-1/2 bg-gray-950 rounded-xl border border-gray-800 shadow-sm overflow-hidden flex flex-col">
           {/* Token Header - Compact */}
-          <div className="px-2 py-1.5 bg-gradient-to-r from-gray-900/80 to-gray-800/80 border-b border-gray-700/50">
+          <div className="px-2 py-1.5 bg-gray-900 border-b border-gray-800">
             {tokenInfo ? (
               <div className="flex items-center justify-between gap-2">
                 {/* Left: Token Info */}
@@ -2184,7 +2180,7 @@ export default function HolderWallets() {
                     {tokenInfo.logoURI ? (
                       <img src={tokenInfo.logoURI} alt={tokenInfo.symbol} className="w-6 h-6 rounded" />
                     ) : (
-                      <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center border border-green-500/50">
+                      <div className="w-6 h-6 rounded bg-purple-600 flex items-center justify-center border border-green-500/50">
                         <span className="text-white font-bold text-[10px]">{tokenInfo.symbol?.[0] || '?'}</span>
                       </div>
                     )}
@@ -2261,8 +2257,8 @@ export default function HolderWallets() {
           </div>
           
           {/* Chart Section - Birdeye Only */}
-          <div className="flex-1 min-h-[200px] border-b border-gray-700/50 flex flex-col">
-            <div className="flex items-center justify-between px-2 py-1 bg-gray-900/50 border-b border-gray-700/30">
+          <div className="flex-1 min-h-[200px] border-b border-gray-800 flex flex-col">
+            <div className="flex items-center justify-between px-2 py-1 bg-gray-900/50 border-b border-gray-800">
               <span className="text-[10px] text-gray-400">Price Chart (Birdeye)</span>
             </div>
             
@@ -2282,8 +2278,8 @@ export default function HolderWallets() {
           </div>
           
           {/* Combined Stats Bar - External Volume, Our P&L, Live Trades */}
-          <div className="flex-1 flex flex-col min-h-0 border-t border-gray-700/50">
-            <div className="p-2 bg-gradient-to-r from-gray-900/90 to-gray-800/90 border-b border-gray-700/50">
+          <div className="flex-1 flex flex-col min-h-0 border-t border-gray-800">
+            <div className="p-2 bg-gray-900 border-b border-gray-800">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 {/* Left: Live Trades title + controls */}
                 <div className="flex items-center gap-3">
@@ -2361,7 +2357,7 @@ export default function HolderWallets() {
             <div className="flex-1 overflow-y-auto">
               <table className="w-full text-[11px]">
                 <thead className="sticky top-0 bg-gray-900/90 z-10">
-                  <tr className="border-b border-gray-700/50">
+                  <tr className="border-b border-gray-800">
                     <th className="text-left p-1.5 text-gray-400 font-semibold">Type</th>
                     <th className="text-right p-1.5 text-gray-400 font-semibold">SOL</th>
                     <th className="text-right p-1.5 text-gray-400 font-semibold">USD</th>
@@ -2406,7 +2402,7 @@ export default function HolderWallets() {
                         : '-';
                       
                       return (
-                        <tr key={idx} className={`border-b border-gray-800/30 hover:bg-gray-800/30 ${trade.type === 'buy' ? 'bg-green-900/10' : 'bg-red-900/10'} ${
+                        <tr key={idx} className={`border-b border-gray-800/30 hover:bg-gray-900 ${trade.type === 'buy' ? 'bg-green-900/10' : 'bg-red-900/10'} ${
                           trade.walletType === 'FUNDING' ? 'ring-1 ring-yellow-500/50 bg-yellow-900/10' :
                           trade.walletType === 'DEV' ? 'ring-1 ring-orange-500/50 bg-orange-900/10' :
                           trade.walletType === 'Bundle' ? 'ring-1 ring-purple-500/50 bg-purple-900/10' :
@@ -2461,7 +2457,7 @@ export default function HolderWallets() {
                                   href={`https://solscan.io/account/${trade.fullTrader}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-gray-400 ml-1 hover:text-blue-400 hover:underline cursor-pointer text-[10px]"
+                                  className="text-gray-400 ml-1 hover:text-purple-400 hover:underline cursor-pointer text-[10px]"
                                   onClick={(e) => e.stopPropagation()}
                                   title={`View ${trade.fullTrader} on Solscan`}
                                 >
@@ -2473,7 +2469,7 @@ export default function HolderWallets() {
                                 href={`https://solscan.io/account/${trade.fullTrader}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-gray-400 hover:text-blue-400 hover:underline cursor-pointer"
+                                className="text-gray-400 hover:text-purple-400 hover:underline cursor-pointer"
                                 onClick={(e) => e.stopPropagation()}
                                 title={`View ${trade.fullTrader} on Solscan`}
                               >

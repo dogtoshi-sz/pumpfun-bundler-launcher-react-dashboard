@@ -16,7 +16,7 @@ interface PumpAddress {
 }
 
 const SUFFIX = 'pump';
-const TOTAL_CORES = 14;
+const TOTAL_CORES = Math.max(1, cpus().length - 2);
 const WORKER_REST_INTERVAL = 300000; // 5 minutes rest every cycle
 const WORKER_ACTIVE_TIME = 1800000; // 30 minutes active time
 
@@ -73,6 +73,7 @@ class WorkerPool {
   private workerStats: Map<number, { found: number; attempts: number; startTime: number }> = new Map();
   private totalFound = 0;
   private totalAttempts = 0;
+  private stopping = false;
 
   constructor() {
     // Initialize all workers as active
@@ -142,9 +143,8 @@ class WorkerPool {
         };
         saveAddress(address);
 
-        // Restart worker to find another
         worker.terminate();
-        setTimeout(() => this.startWorker(id), 100);
+        if (!this.stopping) setTimeout(() => this.startWorker(id), 100);
       } else if (message.progress) {
         const stats = this.workerStats.get(message.workerId) || { found: 0, attempts: 0, startTime: Date.now() };
         stats.attempts += message.attempts;
@@ -156,13 +156,12 @@ class WorkerPool {
     worker.on('error', (error) => {
       console.error(`❌ Worker ${workerId} error:`, error);
       worker.terminate();
-      setTimeout(() => this.startWorker(workerId), 1000);
+      if (!this.stopping) setTimeout(() => this.startWorker(workerId), 1000);
     });
 
     worker.on('exit', (code) => {
-      if (code !== 0) {
+      if (code !== 0 && !this.stopping) {
         console.log(`⚠️  Worker ${workerId} exited with code ${code}`);
-        // Restart worker
         setTimeout(() => this.startWorker(workerId), 1000);
       }
     });
@@ -232,6 +231,7 @@ class WorkerPool {
   }
 
   private stop(): void {
+    this.stopping = true;
     for (const workerId in this.workers) {
       this.workers[workerId].terminate();
     }

@@ -1,5 +1,5 @@
-import { VersionedTransaction, Keypair, Connection, ComputeBudgetProgram, TransactionInstruction, TransactionMessage, PublicKey, SystemProgram } from "@solana/web3.js"
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token"
+import { VersionedTransaction, Keypair, Connection, ComputeBudgetProgram, TransactionInstruction, TransactionMessage, PublicKey, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token"
 import { SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk"
 import base58 from "bs58"
 import fs from "fs"
@@ -17,14 +17,14 @@ if (fs.existsSync(rootEnvPath)) {
   console.log(`[index.ts] Using default .env location`)
 }
 
-import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT, USE_NORMAL_LAUNCH, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, AUTO_SELL_50_PERCENT, AUTO_HOLDER_WALLET_BUY, HOLDER_WALLET_PRIORITY_FEE, HOLDER_WALLET_AUTO_BUY_DELAYS, MARKET_CAP_TRACKING_ENABLED, MARKET_CAP_SELL_THRESHOLD, MARKET_CAP_CHECK_INTERVAL, TOKEN_NAME, TOKEN_SYMBOL, AUTO_BUY_FRONT_RUN_THRESHOLD, AUTO_BUY_FRONT_RUN_CHECK_DELAY, PUMP_PROGRAM } from "./constants"
+import { DISTRIBUTION_WALLETNUM, LIL_JIT_MODE, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, VANITY_MODE, BUYER_AMOUNT, AUTO_RAPID_SELL, AUTO_GATHER, BUNDLE_WALLET_COUNT, BUNDLE_SWAP_AMOUNTS, HOLDER_WALLET_COUNT, HOLDER_SWAP_AMOUNTS, HOLDER_WALLET_AMOUNT, USE_NORMAL_LAUNCH, WEBSOCKET_TRACKING_ENABLED, WEBSOCKET_EXTERNAL_BUY_THRESHOLD, WEBSOCKET_EXTERNAL_BUY_WINDOW, WEBSOCKET_ULTRA_FAST_MODE, AUTO_SELL_50_PERCENT, AUTO_HOLDER_WALLET_BUY, HOLDER_WALLET_PRIORITY_FEE, HOLDER_WALLET_AUTO_BUY_DELAYS, MARKET_CAP_TRACKING_ENABLED, MARKET_CAP_SELL_THRESHOLD, MARKET_CAP_CHECK_INTERVAL, TOKEN_NAME, TOKEN_SYMBOL, AUTO_BUY_FRONT_RUN_THRESHOLD, AUTO_BUY_FRONT_RUN_CHECK_DELAY, PUMP_PROGRAM, JITO_FEE } from "./constants"
 
 // CRITICAL: Read BUYER_WALLET directly from process.env AFTER reloading .env
 // This ensures we get the latest value even if it was just updated
 const BUYER_WALLET = process.env.BUYER_WALLET || ''
 import { generateVanityAddress, saveDataToFile, sleep, getNextPumpAddress, markPumpAddressAsUsed } from "./utils"
 import { buyTokenSimple } from "./cli/trading-terminal"
-import { createTokenTx, distributeSol, createLUT, makeBuyIx, addAddressesToTableMultiExtend, fundExistingWalletWithMixing, loadMixingWallets, fundExistingWalletWithMultipleIntermediaries } from "./src/main";
+import { createTokenTx, distributeSol, createLUT, makeBuyIx, makeBundleBuyIx, addAddressesToTableMultiExtend, fundExistingWalletWithMixing, loadMixingWallets, fundExistingWalletWithMultipleIntermediaries, fetchPumpGlobalState } from "./src/main";
 import { USE_MIXING_WALLETS, USE_MULTI_INTERMEDIARY_SYSTEM, NUM_INTERMEDIARY_HOPS, BUNDLE_INTERMEDIARY_HOPS, HOLDER_INTERMEDIARY_HOPS } from "./constants/constants";
 import { executeJitoTx, stopJitoRetries } from "./executor/jito";
 import { sendBundle } from "./executor/liljito";
@@ -407,7 +407,8 @@ const main = async () => {
     console.log(`   ✅ Creator wallet is different from funding wallet (correct)`)
   }
 
-  const tokenCreationIxs = await createTokenTx(buyerKp, mintKp, mainKp)
+  const buyerAmount = Number(process.env.BUYER_AMOUNT || '0.1');
+  const tokenCreationIxs = await createTokenTx(buyerKp, mintKp, mainKp, buyerAmount)
   if (tokenCreationIxs.length == 0) {
     console.log("Token creation failed")
     return
@@ -435,7 +436,6 @@ const main = async () => {
     ? holderSwapAmountsString.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
     : [];
   const holderWalletAmount = Number(process.env.HOLDER_WALLET_AMOUNT || '0.01');
-  const buyerAmount = Number(process.env.BUYER_AMOUNT || '0.1');
   
   console.log(`\n📊 Buy Amount Configuration (from .env):`);
   console.log(`   - BUNDLE_SWAP_AMOUNTS from .env: ${bundleSwapAmountsString || '(empty)'}`);
@@ -1545,50 +1545,44 @@ const main = async () => {
   const buyIxsByWallet: { [walletIndex: number]: TransactionInstruction[] } = {}
   const walletsUsed: Keypair[] = [] // Track wallets that actually get buy instructions
 
+  // V2: Track cumulative SOL bought for offline bonding curve simulation
+  // Start with the dev buy amount (already included in createTokenTx via createV2AndBuyInstructions)
+  let cumulativeSolBought = buyerAmount;
+
   for (let i = 0; i < bundleWalletCount; i++) {
     // Get amount for this wallet
     const customAmount = swapAmountsToUse[i];
     
-    // Determine buy amount:
-    // - null or undefined: use SWAP_AMOUNT (fallback)
-    // - 0: skip this wallet (explicit skip)
-    // - > 0: use custom amount
-    // - <= 0 or NaN: skip this wallet (invalid)
     let buyAmount: number;
     if (customAmount === null || customAmount === undefined) {
-      // No custom amount specified - use SWAP_AMOUNT
       buyAmount = SWAP_AMOUNT;
     } else if (customAmount === 0) {
-      // Explicit 0 means skip this wallet
-      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) explicitly set to 0 in BUNDLE_SWAP_AMOUNTS - skipping buy`);
+      console.warn(`Wallet ${i} (${kps[i].publicKey.toBase58()}) explicitly set to 0 in BUNDLE_SWAP_AMOUNTS - skipping buy`);
       continue;
     } else if (isNaN(customAmount) || customAmount <= 0) {
-      // Invalid amount - skip this wallet
-      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) has invalid amount (${customAmount}) - skipping buy`);
+      console.warn(`Wallet ${i} (${kps[i].publicKey.toBase58()}) has invalid amount (${customAmount}) - skipping buy`);
       continue;
     } else {
-      // Valid custom amount
       buyAmount = customAmount;
     }
     
-    // Final validation (should never fail if we got here, but be safe)
     if (isNaN(buyAmount) || buyAmount <= 0) {
-      console.error(`❌ CRITICAL: Buy amount validation failed for wallet ${i}: ${buyAmount}. Skipping wallet.`);
-      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) will NOT be used for buying`);
+      console.error(`Buy amount validation failed for wallet ${i}: ${buyAmount}. Skipping wallet.`);
       continue;
     }
     
     const buyAmountLamports = Math.floor(buyAmount * 10 ** 9);
     if (isNaN(buyAmountLamports) || buyAmountLamports <= 0) {
-      console.error(`❌ Invalid buy amount in lamports for wallet ${i}: ${buyAmountLamports}. Skipping wallet.`);
-      console.warn(`⚠️  Wallet ${i} (${kps[i].publicKey.toBase58()}) will NOT be used for buying (skipped due to invalid lamports)`);
-      continue; // Skip this wallet
+      console.error(`Invalid buy amount in lamports for wallet ${i}: ${buyAmountLamports}. Skipping wallet.`);
+      continue;
     }
-    // CRITICAL: buyerKp is the token creator (passed to createTokenTx), so it must be the referrer
-    const ix = await makeBuyIx(kps[i], buyAmountLamports, i, buyerKp.publicKey, mintAddress)
-    buyIxsByWallet[i] = ix // Store by wallet index
-    walletsUsed.push(kps[i]) // Track this wallet as used
-    console.log(`Wallet ${i} will buy ${buyAmount} SOL worth of tokens`)
+    // V2: Use makeBundleBuyIx with offline bonding curve simulation
+    const walletBalance = buyAmount + 0.01; // approximate funded balance
+    const ix = await makeBundleBuyIx(kps[i], buyAmountLamports, buyerKp.publicKey, mintAddress, cumulativeSolBought, walletBalance)
+    buyIxsByWallet[i] = ix
+    walletsUsed.push(kps[i])
+    cumulativeSolBought += buyAmount; // Track cumulative for next wallet's simulation
+    console.log(`Wallet ${i} will buy ${buyAmount} SOL worth of tokens (cumulative: ${cumulativeSolBought.toFixed(4)} SOL)`)
   }
   
   console.log(`\n📊 Wallet Usage Summary:`)
@@ -1624,121 +1618,29 @@ const main = async () => {
   let latestBlockhash = await connection.getLatestBlockhash()
   console.log(`Using blockhash: ${latestBlockhash.blockhash.slice(0, 8)}... (valid until block ${latestBlockhash.lastValidBlockHeight})`)
 
-  // CRITICAL: For pump.fun, the PAYER is the CREATOR
-  // The creator wallet (buyerKp) must be the payer, not the funding wallet (mainKp)
-  // The funding wallet can still pay for fees by transferring SOL to buyerKp first, but buyerKp must be the transaction payer
+  // V2: Token creation + DEV buy are combined in a single transaction
+  // createTokenTx with devBuySol uses PUMP_SDK.createV2AndBuyInstructions()
   const tokenCreationTx = new VersionedTransaction(
     new TransactionMessage({
-      payerKey: buyerKp.publicKey, // CRITICAL: Creator wallet must be payer for pump.fun
+      payerKey: buyerKp.publicKey,
       recentBlockhash: latestBlockhash.blockhash,
       instructions: tokenCreationIxs
     }).compileToV0Message()
   )
 
-  // CRITICAL: Creator (buyerKp) signs as payer and creator
-  // Mint (mintKp) signs as the mint authority
-  // Note: mainKp is NOT a signer - buyerKp pays for everything
   tokenCreationTx.sign([buyerKp, mintKp])
-
-  // const simResult = await connection.simulateTransaction(tokenCreationTx, { sigVerify: false });
-  // console.log("Simulation result:", simResult.value);
-  // if (simResult.value.err) {
-  //   console.log("Simulation failed. Adjust compute units or batch size.");
-  //   return;
-  // }
-
-  // const sig = await connection.sendTransaction(tokenCreationTx, { skipPreflight: true })
-  // console.log("Transaction sent:", sig)
-  // const confirmation = await connection.confirmTransaction(sig, "confirmed")
-  // console.log("Transaction confirmed:", confirmation)
-  // if (confirmation.value.err) {
-  //   console.log("Transaction failed")
-  //   return
-  // }
-
   transactions.push(tokenCreationTx)
-  
-  // Create DEV buy transaction (FIRST buy, right after token creation)
-  // IMPORTANT: This uses the OFFICIAL pump.fun SDK (sdk.getBuyInstructionsBySolAmount)
-  // This is the EXACT SAME method the pump.fun frontend uses - it's a normal buy, not a "sniper"
-  // The only difference is it's bundled with Jito for speed, but the buy instruction itself is identical
-  // Use the SAME blockhash as token creation for proper bundling
-  // CRITICAL: buyerKp is the token creator (passed to createTokenTx), so it must be the referrer
-  console.log("Creating DEV buy transaction (FIRST buy)...")
-  console.log("   Using official pump.fun SDK - same as frontend (not a sniper)")
-  
-  // Verify DEV wallet has sufficient balance before creating buy transaction
-  const devBalance = await connection.getBalance(buyerKp.publicKey)
-  const devBalanceSol = devBalance / 1e9
-  // Buffer for fees (token creation ~0.02 SOL + buy fees ~0.01 SOL)
-  const devRequiredAmount = buyerAmount + 0.05 // BUYER_AMOUNT + 0.05 SOL buffer for fees
-  console.log(`   DEV wallet balance: ${devBalanceSol.toFixed(4)} SOL`)
-  console.log(`   Required: ${devRequiredAmount.toFixed(4)} SOL (${buyerAmount.toFixed(4)} for buy + 0.05 buffer for fees)`)
-  
-  if (devBalanceSol < devRequiredAmount) {
-    console.error(`\n❌ ERROR: DEV wallet has insufficient balance!`)
-    console.error(`   Current: ${devBalanceSol.toFixed(4)} SOL`)
-    console.error(`   Required: ${devRequiredAmount.toFixed(4)} SOL`)
-    console.error(`   Please fund the wallet or check funding logic`)
-    return
-  }
-  
-  const devBuyAmountLamports = Math.floor(buyerAmount * 10 ** 9)
-  
-  // CRITICAL: Verify buyerKp is the newly created wallet (not funding wallet)
-  console.log(`\n🔍 DEV Buy Transaction Details:`)
-  console.log(`   Creator/Buyer Wallet: ${buyerKp.publicKey.toBase58()}`)
-  console.log(`   Wallet Source: ${buyerWalletSource}`)
-  console.log(`   Funding Wallet (mainKp): ${mainKp.publicKey.toBase58()}`)
-  if (buyerKp.publicKey.equals(mainKp.publicKey)) {
-    console.warn(`   ⚠️  WARNING: Buyer wallet is the same as funding wallet!`)
-  } else {
-    console.log(`   ✅ Buyer wallet is different from funding wallet (correct)`)
-  }
-  
-  const devBuyIxs = await makeBuyIx(buyerKp, devBuyAmountLamports, 0, buyerKp.publicKey, mintAddress)
-  
-  // Use same blockhash as token creation for bundling (important!)
-  // Priority fees: Lower for normal launch, higher for bundles
-  // For normal launch, don't use LUT (not needed)
-  // CRITICAL: payerKey MUST be buyerKp (the creator wallet), NOT mainKp
-  // Calculation: (units * price) / 1,000,000 = lamports
-  // Bundle: (5M * 20k) / 1M = 100k lamports = 0.0001 SOL per tx
-  // Normal: (500k * 5k) / 1M = 2.5k lamports = 0.0000025 SOL per tx (much cheaper!)
-  const devBuyComputeLimit = shouldUseNormalLaunch ? 500_000 : 5_000_000 // Lower for normal launch
-  const devBuyComputePrice = shouldUseNormalLaunch ? 5_000 : 20_000 // Lower for normal launch (~0.0025 SOL vs ~0.1 SOL per tx)
-  
-  const devBuyMsg = new TransactionMessage({
-    payerKey: buyerKp.publicKey, // CRITICAL: Creator wallet pays for DEV buy
-    recentBlockhash: latestBlockhash.blockhash, // Same blockhash as token creation
-    instructions: [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: devBuyComputeLimit }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: devBuyComputePrice }),
-      ...devBuyIxs
-    ]
-  }).compileToV0Message(shouldUseNormalLaunch ? [] : [lookupTable]) // Use lookup table only if bundling
-  
-  const devBuyTx = new VersionedTransaction(devBuyMsg)
-  // CRITICAL: Only buyerKp signs (the creator wallet), NOT mainKp
-  devBuyTx.sign([buyerKp])
-  console.log(`   ✅ DEV buy transaction signed by: ${buyerKp.publicKey.toBase58()}`)
-  
-  // NOTE: We don't simulate the DEV buy transaction because it depends on the token creation
-  // transaction that comes before it in the bundle. During simulation, the token doesn't exist yet,
-  // so it would fail with "IncorrectProgramId". The bundle will be validated by Jito/validators.
-  // We've already verified the wallet has sufficient balance above.
-  
-  transactions.push(devBuyTx)
-  console.log(`✅ DEV buy transaction created: ${buyerAmount} SOL from ${buyerKp.publicKey.toBase58()}`)
-  console.log(`   This will be the FIRST buy transaction in the bundle (right after token creation)`)
-  console.log(`   Bundle order: 1) Token Creation → 2) DEV Buy → 3) Bundler Wallet Buys`)
-  
+  console.log(`Token creation + DEV buy (${buyerAmount} SOL) combined in single V2 transaction`)
+  console.log(`   Creator: ${buyerKp.publicKey.toBase58()}`)
+  console.log(`   Bundle order: 1) Token Creation+DEV Buy → 2-N) Bundler Wallet Buys`)
+
   // Now create bundler wallet buy transactions
-  // IMPORTANT: Use the SAME blockhash as token creation and DEV buy for proper bundling
   for (let i = 0; i < Math.ceil(bundleWalletCount / 4); i++) {
+    const walletsInBatch = Math.min(4, bundleWalletCount - i * 4)
+    const computeUnits = Math.max(600_000, walletsInBatch * 500_000)
     const instructions: TransactionInstruction[] = [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
     ]
 
     for (let j = 0; j < 4; j++) {
@@ -1790,15 +1692,48 @@ const main = async () => {
     transactions.push(tx)
   }
 
-  // transactions.map(async (tx, i) => console.log(i, " | ", tx.serialize().length, "bytes | \n", (await connection.simulateTransaction(tx, { sigVerify: true }))))
+  // Add a separate tip transaction as the LAST TX in the bundle (matching pump-launcher pattern)
+  const tipAccounts = [
+    'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
+    'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
+    '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
+    '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
+    'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
+    'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',
+    'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
+    'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
+  ]
+  const jitoTipAccount = new PublicKey(tipAccounts[Math.floor(tipAccounts.length * Math.random())])
+  const tipLamports = Math.floor(JITO_FEE * LAMPORTS_PER_SOL)
+  console.log(`[Jito] Using tip account: ${jitoTipAccount.toBase58()}, tip: ${JITO_FEE} SOL`)
+
+  const tipTxMsg = new TransactionMessage({
+    payerKey: buyerKp.publicKey,
+    recentBlockhash: latestBlockhash.blockhash,
+    instructions: [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
+      SystemProgram.transfer({
+        fromPubkey: buyerKp.publicKey,
+        toPubkey: jitoTipAccount,
+        lamports: tipLamports,
+      }),
+    ]
+  }).compileToV0Message()
+  const tipTx = new VersionedTransaction(tipTxMsg)
+  tipTx.sign([buyerKp])
+  transactions.push(tipTx)
+  console.log(`[Jito] Tip TX added as transaction ${transactions.length} (last in bundle)`)
 
   console.log("\n" + "=".repeat(80))
-  console.log("BUNDLE SUMMARY")
+  console.log("BUNDLE SUMMARY (V2 Protocol)")
   console.log("=".repeat(80))
   console.log(`Total transactions in bundle: ${transactions.length}`)
-  console.log(`1. Token Creation Transaction`)
-  console.log(`2. DEV Buy Transaction (${buyerAmount} SOL from ${buyerKp.publicKey.toBase58()})`)
-  console.log(`3-${transactions.length}. Bundler Wallet Buy Transactions (${bundleWalletCount} wallets)`)
+  console.log(`1. Token Creation + DEV Buy (${buyerAmount} SOL from ${buyerKp.publicKey.toBase58()})`)
+  if (transactions.length > 2) {
+    console.log(`2-${transactions.length - 1}. Bundler Wallet Buy Transactions (${walletsUsed.length} wallets)`)
+  }
+  console.log(`${transactions.length}. Jito Tip Transaction (${JITO_FEE} SOL to ${jitoTipAccount.toBase58()})`)
   console.log(`All transactions use blockhash: ${latestBlockhash.blockhash.slice(0, 8)}...`)
   console.log(`Valid until block height: ${latestBlockhash.lastValidBlockHeight}`)
   console.log("=".repeat(80))
@@ -1809,49 +1744,33 @@ const main = async () => {
   console.log(`\nCurrent block height: ${currentBlockHeight}, Valid until: ${latestBlockhash.lastValidBlockHeight}`)
   
   if (currentBlockHeight >= latestBlockhash.lastValidBlockHeight) {
-    console.error("❌ ERROR: Blockhash has expired! Getting fresh blockhash and rebuilding transactions...")
-    // Get fresh blockhash and rebuild all transactions
+    console.error("Blockhash has expired! Getting fresh blockhash and rebuilding transactions...")
     const freshBlockhash = await connection.getLatestBlockhash()
     console.log(`New blockhash: ${freshBlockhash.blockhash.slice(0, 8)}... (valid until block ${freshBlockhash.lastValidBlockHeight})`)
     
-    // Rebuild token creation transaction
-    // CRITICAL: Creator wallet (buyerKp) must be payer, not funding wallet (mainKp)
+    // Rebuild token creation + DEV buy transaction (V2: combined)
     const newTokenCreationTx = new VersionedTransaction(
       new TransactionMessage({
-        payerKey: buyerKp.publicKey, // CRITICAL: Creator wallet must be payer for pump.fun
+        payerKey: buyerKp.publicKey,
         recentBlockhash: freshBlockhash.blockhash,
         instructions: tokenCreationIxs
       }).compileToV0Message()
     )
-    // CRITICAL: Creator (buyerKp) signs as payer and creator
     newTokenCreationTx.sign([buyerKp, mintKp])
     transactions[0] = newTokenCreationTx
     
-    // Rebuild DEV buy transaction (using same compute budget as bundler wallets)
-    const newDevBuyMsg = new TransactionMessage({
-      payerKey: buyerKp.publicKey,
-      recentBlockhash: freshBlockhash.blockhash,
-      instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
-        ...devBuyIxs
-      ]
-    }).compileToV0Message([lookupTable])
-    const newDevBuyTx = new VersionedTransaction(newDevBuyMsg)
-    newDevBuyTx.sign([buyerKp])
-    transactions[1] = newDevBuyTx
-    
-    // Rebuild bundler wallet transactions
-    let txIndex = 2
+    // Rebuild bundler wallet transactions (starting at index 1, no separate DEV buy tx)
+    let txIndex = 1
     for (let i = 0; i < Math.ceil(bundleWalletCount / 4); i++) {
+      const walletsInBatch = Math.min(4, bundleWalletCount - i * 4)
+      const computeUnits = Math.max(600_000, walletsInBatch * 500_000)
       const instructions: TransactionInstruction[] = [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
       ]
       for (let j = 0; j < 4; j++) {
         const index = i * 4 + j
         if (kps[index] && buyIxsByWallet[index]) {
-          // Add both instructions for this wallet
           instructions.push(...buyIxsByWallet[index])
         }
       }
@@ -1870,12 +1789,30 @@ const main = async () => {
       transactions[txIndex] = tx
       txIndex++
     }
+
+    // Rebuild tip TX with fresh blockhash
+    const newTipTxMsg = new TransactionMessage({
+      payerKey: buyerKp.publicKey,
+      recentBlockhash: freshBlockhash.blockhash,
+      instructions: [
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
+        SystemProgram.transfer({
+          fromPubkey: buyerKp.publicKey,
+          toPubkey: jitoTipAccount,
+          lamports: tipLamports,
+        }),
+      ]
+    }).compileToV0Message()
+    const newTipTx = new VersionedTransaction(newTipTxMsg)
+    newTipTx.sign([buyerKp])
+    transactions[txIndex] = newTipTx
     
-    console.log("✅ All transactions rebuilt with fresh blockhash")
+    console.log("All transactions rebuilt with fresh blockhash (including tip TX)")
     latestBlockhash = freshBlockhash
   } else {
     const blocksRemaining = latestBlockhash.lastValidBlockHeight - currentBlockHeight
-    console.log(`✅ Blockhash is still valid (${blocksRemaining} blocks remaining)`)
+    console.log(`Blockhash is still valid (${blocksRemaining} blocks remaining)`)
   }
   
   // NORMAL LAUNCH: Send transactions sequentially (no Jito bundling)
@@ -1961,55 +1898,10 @@ const main = async () => {
         }
       }
       
-      // Step 2: Get fresh blockhash for DEV buy (token creation might have taken time)
-      console.log("\n📤 Getting fresh blockhash for DEV buy...")
-      const devBuyBlockhash = await connection.getLatestBlockhash()
-      
-      // Rebuild DEV buy transaction with fresh blockhash
-      // Use lower priority fees for normal launch (not competing in bundles)
-      // Calculation: (units * price) / 1,000,000 = lamports
-      // Normal: (500k * 5k) / 1M = 2.5k lamports = 0.0000025 SOL (much cheaper than bundle!)
-      const devBuyMsgFresh = new TransactionMessage({
-        payerKey: buyerKp.publicKey,
-        recentBlockhash: devBuyBlockhash.blockhash,
-        instructions: [
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }), // Lower limit for normal launch
-          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }), // Lower price (~0.0025 SOL vs ~0.1 SOL)
-          ...devBuyIxs
-        ]
-      }).compileToV0Message([]) // No LUT for normal launch
-      
-      const devBuyTxFresh = new VersionedTransaction(devBuyMsgFresh)
-      devBuyTxFresh.sign([buyerKp])
-      
-      // Send DEV buy transaction
-      console.log("📤 Sending DEV buy transaction...")
-      const devBuySig = await connection.sendTransaction(devBuyTxFresh, {
-        skipPreflight: false,
-        maxRetries: 3
-      })
-      console.log(`✅ DEV buy sent: https://solscan.io/tx/${devBuySig}`)
-      
-      // Wait for confirmation
-      console.log("⏳ Waiting for DEV buy confirmation...")
-      const devBuyConfirmation = await connection.confirmTransaction(devBuySig, 'confirmed')
-      if (devBuyConfirmation.value.err) {
-        console.error("❌ DEV buy failed:", devBuyConfirmation.value.err)
-        console.warn("⚠️  Token was created but DEV buy failed - you can manually buy or retry")
-        if (fs.existsSync(keysPath)) {
-          const stageData = JSON.parse(fs.readFileSync(keysPath, 'utf8'))
-          stageData.launchStatus = "PARTIAL"
-          stageData.launchStage = "DEV_BUY_FAILED"
-          stageData.failureReason = "Token created but DEV buy failed"
-          fs.writeFileSync(keysPath, JSON.stringify(stageData, null, 2))
-        }
-        return
-      }
-      console.log("✅ DEV buy confirmed!")
-      console.log("\n🎉 NORMAL LAUNCH SUCCESSFUL!")
+      // V2: Token creation + DEV buy are combined, no separate step needed
+      console.log("\nNORMAL LAUNCH SUCCESSFUL! (V2: create+buy combined)")
       console.log(`   Token: ${mintAddress.toBase58()}`)
-      console.log(`   Token Creation: https://solscan.io/tx/${tokenCreationSig}`)
-      console.log(`   DEV Buy: https://solscan.io/tx/${devBuySig}`)
+      console.log(`   Token Creation + DEV Buy: https://solscan.io/tx/${tokenCreationSig}`)
       
       // Update stage: Success
       if (fs.existsSync(keysPath)) {
@@ -2019,9 +1911,7 @@ const main = async () => {
         fs.writeFileSync(keysPath, JSON.stringify(stageData, null, 2))
       }
       
-      // Continue to rapid sell if enabled (same as bundle mode)
-      // The rapid sell logic below will handle this
-      bundleSuccess = true // Set to true so rapid sell can proceed
+      bundleSuccess = true
       
     } catch (error: any) {
       console.error("❌ Normal launch failed:", error.message)
@@ -2057,49 +1947,27 @@ const main = async () => {
       console.warn(`⚠️ PumpPortal pre-subscribe failed (non-critical)`)
     }
     
-    // Send bundle IMMEDIATELY after creation to avoid blockhash expiration
-    // CRITICAL: Start bundle submission in background, don't wait for all retries
-    // Rapid sell needs to start immediately, not wait for Jito rate limit retries
-    console.log("\nSending bundle immediately to avoid blockhash expiration...")
-    console.log("⚡⚡⚡ Bundle submission starting - rapid sell will fire IMMEDIATELY after first success ⚡⚡⚡")
-    
-    let bundlePromise: Promise<boolean>
+    console.log("\nSending bundle to Jito...")
     
     if (LIL_JIT_MODE) {
-      bundlePromise = (async () => {
-        const bundleId = await sendBundle(transactions)
-        if (!bundleId) {
-          console.error("❌ ERROR: Bundle sending failed - no bundle ID received")
-          return false
-        } else {
-          console.log("✅ Bundle sent successfully with ID:", bundleId)
-          return true
-        }
-      })()
+      const bundleId = await sendBundle(transactions)
+      if (!bundleId) {
+        console.error("❌ ERROR: Bundle sending failed - no bundle ID received")
+        bundleSuccess = false
+      } else {
+        console.log("✅ Bundle sent successfully with ID:", bundleId)
+        bundleSuccess = true
+      }
     } else {
-      bundlePromise = (async () => {
-        const result = await executeJitoTx(transactions, mainKp, commitment, latestBlockhash)
-        if (!result) {
-          console.error("❌ ERROR: Jito bundle execution failed - no successful responses")
-          return false
-        } else {
-          console.log("✅ Bundle executed successfully, signature:", result)
-          return true
-        }
-      })()
+      const result = await executeJitoTx(transactions, mainKp, commitment, latestBlockhash)
+      if (!result) {
+        console.error("❌ ERROR: Jito bundle execution failed - no endpoint accepted the bundle")
+        bundleSuccess = false
+      } else {
+        console.log("✅ Bundle accepted by Jito, signature:", result)
+        bundleSuccess = true
+      }
     }
-    
-    // Wait for bundle to be sent (but don't wait for all retries to complete)
-    // Use Promise.race to get first success or timeout after 2 seconds MAX
-    const bundleTimeout = new Promise<boolean>((resolve) => {
-      setTimeout(() => {
-        console.log("⚡⚡⚡ 2s timeout - starting rapid sell IMMEDIATELY! ⚡⚡⚡")
-        console.log("   Bundle submission continues in background")
-        resolve(true) // Assume success to allow rapid sell to start
-      }, 2000) // 2 second MAX timeout - rapid sell MUST start immediately
-    })
-    
-    bundleSuccess = await Promise.race([bundlePromise, bundleTimeout])
     
     if (!bundleSuccess) {
       console.error("❌ CRITICAL: Bundle submission failed - aborting")

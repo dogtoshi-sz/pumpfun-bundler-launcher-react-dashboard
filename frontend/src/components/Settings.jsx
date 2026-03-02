@@ -15,7 +15,9 @@ import {
   ChartBarIcon,
   ServerIcon,
   SparklesIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  EyeIcon,
+  EyeSlashIcon
 } from '@heroicons/react/24/outline';
 import apiService from '../services/api';
 
@@ -27,6 +29,7 @@ export default function Settings() {
   const [privateKeyChanges, setPrivateKeyChanges] = useState({});
   const [activeSection, setActiveSection] = useState('required'); // Match App.jsx default
   const [notifications, setNotifications] = useState([]);
+  const [recoveryRunning, setRecoveryRunning] = useState({});
   const autoSaveTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -122,6 +125,10 @@ export default function Settings() {
   const toggleShowPrivateKey = (key) => {
     setShowPrivateKeys(prev => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const isSensitiveField = (setting) => {
+    return setting.type === 'password' || setting.key === 'RPC_ENDPOINT' || setting.key === 'RPC_WEBSOCKET_ENDPOINT';
+  };
   
   const shortenPrivateKey = (key) => {
     if (!key || key.length <= 16) return key;
@@ -142,6 +149,45 @@ export default function Settings() {
     setTimeout(() => {
       setNotifications(prev => prev.filter(n => n.id !== id));
     }, 3000);
+  };
+
+  const recoveryScripts = [
+    { key: 'gather', label: 'Gather (Current Run)', confirm: 'Gather funds from current-run wallets?' },
+    { key: 'gather-new-only', label: 'Gather New-Only', confirm: 'Gather only new (non-warmed) wallets?' },
+    { key: 'gather-sol-only', label: 'Gather SOL-Only', confirm: 'Run SOL-only gather now?' },
+    { key: 'gather-all', label: 'Gather All Wallets', confirm: 'Gather from ALL wallets in storage? This can take longer.' },
+    { key: 'gather-warmed', label: 'Gather Warmed Wallets', confirm: 'Gather from warmed wallets now?' },
+    { key: 'gather-last', label: 'Gather Last Wallets', confirm: 'Gather from the most recent wallet set?' },
+    { key: 'withdraw-mixers', label: 'Withdraw Mixers', confirm: 'Withdraw funds from mixer wallets now?' },
+    { key: 'withdraw-all', label: 'Withdraw All Wallets', confirm: 'Withdraw all recoverable funds from wallets now?' },
+    { key: 'withdraw-preview', label: 'Withdraw Preview', confirm: null },
+    { key: 'recover-intermediary', label: 'Recover Intermediary (SOL)', confirm: 'Recover SOL from intermediary wallets now?' },
+    { key: 'recover-evm', label: 'Recover Intermediary (EVM)', confirm: 'Recover EVM intermediary funds now?' },
+    { key: 'recovery', label: 'Recovery Center', confirm: null },
+    { key: 'archive', label: 'Archive Wallets', confirm: 'Archive old wallet records now?' },
+    { key: 'archive-dry', label: 'Archive Dry Run', confirm: null },
+  ];
+
+  const handleRecoveryCommand = async (scriptKey, confirmMessage = null) => {
+    if (confirmMessage && !window.confirm(`[!] ${confirmMessage}`)) {
+      return;
+    }
+
+    setRecoveryRunning(prev => ({ ...prev, [scriptKey]: true }));
+    setSavingStatus(`Running ${scriptKey}...`);
+
+    try {
+      const res = await apiService.executeCommand(scriptKey);
+      const ok = !!res?.data?.success;
+      setSavingStatus(ok ? `[check] ${scriptKey} finished` : `[x] ${scriptKey} failed`);
+      showNotification(scriptKey);
+      setTimeout(() => setSavingStatus(''), 3000);
+    } catch (error) {
+      setSavingStatus(`[x] ${scriptKey} failed`);
+      setTimeout(() => setSavingStatus(''), 3000);
+    } finally {
+      setRecoveryRunning(prev => ({ ...prev, [scriptKey]: false }));
+    }
   };
 
   // Check if required settings are satisfied
@@ -424,6 +470,36 @@ export default function Settings() {
         { key: 'AUTO_COLLECT_FEES', label: 'Auto Collect Fees', type: 'checkbox', description: 'Automatically collect pump.fun creator fees' },
       ],
     },
+    recovery: {
+      title: 'Recovery Scripts',
+      icon: ArrowPathIcon,
+      description: 'Run all recovery scripts directly from Settings.',
+      component: () => (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {recoveryScripts.map((script) => (
+              <button
+                key={script.key}
+                type="button"
+                disabled={!!recoveryRunning[script.key]}
+                onClick={() => handleRecoveryCommand(script.key, script.confirm)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all text-left ${
+                  recoveryRunning[script.key]
+                    ? 'bg-gray-900 text-gray-400 border-gray-700 cursor-not-allowed'
+                    : 'bg-black/50 text-white border-gray-700 hover:border-blue-500 hover:bg-black/70'
+                }`}
+                title={`Run npm script: ${script.key}`}
+              >
+                {recoveryRunning[script.key] ? `Running: ${script.label}` : script.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500">
+            These call backend <code>/api/command</code> and may run for several minutes.
+          </p>
+        </div>
+      ),
+    },
   };
 
   // Ensure activeSection exists in sections, fallback to 'required'
@@ -535,13 +611,19 @@ export default function Settings() {
                       <span className="ml-2 text-xs text-yellow-400">[!] Changed</span>
                     )}
                   </label>
-                  {setting.type === 'password' && (
+                  {isSensitiveField(setting) && (
                     <button
                       type="button"
                       onClick={() => toggleShowPrivateKey(setting.key)}
-                      className="text-xs text-blue-400 hover:text-blue-300"
+                      className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+                      title={showPrivateKeys[setting.key] ? 'Hide value' : 'Show value'}
                     >
-                      {showPrivateKeys[setting.key] ? ' Hide' : ' Show'}
+                      {showPrivateKeys[setting.key] ? (
+                        <EyeSlashIcon className="w-4 h-4" />
+                      ) : (
+                        <EyeIcon className="w-4 h-4" />
+                      )}
+                      <span>{showPrivateKeys[setting.key] ? 'Hide' : 'Show'}</span>
                     </button>
                   )}
                 </div>
@@ -560,6 +642,14 @@ export default function Settings() {
                       {settings[setting.key] === 'true' || settings[setting.key] === true ? 'Enabled' : 'Disabled'}
                     </span>
                   </label>
+                ) : setting.key === 'RPC_ENDPOINT' || setting.key === 'RPC_WEBSOCKET_ENDPOINT' ? (
+                  <input
+                    type={showPrivateKeys[setting.key] ? 'text' : 'password'}
+                    value={settings[setting.key] || ''}
+                    onChange={(e) => handleChange(setting.key, e.target.value)}
+                    placeholder={setting.required ? 'Required' : 'Optional'}
+                    className="w-full px-4 py-2 bg-black/50 border border-gray-800 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
                 ) : setting.type === 'password' ? (
                   <div className="relative">
                     <input

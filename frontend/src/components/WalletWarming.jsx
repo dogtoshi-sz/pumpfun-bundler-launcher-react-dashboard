@@ -77,7 +77,7 @@ export default function WalletWarming() {
 
   // Available tag colors
   const tagColors = [
-    { id: 'blue', bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/50' },
+    { id: 'blue', bg: 'bg-blue-500/20', text: 'text-purple-400', border: 'border-blue-500/50' },
     { id: 'green', bg: 'bg-green-500/20', text: 'text-green-400', border: 'border-green-500/50' },
     { id: 'purple', bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/50' },
     { id: 'orange', bg: 'bg-orange-500/20', text: 'text-orange-400', border: 'border-orange-500/50' },
@@ -706,16 +706,16 @@ export default function WalletWarming() {
 
   return (
     <div className="p-4 max-w-7xl mx-auto">
-      {/* ==================== FUNDING WALLET INFO BAR ==================== */}
+      {/* Funding Wallet */}
       {fundingWallet && (
-        <div className="mb-4 bg-gradient-to-r from-emerald-900/30 to-gray-900/30 border border-emerald-800/50 rounded-xl p-3">
+        <div className="mb-4 bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center text-xl">
-                🏦
+              <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
+                <span className="text-white text-sm font-bold">W</span>
               </div>
               <div>
-                <div className="text-xs text-emerald-400 font-medium uppercase tracking-wide">Master Funding Wallet</div>
+                <div className="text-xs text-gray-400 font-medium">Funding Wallet</div>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-white text-sm">
                     {fundingWallet.address?.slice(0, 8)}...{fundingWallet.address?.slice(-8)}
@@ -741,7 +741,7 @@ export default function WalletWarming() {
             </div>
             <div className="text-right">
               <div className="text-xs text-gray-400">Available Balance</div>
-              <div className={`text-2xl font-bold ${fundingWallet.balance > 1 ? 'text-emerald-400' : fundingWallet.balance > 0.1 ? 'text-yellow-400' : 'text-red-400'}`}>
+              <div className={`text-2xl font-bold ${fundingWallet.balance > 1 ? 'text-green-400' : fundingWallet.balance > 0.1 ? 'text-yellow-400' : 'text-red-400'}`}>
                 {fundingWallet.balance?.toFixed(4)} <span className="text-sm text-gray-400">SOL</span>
               </div>
             </div>
@@ -749,14 +749,11 @@ export default function WalletWarming() {
         </div>
       )}
 
-      {/* ==================== TOP ACTION BAR ==================== */}
+      {/* Action Bar */}
       <div className="sticky top-0 z-40 bg-gray-950/95 backdrop-blur-sm border-b border-gray-800 -mx-4 px-4 py-3 mb-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          {/* Left: Title & Stats */}
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              🔥 Wallet Warming
-            </h1>
+            <h1 className="text-xl font-bold text-white">Wallet Manager</h1>
             <div className="flex items-center gap-3 text-sm">
               <span className="text-gray-400">
                 <span className="text-white font-medium">{wallets.length}</span> wallets
@@ -765,7 +762,7 @@ export default function WalletWarming() {
                 <span className="text-green-400 font-medium">{totalSol.toFixed(3)}</span> SOL
               </span>
               {selectedWallets.length > 0 && (
-                <span className="text-blue-400">
+                <span className="text-purple-400">
                   {selectedWallets.length} selected ({selectedSol.toFixed(3)} SOL)
                 </span>
               )}
@@ -781,7 +778,7 @@ export default function WalletWarming() {
               className={`px-3 py-2 font-medium rounded-lg transition-colors text-sm ${
                 selectedWallets.length === 0
                   ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  : 'bg-green-600 hover:bg-green-500 text-white'
               }`}
               title="Fund selected wallets: Send SOL directly from your main funding wallet to selected wallets. Fast and simple, but creates an on-chain link."
             >
@@ -838,7 +835,7 @@ export default function WalletWarming() {
             <button
               onClick={handleCreateWallet}
               disabled={loading}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 text-sm"
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 text-sm"
               title="Create Wallets: Generate one or more new Solana wallets with random private keys. Wallets are stored securely and can be tagged for organization."
             >
               ➕ Create Wallets
@@ -909,7 +906,7 @@ export default function WalletWarming() {
               className={`px-3 py-2 font-medium rounded-lg text-sm transition-colors ${
                 selectedWallets.length === 0
                   ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  : 'bg-purple-600 hover:bg-purple-500 text-white'
               }`}
               title="Refresh Stats: Fetch real transaction counts, trades, and dates from blockchain for selected wallets. This queries Solana to get actual on-chain data."
             >
@@ -1054,7 +1051,7 @@ export default function WalletWarming() {
               <button
                 onClick={() => loadTrendingTokens(true)}
                 disabled={trendingStatus.loading}
-                className="text-xs text-blue-400 hover:text-blue-300"
+                className="text-xs text-purple-400 hover:text-blue-300"
               >
                 {trendingStatus.loading ? 'Loading...' : 'Refresh'}
               </button>
@@ -1400,7 +1397,7 @@ export default function WalletWarming() {
                       <button
                         key={n}
                         onClick={() => setCreateCount(n)}
-                        className={`px-2 py-1 rounded text-xs ${createCount === n ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                        className={`px-2 py-1 rounded text-xs ${createCount === n ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
                       >
                         {n}
                       </button>
@@ -1432,7 +1429,7 @@ export default function WalletWarming() {
                   </select>
                   <button
                     onClick={addCreateTag}
-                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+                    className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm"
                   >
                     Add
                   </button>
@@ -1495,7 +1492,7 @@ export default function WalletWarming() {
                 <button
                   onClick={handleCreateWallets}
                   disabled={creating}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {creating ? (
                     <>
@@ -1629,7 +1626,7 @@ export default function WalletWarming() {
               <div className="p-3 bg-emerald-900/20 border border-emerald-700/50 rounded-lg">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Total Required:</span>
-                  <span className="font-bold text-emerald-400">
+                  <span className="font-bold text-green-400">
                     {(parseFloat(fundingAmount) * selectedWallets.length || 0).toFixed(4)} SOL
                   </span>
                 </div>
@@ -1642,7 +1639,7 @@ export default function WalletWarming() {
               <button
                 onClick={handleFundWallets}
                 disabled={fundingLoading || selectedWallets.length === 0}
-                className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+                className="w-full px-4 py-3 bg-green-600 hover:bg-green-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
               >
                 {fundingLoading ? 'Funding...' : `Fund ${selectedWallets.length} Wallet(s)`}
               </button>
@@ -1674,7 +1671,7 @@ export default function WalletWarming() {
                 <button
                   onClick={() => setPrivateFundingMethod('mayan')}
                   className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    privateFundingMethod === 'mayan' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    privateFundingMethod === 'mayan' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                   }`}
                 >
                   Mayan Bridge
@@ -1682,7 +1679,7 @@ export default function WalletWarming() {
                 <button
                   onClick={() => setPrivateFundingMethod('sol-intermediaries')}
                   className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    privateFundingMethod === 'sol-intermediaries' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    privateFundingMethod === 'sol-intermediaries' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                   }`}
                 >
                   SOL Chain
@@ -1814,7 +1811,7 @@ export default function WalletWarming() {
                           }
                         }}
                         disabled={bridgeLoading || selectedWallets.length === 0}
-                        className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {bridgeLoading ? 'Processing...' : 'Start Private Funding'}
                       </button>
@@ -1897,7 +1894,7 @@ export default function WalletWarming() {
                           }
                         }}
                         disabled={bridgeLoading || selectedWallets.length === 0}
-                        className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {bridgeLoading ? 'Processing...' : 'Start Private Funding'}
                       </button>
@@ -2013,7 +2010,7 @@ export default function WalletWarming() {
                       }
                     }}
                     disabled={bridgeLoading || selectedWallets.length === 0}
-                    className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full px-4 py-3 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {bridgeLoading ? 'Processing...' : 'Withdraw Privately'}
                   </button>
@@ -2088,7 +2085,7 @@ export default function WalletWarming() {
                     <div className="text-sm text-gray-400 mb-1">Destination Wallet (select one from wallet list):</div>
                     <div className="text-white font-medium">
                       {selectedWallets.length > 0 ? (
-                        <span className="text-emerald-400">{selectedWallets[0].substring(0, 12)}...</span>
+                        <span className="text-green-400">{selectedWallets[0].substring(0, 12)}...</span>
                       ) : (
                         <span className="text-yellow-400">⚠️ Select a destination wallet first</span>
                       )}
@@ -2138,7 +2135,7 @@ export default function WalletWarming() {
                           <button
                             onClick={() => handleRecoverIntermediary(wallet.address, wallet.chain || bridgeChain)}
                             disabled={bridgeLoading || selectedWallets.length === 0}
-                            className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                            className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
                           >
                             {bridgeLoading ? 'Processing...' : 'Continue Bridge'}
                           </button>

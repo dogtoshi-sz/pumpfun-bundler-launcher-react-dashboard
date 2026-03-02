@@ -1,6 +1,6 @@
 import { ComputeBudgetProgram, Connection, Keypair, TransactionMessage, VersionedTransaction } from "@solana/web3.js"
 import { BUYER_AMOUNT, BUYER_WALLET, PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, VANITY_MODE } from "../constants"
-import { createTokenTx, makeBuyIx } from "../src/main"
+import { createTokenTx } from "../src/main"
 
 import base58 from "bs58"
 import { generateVanityAddress } from "../utils"
@@ -23,7 +23,8 @@ const mainKp = Keypair.fromSecretKey(base58.decode(PRIVATE_KEY))
 const smallNumWalletBundle = async () => {
   try {
     const buyerKp = Keypair.fromSecretKey(base58.decode(BUYER_WALLET))
-    const tokenCreationIxs = await createTokenTx(mainKp, mintKp)
+    // V2: create + dev buy combined in one transaction
+    const tokenCreationIxs = await createTokenTx(mainKp, mintKp, mainKp, BUYER_AMOUNT)
     const latestBlockhash = await connection.getLatestBlockhash()
 
     const tokenCreationTx = new VersionedTransaction(
@@ -35,19 +36,7 @@ const smallNumWalletBundle = async () => {
     )
     tokenCreationTx.sign([mainKp, mintKp])
 
-    const buyIx = await makeBuyIx(buyerKp, Math.floor(BUYER_AMOUNT * 10 ** 9), 0, mainKp.publicKey, mintKp.publicKey)
-    const msg = new TransactionMessage({
-      payerKey: buyerKp.publicKey,
-      recentBlockhash: latestBlockhash.blockhash,
-      instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 250_000 }),
-        ...buyIx
-      ]
-    }).compileToV0Message()
-    const buyTx = new VersionedTransaction(msg)
-    buyTx.sign([buyerKp])
-    await executeJitoTx([tokenCreationTx, buyTx], mainKp, commitment)
+    await executeJitoTx([tokenCreationTx], mainKp, commitment)
   } catch (error) {
     console.log("Error in bundle process:", error)
   }

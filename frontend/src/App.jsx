@@ -6,15 +6,15 @@ import {
   LockClosedIcon,
   CubeIcon,
   CpuChipIcon,
-  BellIcon,
-  UserIcon,
+  WalletIcon,
   ServerIcon,
   KeyIcon,
   CurrencyDollarIcon,
   ChartBarIcon,
   SparklesIcon,
   GlobeAltIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { 
   RocketLaunchIcon as RocketLaunchIconSolid,
@@ -29,7 +29,8 @@ import {
   ChartBarIcon as ChartBarIconSolid,
   SparklesIcon as SparklesIconSolid,
   GlobeAltIcon as GlobeAltIconSolid,
-  ExclamationTriangleIcon as ExclamationTriangleIconSolid
+  ExclamationTriangleIcon as ExclamationTriangleIconSolid,
+  ArrowPathIcon as ArrowPathIconSolid
 } from '@heroicons/react/24/solid';
 import TokenLaunch from './components/TokenLaunch';
 import HolderWallets from './components/HolderWallets';
@@ -41,6 +42,9 @@ function App() {
   const [settingsSearch, setSettingsSearch] = useState('');
   const [activeSettingsSection, setActiveSettingsSection] = useState('required');
   const [settings, setSettings] = useState({});
+  const [walletAddress, setWalletAddress] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(null);
+  const [showV2Banner, setShowV2Banner] = useState(() => localStorage.getItem('hideV2Banner') !== 'true');
 
   const [marketData, setMarketData] = useState({
     sol: { price: 0, change24h: 0 },
@@ -51,6 +55,23 @@ function App() {
   const [fearGreedIndex, setFearGreedIndex] = useState({ value: 0, classification: 'Loading...' });
   const [loadingMarketData, setLoadingMarketData] = useState(true);
   
+  const fetchWallet = useCallback(async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/deployer-wallet');
+      const data = await res.json();
+      if (data.success && data.address) {
+        setWalletAddress(data.address);
+        setWalletBalance(data.balance ?? null);
+      } else {
+        setWalletAddress(null);
+        setWalletBalance(null);
+      }
+    } catch {
+      setWalletAddress(null);
+      setWalletBalance(null);
+    }
+  }, []);
+
   useEffect(() => {
     // Load settings to check if required fields are satisfied
     const loadSettings = async () => {
@@ -65,10 +86,13 @@ function App() {
       }
     };
     loadSettings();
+    fetchWallet();
+    const walletInterval = setInterval(fetchWallet, 10000);
     
     // Listen for settings updates
     const handleSettingsUpdate = () => {
       loadSettings();
+      fetchWallet();
     };
     window.addEventListener('settings-updated', handleSettingsUpdate);
     
@@ -77,6 +101,13 @@ function App() {
       setActiveTab(e.detail);
     };
     window.addEventListener('navigate-to-tab', handleNavigate);
+
+    // Keep top-right wallet balance live when user returns to the tab/window.
+    const handleVisibilityOrFocus = () => {
+      fetchWallet();
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
     
     const fetchMarketData = async () => {
       try {
@@ -129,12 +160,15 @@ function App() {
     const marketInterval = setInterval(fetchMarketData, 60000);
     const fgInterval = setInterval(fetchFearGreed, 300000); // Every 5 min
     return () => {
+      clearInterval(walletInterval);
       clearInterval(marketInterval);
       clearInterval(fgInterval);
       window.removeEventListener('navigate-to-tab', handleNavigate);
       window.removeEventListener('settings-updated', handleSettingsUpdate);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, []);
+  }, [fetchWallet]);
 
   // Check if required settings are satisfied
   const isRequiredSatisfied = () => {
@@ -162,6 +196,7 @@ function App() {
     { id: 'jito', name: 'Jito', icon: SparklesIcon, iconSolid: SparklesIconSolid },
     { id: 'autosell', name: 'Auto-Sell', icon: ChartBarIcon, iconSolid: ChartBarIconSolid },
     { id: 'auto', name: 'Auto Actions', icon: CpuChipIcon, iconSolid: CpuChipIconSolid },
+    { id: 'recovery', name: 'Recovery', icon: ArrowPathIcon, iconSolid: ArrowPathIconSolid },
     { id: 'apikeys', name: 'API Keys', icon: KeyIcon, iconSolid: KeyIconSolid },
     { id: 'options', name: 'Advanced', icon: Cog6ToothIcon, iconSolid: Cog6ToothIconSolid },
   ];
@@ -177,20 +212,34 @@ function App() {
 
       {/* Main Container */}
       <div className="relative z-10 h-full flex flex-col">
+        {/* V2 Upgrade Banner */}
+        {showV2Banner && (
+          <div className="bg-gradient-to-r from-purple-900/90 to-indigo-900/90 border-b border-purple-500/40 px-4 py-1.5 flex items-center justify-center gap-3 relative">
+            <span className="text-gray-300 text-xs">Working as of March 1, 2026. Future Pump.fun / Jito updates will not be patched here.</span>
+            <a
+              href="https://trencherbundler.fun"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-md px-2.5 py-0.5 text-xs font-semibold text-white transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              Get Trencher V2
+            </a>
+            <button
+              onClick={() => { setShowV2Banner(false); localStorage.setItem('hideV2Banner', 'true'); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white text-lg leading-none"
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
         {/* Header */}
         <header className="bg-black/80 backdrop-blur-sm border-b border-gray-900 sticky top-0 z-50">
           <div className="w-full px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
-                    <RocketLaunchIcon className="w-6 h-6 text-white" />
-                  </div>
-                  <div>
-                    <h1 className="text-lg font-bold text-white">Trencher Bundler</h1>
-                    <p className="text-xs text-gray-500">Pump.fun Token Launcher</p>
-                  </div>
-                </div>
+                <img src="/image/trencherbundler.png" alt="Trencher Bundler" className="h-14 object-contain" />
                 <nav className="flex gap-1">
                   {tabs.filter(tab => tab.id !== 'settings').map((tab) => {
                     const Icon = activeTab === tab.id ? tab.iconSolid : tab.icon;
@@ -229,14 +278,28 @@ function App() {
                 </nav>
               </div>
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1">
-                  <button className="p-1.5 hover:bg-gray-900/50 rounded-lg transition-colors">
-                    <BellIcon className="w-4 h-4 text-gray-500" />
+                {walletAddress ? (
+                  <button
+                    onClick={() => { setActiveTab('settings'); setActiveSettingsSection('required'); }}
+                    className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 hover:border-purple-500/40 transition-colors"
+                  >
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    <span className="text-xs text-gray-400 font-mono">
+                      {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
+                    </span>
+                    <span className="text-xs font-semibold text-white">
+                      {walletBalance !== null ? `${walletBalance.toFixed(2)} SOL` : '\u2014'}
+                    </span>
                   </button>
-                  <button className="p-1.5 hover:bg-gray-900/50 rounded-lg transition-colors">
-                    <UserIcon className="w-4 h-4 text-gray-500" />
+                ) : (
+                  <button
+                    onClick={() => { setActiveTab('settings'); setActiveSettingsSection('required'); }}
+                    className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-1.5 hover:bg-red-500/20 transition-colors"
+                  >
+                    <WalletIcon className="w-4 h-4 text-red-400" />
+                    <span className="text-xs font-medium text-red-400">Set Funding Wallet</span>
                   </button>
-                </div>
+                )}
               </div>
             </div>
           </div>

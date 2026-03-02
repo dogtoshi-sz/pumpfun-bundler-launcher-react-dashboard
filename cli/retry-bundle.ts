@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config({ override: true });
 
 import { PRIVATE_KEY, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, LIL_JIT_MODE, BUYER_WALLET, BUNDLE_SWAP_AMOUNTS, SWAP_AMOUNT, SWAP_AMOUNTS, JITO_FEE, BUYER_AMOUNT } from "../constants"
-import { createTokenTx, makeBuyIx } from "../src/main"
+import { createTokenTx, makeBundleBuyIx } from "../src/main"
 import { executeJitoTx } from "../executor/jito"
 import { sendBundle } from "../executor/liljito"
 
@@ -254,77 +254,53 @@ async function retryBundle() {
   const latestBlockhash = await connection.getLatestBlockhash()
   console.log(`Using blockhash: ${latestBlockhash.blockhash.slice(0, 8)}... (valid until block ${latestBlockhash.lastValidBlockHeight})`)
   
-  // Only create token creation transaction if token doesn't exist
+  // V2: Token creation + DEV buy are combined
   if (!tokenExists) {
-    const tokenCreationIxs = await createTokenTx(creatorDevWallet, mintKp, mainKp)
+    const tokenCreationIxs = await createTokenTx(creatorDevWallet, mintKp, mainKp, BUYER_AMOUNT)
     
-    // CRITICAL: For pump.fun, the PAYER is the CREATOR
-    // The creator wallet (creatorDevWallet) must be the payer, not the funding wallet (mainKp)
-    // The funding wallet can still pay for fees by transferring SOL to creatorDevWallet first, but creatorDevWallet must be the transaction payer
     const tokenCreationTx = new VersionedTransaction(
       new TransactionMessage({
-        payerKey: creatorDevWallet.publicKey, // CRITICAL: Creator wallet must be payer for pump.fun
+        payerKey: creatorDevWallet.publicKey,
         recentBlockhash: latestBlockhash.blockhash,
         instructions: tokenCreationIxs
       }).compileToV0Message()
     )
-    // CRITICAL: Creator (creatorDevWallet) signs as payer and creator
-    // Mint (mintKp) signs as the mint authority
-    // Note: mainKp is NOT a signer - creatorDevWallet pays for everything
     tokenCreationTx.sign([creatorDevWallet, mintKp])
     transactions.push(tokenCreationTx)
-    console.log(`   ✅ Token creation transaction ready`)
+    console.log(`   Token creation + DEV buy (${BUYER_AMOUNT} SOL) transaction ready (V2)`)
   } else {
-    console.log(`   ⏭️  Skipping token creation (token already exists)`)
+    console.log(`   Skipping token creation (token already exists)`)
   }
   
-  // Create DEV buy transaction
-  const devBuyAmountLamports = Math.floor(BUYER_AMOUNT * 10 ** 9)
-  const devBuyIx = await makeBuyIx(creatorDevWallet, devBuyAmountLamports, 0, creatorDevWallet.publicKey, mintKp.publicKey)
-  
-  const devBuyMsg = new TransactionMessage({
-    payerKey: creatorDevWallet.publicKey,
-    recentBlockhash: latestBlockhash.blockhash,
-    instructions: [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
-      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
-      ...devBuyIx
-    ]
-  })
-  
-  const devBuyTx = new VersionedTransaction(
-    lookupTable ? devBuyMsg.compileToV0Message([lookupTable]) : devBuyMsg.compileToV0Message()
-  )
-  devBuyTx.sign([creatorDevWallet])
-  transactions.push(devBuyTx)
-  console.log(`   ✅ DEV buy transaction ready`)
-  
-  // Create bundle wallet buy transactions
+  // V2: Create bundle wallet buy transactions with offline bonding curve simulation
+  let cumulativeSolBought = BUYER_AMOUNT; // Start after dev buy
   const buyIxsByWallet: { [walletIndex: number]: TransactionInstruction[] } = {}
   for (let i = 0; i < bundleWallets.length; i++) {
     const buyAmountLamports = Math.floor(bundleSwapAmounts[i] * 10 ** 9)
-    const buyIx = await makeBuyIx(bundleWallets[i], buyAmountLamports, i, creatorDevWallet.publicKey, mintKp.publicKey)
+    const buyIx = await makeBundleBuyIx(bundleWallets[i], buyAmountLamports, creatorDevWallet.publicKey, mintKp.publicKey, cumulativeSolBought, bundleSwapAmounts[i] + 0.01)
     buyIxsByWallet[i] = buyIx
+    cumulativeSolBought += bundleSwapAmounts[i]
   }
   
   // Create bundle transactions (4 wallets per transaction)
   for (let i = 0; i < Math.ceil(bundleWallets.length / 4); i++) {
-    const instructions: TransactionInstruction[] = []
+    const walletsInBatch = Math.min(4, bundleWallets.length - i * 4)
+    const computeUnits = Math.max(600_000, walletsInBatch * 500_000)
+    const instructions: TransactionInstruction[] = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
+    ]
     const signers: Keypair[] = []
     
     for (let j = 0; j < 4; j++) {
       const index = i * 4 + j
       if (index < bundleWallets.length && bundleWallets[index] && buyIxsByWallet[index]) {
-        instructions.push(
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 5_000_000 }),
-          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 20_000 }),
-          ...buyIxsByWallet[index]
-        )
+        instructions.push(...buyIxsByWallet[index])
         signers.push(bundleWallets[index])
       }
     }
     
-    if (instructions.length > 0) {
+    if (signers.length > 0) {
       const msg = new TransactionMessage({
         payerKey: bundleWallets[i * 4].publicKey,
         recentBlockhash: latestBlockhash.blockhash,
@@ -340,16 +316,41 @@ async function retryBundle() {
       console.log(`   ✅ Bundle transaction ${i + 1}: ${signers.length} wallet(s)`)
     }
   }
+
+  // Add separate tip TX as the last transaction in the bundle
+  const tipAccounts = [
+    'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
+    'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
+    '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
+    '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
+    'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
+    'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',
+    'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
+    'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
+  ]
+  const jitoTipAccount = new PublicKey(tipAccounts[Math.floor(tipAccounts.length * Math.random())])
+  const tipLamports = Math.floor(JITO_FEE * 1e9)
+  console.log(`[Jito] Tip TX: ${JITO_FEE} SOL to ${jitoTipAccount.toBase58()}`)
+
+  const tipTxMsg = new TransactionMessage({
+    payerKey: creatorDevWallet.publicKey,
+    recentBlockhash: latestBlockhash.blockhash,
+    instructions: [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
+      SystemProgram.transfer({
+        fromPubkey: creatorDevWallet.publicKey,
+        toPubkey: jitoTipAccount,
+        lamports: tipLamports,
+      }),
+    ]
+  }).compileToV0Message()
+  const tipTx = new VersionedTransaction(tipTxMsg)
+  tipTx.sign([creatorDevWallet])
+  transactions.push(tipTx)
   
   console.log(`\n📦 Bundle ready: ${transactions.length} transactions`)
-  if (!tokenExists) {
-    console.log(`   1. Token Creation`)
-    console.log(`   2. DEV Buy`)
-    console.log(`   3-${transactions.length}. Bundle Wallet Buys (${bundleWallets.length} wallets)`)
-  } else {
-    console.log(`   1. DEV Buy`)
-    console.log(`   2-${transactions.length}. Bundle Wallet Buys (${bundleWallets.length} wallets)`)
-  }
+  console.log(`   Last TX: Jito tip (${JITO_FEE} SOL)`)
   
   // Send bundle
   console.log(`\n🚀 Sending bundle via Jito...`)

@@ -1,17 +1,27 @@
-import { VersionedTransaction, Keypair, SystemProgram, Transaction, Connection, ComputeBudgetProgram, TransactionInstruction, TransactionMessage, AddressLookupTableProgram, PublicKey, SYSVAR_RENT_PUBKEY } from "@solana/web3.js"
-import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { VersionedTransaction, Keypair, SystemProgram, Transaction, Connection, ComputeBudgetProgram, TransactionInstruction, TransactionMessage, AddressLookupTableProgram, PublicKey, SYSVAR_RENT_PUBKEY, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import { openAsBlob } from "fs";
 import base58 from "bs58"
 import fs from "fs"
 import path from "path"
+import BN from "bn.js"
 
 import { DESCRIPTION, FILE, JITO_FEE, PUMP_PROGRAM, RPC_ENDPOINT, RPC_WEBSOCKET_ENDPOINT, SWAP_AMOUNT, SWAP_AMOUNTS, TELEGRAM, TOKEN_CREATE_ON, TOKEN_NAME, TOKEN_SHOW_NAME, TOKEN_SYMBOL, TWITTER, WEBSITE } from "../constants"
 import { saveDataToFile, sleep } from "../utils"
 import { NUM_INTERMEDIARY_HOPS, USE_MULTI_INTERMEDIARY_SYSTEM } from "../constants"
 import { createAndSendV0Tx, execute } from "../executor/legacy"
 import { PumpFunSDK } from "@solana-ipfs/sdk"
+import {
+  PUMP_SDK,
+  OnlinePumpSdk,
+  getBuyTokenAmountFromSolAmount,
+  newBondingCurve,
+  bondingCurveV2Pda,
+  creatorVaultPda,
+  getPumpProgram,
+} from "@pump-fun/pump-sdk"
 
 const commitment = "confirmed"
 
@@ -19,31 +29,50 @@ const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT, commitment
 })
 let sdk = new PumpFunSDK(new AnchorProvider(connection, new NodeWallet(new Keypair()), { commitment }));
+
+let onlineSdk: OnlinePumpSdk | null = null;
+function getOnlineSdk(): OnlinePumpSdk {
+  if (!onlineSdk) {
+    onlineSdk = new OnlinePumpSdk(connection);
+  }
+  return onlineSdk;
+}
+
+let cachedGlobal: any = null;
+let cachedFeeConfig: any = null;
+export async function fetchPumpGlobalState() {
+  const oSdk = getOnlineSdk();
+  if (!cachedGlobal || !cachedFeeConfig) {
+    cachedGlobal = await oSdk.fetchGlobal();
+    cachedFeeConfig = await oSdk.fetchFeeConfig();
+  }
+  return { global: cachedGlobal, feeConfig: cachedFeeConfig };
+}
+
 let kps: Keypair[] = []
 
-// create token instructions
+// create token instructions (V2 protocol: create + dev buy combined)
 // creatorKp should be BUYER_WALLET (wallet that creates tokens, buys as DEV, and collects fees)
-export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp: Keypair) => {
+// devBuySol: SOL amount for the initial dev buy (combined with create in V2)
+export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp: Keypair, devBuySol: number = 0) => {
   // Handle FILE - can be a URL or local file path
   let fileBlob: Blob;
   if (FILE.startsWith('http://') || FILE.startsWith('https://')) {
-    // FILE is a URL - fetch it
-    console.log(`📥 Fetching image from URL: ${FILE}`);
+    console.log(`Fetching image from URL: ${FILE}`);
     const response = await fetch(FILE);
     if (!response.ok) {
       throw new Error(`Failed to fetch image from URL: ${response.statusText}`);
     }
     fileBlob = await response.blob();
-    console.log(`✅ Fetched image from URL (${fileBlob.size} bytes)`);
+    console.log(`Fetched image from URL (${fileBlob.size} bytes)`);
   } else {
-    // FILE is a local path - open it
     const filePath = path.isAbsolute(FILE) ? FILE : path.join(process.cwd(), FILE);
     if (!fs.existsSync(filePath)) {
       throw new Error(`Image file not found: ${filePath}`);
     }
-    console.log(`📂 Opening local image file: ${filePath}`);
+    console.log(`Opening local image file: ${filePath}`);
     fileBlob = await openAsBlob(filePath);
-    console.log(`✅ Opened local image file (${fileBlob.size} bytes)`);
+    console.log(`Opened local image file (${fileBlob.size} bytes)`);
   }
 
   const tokenInfo = {
@@ -57,50 +86,39 @@ export const createTokenTx = async (creatorKp: Keypair, mintKp: Keypair, mainKp:
     website: WEBSITE,
     file: fileBlob,
   };
+
+  // Use old SDK for IPFS metadata upload (still works fine)
   let tokenMetadata = await sdk.createTokenMetadata(tokenInfo) as any;
 
-  let createIx = await sdk.getCreateInstructions(
-    creatorKp.publicKey,
-    tokenInfo.name,
-    tokenInfo.symbol,
-    tokenMetadata.metadataUri,
-    mintKp
-  );
+  // V2: Build create+buy instructions using new pump SDK
+  const { global, feeConfig } = await fetchPumpGlobalState();
 
-  const tipAccounts = [
-    'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
-    'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
-    '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
-    '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
-    'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
-    'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',
-    'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
-    'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
-  ];
-  const jitoFeeWallet = new PublicKey(tipAccounts[Math.floor(tipAccounts.length * Math.random())])
-  // CRITICAL: Jito fee should come from creator wallet (creatorKp), not funding wallet (mainKp)
-  // This ensures the creator wallet is the one paying for everything
-  // Priority fees: Much lower for normal launches (not competing in bundles)
-  // - Token creation typically needs ~200k-500k compute units
-  // - Standard priority fee: ~1,000-5,000 microLamports per unit
-  // - High priority (for bundles): 20,000 microLamports per unit
-  // For normal launches, we use lower fees since we're not in a bundle
-  // Calculation: (units * price) / 1,000,000 = lamports
-  // Bundle: (5M * 20k) / 1M = 100k lamports = 0.0001 SOL per tx
-  // Normal: (500k * 5k) / 1M = 2.5k lamports = 0.0000025 SOL per tx (much cheaper!)
-  const isNormalLaunch = process.env.USE_NORMAL_LAUNCH === 'true' && Number(process.env.BUNDLE_WALLET_COUNT || '0') === 0
-  const computeUnitLimit = isNormalLaunch ? 500_000 : 5_000_000 // Lower limit for normal launch
-  const computeUnitPrice = isNormalLaunch ? 5_000 : 20_000 // Lower price for normal launch (~0.0025 SOL vs ~0.1 SOL per tx)
-  
+  const solAmount = new BN(Math.round(Math.max(devBuySol, 0.0001) * LAMPORTS_PER_SOL));
+  const tokenAmount = getBuyTokenAmountFromSolAmount({
+    global,
+    feeConfig,
+    mintSupply: null,
+    bondingCurve: null,
+    amount: solAmount,
+  });
+
+  const createAndBuyIxs = await PUMP_SDK.createV2AndBuyInstructions({
+    global,
+    mint: mintKp.publicKey,
+    name: tokenInfo.name,
+    symbol: tokenInfo.symbol,
+    uri: tokenMetadata.metadataUri,
+    creator: creatorKp.publicKey,
+    user: creatorKp.publicKey,
+    amount: tokenAmount,
+    solAmount,
+    mayhemMode: false,
+  });
+
   return [
-    ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnitLimit }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: computeUnitPrice }),
-    SystemProgram.transfer({
-      fromPubkey: creatorKp.publicKey, // CRITICAL: Creator wallet pays Jito fee, not funding wallet
-      toPubkey: jitoFeeWallet,
-      lamports: Math.floor(JITO_FEE * 10 ** 9),
-    }),
-    createIx as TransactionInstruction
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
+    ...createAndBuyIxs
   ]
 }
 
@@ -1366,11 +1384,11 @@ export async function addAddressesToTableMultiExtend(
     if (!(await extendWithRetry(walletPKs, "Adding wallet addresses"))) return;
     await sleep(10_000);
 
-    // Step 2: Add wallets' ATAs and global accumulators
-    const baseAtas = walletKPs.map(w => PublicKey.findProgramAddressSync([w.publicKey.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()], ASSOCIATED_TOKEN_PROGRAM_ID)[0]);
+    // Step 2: Add wallets' ATAs (V2 uses TOKEN_2022_PROGRAM_ID)
+    const baseAtas = walletKPs.map(w => getAssociatedTokenAddressSync(mint, w.publicKey, true, TOKEN_2022_PROGRAM_ID));
     const step2Addresses = [...baseAtas];
 
-    if (!(await extendWithRetry(step2Addresses, `Adding base ATA & volume addresses for token ${mint.toBase58()}`))) return;
+    if (!(await extendWithRetry(step2Addresses, `Adding base ATAs (TOKEN_2022) for token ${mint.toBase58()}`))) return;
     await sleep(10_000);
 
     // Step 3: Add global volume accumulators
@@ -1380,16 +1398,16 @@ export async function addAddressesToTableMultiExtend(
     if (!(await extendWithRetry(step3Addresses, `Adding global volume accumulators for token ${mint.toBase58()}`))) return;
     await sleep(10_000);
 
-
-    // Step 4: Add main wallet and static addresses
-    const creatorVault = sdk.getCreatorVaultPda(sdk.program.programId, mainKp.publicKey);
+    // Step 4: Add main wallet and static addresses (V2 PDAs)
+    const cVault = creatorVaultPda(mainKp.publicKey);
     const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
-    const global = new PublicKey("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");
+    const globalAccount = new PublicKey("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf");
     const eventAuthority = new PublicKey("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
-    const feeConfig = new PublicKey("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
+    const feeConfigAccount = new PublicKey("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
     const feeProgram = new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
     const bondingCurve = await sdk.getBondingCurvePDA(mint);
-    const associatedBondingCurve = PublicKey.findProgramAddressSync([bondingCurve.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
+    const bcV2 = bondingCurveV2Pda(mint);
+    const associatedBondingCurve = getAssociatedTokenAddressSync(mint, bondingCurve, true, TOKEN_2022_PROGRAM_ID);
     const feeRecipient = new PublicKey("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM");
 
     const staticAddresses = [
@@ -1397,27 +1415,29 @@ export async function addAddressesToTableMultiExtend(
       mint,
       PUMP_PROGRAM,
       TOKEN_PROGRAM_ID,
+      TOKEN_2022_PROGRAM_ID,
       ASSOCIATED_TOKEN_PROGRAM_ID,
       SystemProgram.programId,
       SYSVAR_RENT_PUBKEY,
       NATIVE_MINT,
       ComputeBudgetProgram.programId,
-      creatorVault,
+      cVault,
       GLOBAL_VOLUME_ACCUMULATOR,
-      feeConfig,
+      feeConfigAccount,
       feeProgram,
       bondingCurve,
+      bcV2,
       associatedBondingCurve,
       feeRecipient,
       eventAuthority,
-      global,
+      globalAccount,
     ];
 
     if (!(await extendWithRetry(staticAddresses, "Adding main wallet & static addresses"))) return;
 
     await sleep(10_000);
-    console.log("🎉 Lookup Table successfully extended!");
-    console.log(`🔗 LUT Entries: https://explorer.solana.com/address/${lutAddress.toString()}/entries`);
+    console.log("Lookup Table successfully extended!");
+    console.log(`LUT Entries: https://explorer.solana.com/address/${lutAddress.toString()}/entries`);
     return true;
   } catch (err) {
     console.error("Error extending LUT:", err);
@@ -1458,7 +1478,7 @@ export async function addAddressesToTable(lutAddress: PublicKey, mint: PublicKey
     }
     await sleep(10000)
 
-    // Step 2 - Adding wallets' token ata
+    // Step 2 - Adding wallets' token ata (V2: TOKEN_2022_PROGRAM_ID)
     while (true) {
       if (i > 5) {
         console.log("Extending LUT failed, Exiting...")
@@ -1470,7 +1490,7 @@ export async function addAddressesToTable(lutAddress: PublicKey, mint: PublicKey
       const globalVolumeAccumulators: PublicKey[] = []
 
       for (const wallet of walletKPs) {
-        const baseAta = getAssociatedTokenAddressSync(mint, wallet.publicKey)
+        const baseAta = getAssociatedTokenAddressSync(mint, wallet.publicKey, true, TOKEN_2022_PROGRAM_ID)
         baseAtas.push(baseAta);
         const globalVolumeAccumulator = sdk.getUserVolumeAccumulator(wallet.publicKey)
         globalVolumeAccumulators.push(globalVolumeAccumulator);
@@ -1498,33 +1518,32 @@ export async function addAddressesToTable(lutAddress: PublicKey, mint: PublicKey
     }
     await sleep(10000)
 
-
-
-    // Step 3 - Adding main wallet and static keys
+    // Step 3 - Adding main wallet and static keys (V2 PDAs)
     while (true) {
       if (i > 5) {
         console.log("Extending LUT failed, Exiting...")
         return
       }
-      const creatorVault = sdk.getCreatorVaultPda(sdk.program.programId, mainKp.publicKey)
+      const cVault = creatorVaultPda(mainKp.publicKey)
 
       const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey(
         "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y"
       );
 
-      const global = new PublicKey("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf")
+      const globalAccount = new PublicKey("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf")
       const eventAuthority = new PublicKey("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1")
-      const feeConfig = new PublicKey("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
+      const feeConfigAccount = new PublicKey("8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt");
       const feeProgram = new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
       const bondingCurve = await sdk.getBondingCurvePDA(mint)
-      const associatedBondingCurve = getAssociatedTokenAddressSync(mint, bondingCurve)
+      const bcV2 = bondingCurveV2Pda(mint)
+      const associatedBondingCurve = getAssociatedTokenAddressSync(mint, bondingCurve, true, TOKEN_2022_PROGRAM_ID)
       const feeRecipient = new PublicKey("CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM")
 
       const addAddressesInstruction3 = AddressLookupTableProgram.extendLookupTable({
         payer: mainKp.publicKey,
         authority: mainKp.publicKey,
         lookupTable: lutAddress,
-        addresses: [mainKp.publicKey, mint, PUMP_PROGRAM, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, SystemProgram.programId, SYSVAR_RENT_PUBKEY, NATIVE_MINT, ComputeBudgetProgram.programId, creatorVault, GLOBAL_VOLUME_ACCUMULATOR, feeConfig, feeProgram, bondingCurve, associatedBondingCurve, feeRecipient, eventAuthority, global],
+        addresses: [mainKp.publicKey, mint, PUMP_PROGRAM, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, SystemProgram.programId, SYSVAR_RENT_PUBKEY, NATIVE_MINT, ComputeBudgetProgram.programId, cVault, GLOBAL_VOLUME_ACCUMULATOR, feeConfigAccount, feeProgram, bondingCurve, bcV2, associatedBondingCurve, feeRecipient, eventAuthority, globalAccount],
       });
 
       const result = await createAndSendV0Tx([
@@ -1551,15 +1570,125 @@ export async function addAddressesToTable(lutAddress: PublicKey, mint: PublicKey
   }
 }
 
-export const makeBuyIx = async (kp: Keypair, buyAmount: number, index: number, creator: PublicKey, mintAddress: PublicKey) => {
-  let buyIx = await sdk.getBuyInstructionsBySolAmount(
-    kp.publicKey,
-    mintAddress,
-    BigInt(buyAmount),
-    index,
-    false,
-    creator
+// V2 buy instructions for tokens that already exist on-chain (trading terminal, holder wallets)
+export const makeBuyIx = async (kp: Keypair, buyAmount: number, _index: number, _creator: PublicKey, mintAddress: PublicKey) => {
+  const oSdk = getOnlineSdk();
+  const { global, feeConfig } = await fetchPumpGlobalState();
+
+  let buyState: any;
+  let tokenProgram: PublicKey = TOKEN_2022_PROGRAM_ID;
+  try {
+    buyState = await oSdk.fetchBuyState(mintAddress, kp.publicKey, TOKEN_2022_PROGRAM_ID);
+  } catch {
+    buyState = await oSdk.fetchBuyState(mintAddress, kp.publicKey, TOKEN_PROGRAM_ID);
+    tokenProgram = TOKEN_PROGRAM_ID;
+  }
+
+  const solBN = new BN(buyAmount);
+  const tokenAmount = getBuyTokenAmountFromSolAmount({
+    global,
+    feeConfig,
+    mintSupply: buyState.bondingCurve.tokenTotalSupply,
+    bondingCurve: buyState.bondingCurve,
+    amount: solBN,
+  });
+
+  const instructions = await PUMP_SDK.buyInstructions({
+    global,
+    bondingCurveAccountInfo: buyState.bondingCurveAccountInfo,
+    bondingCurve: buyState.bondingCurve,
+    associatedUserAccountInfo: buyState.associatedUserAccountInfo,
+    mint: mintAddress,
+    user: kp.publicKey,
+    amount: tokenAmount,
+    solAmount: solBN,
+    slippage: 5,
+    tokenProgram,
+  });
+
+  return instructions;
+}
+
+// V2 buy instructions for bundle mode (token doesn't exist on-chain yet, offline simulation)
+export const makeBundleBuyIx = async (
+  kp: Keypair,
+  buyAmountLamports: number,
+  creator: PublicKey,
+  mintAddress: PublicKey,
+  cumulativeSolBought: number = 0,
+  fundedBalance: number = 0,
+) => {
+  const { global, feeConfig } = await fetchPumpGlobalState();
+
+  let bc = newBondingCurve(global);
+
+  if (cumulativeSolBought > 0) {
+    const prevSol = new BN(Math.round(cumulativeSolBought * LAMPORTS_PER_SOL));
+    const prevTokens = getBuyTokenAmountFromSolAmount({
+      global,
+      feeConfig,
+      mintSupply: global.tokenTotalSupply,
+      bondingCurve: bc,
+      amount: prevSol,
+    });
+    bc = {
+      ...bc,
+      virtualTokenReserves: bc.virtualTokenReserves.sub(prevTokens),
+      virtualSolReserves: bc.virtualSolReserves.add(prevSol),
+      realTokenReserves: bc.realTokenReserves.sub(prevTokens),
+      realSolReserves: bc.realSolReserves.add(prevSol),
+    };
+  }
+
+  const solBN = new BN(buyAmountLamports);
+  const tokenAmount = getBuyTokenAmountFromSolAmount({
+    global,
+    feeConfig,
+    mintSupply: global.tokenTotalSupply,
+    bondingCurve: bc,
+    amount: solBN,
+  });
+
+  const safeTokenAmount = tokenAmount.muln(8).divn(10);
+
+  const maxSolLamports = fundedBalance > 0
+    ? Math.round(fundedBalance * LAMPORTS_PER_SOL) - 1_000_000
+    : buyAmountLamports * 2;
+  const maxSol = new BN(Math.max(maxSolLamports, buyAmountLamports * 2));
+
+  const instructions: TransactionInstruction[] = [];
+
+  const associatedUser = getAssociatedTokenAddressSync(
+    mintAddress, kp.publicKey, true, TOKEN_2022_PROGRAM_ID,
   );
 
-  return buyIx as TransactionInstruction[]
+  instructions.push(
+    createAssociatedTokenAccountIdempotentInstruction(
+      kp.publicKey, associatedUser, kp.publicKey, mintAddress, TOKEN_2022_PROGRAM_ID,
+    ),
+  );
+
+  const pumpProgram = getPumpProgram(connection);
+  const buyIx = await pumpProgram.methods
+    .buy(safeTokenAmount, maxSol, { 0: true })
+    .accountsPartial({
+      feeRecipient: global.feeRecipient,
+      mint: mintAddress,
+      associatedUser,
+      user: kp.publicKey,
+      creatorVault: creatorVaultPda(creator),
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+    })
+    .remainingAccounts([
+      {
+        pubkey: bondingCurveV2Pda(mintAddress),
+        isWritable: false,
+        isSigner: false,
+      },
+    ])
+    .instruction();
+
+  instructions.push(buyIx);
+
+  return instructions;
 }

@@ -1989,22 +1989,34 @@ app.post('/api/vanity-generator/start', (req, res) => {
 app.post('/api/vanity-generator/stop', (req, res) => {
   try {
     if (vanityGeneratorProcess === null || vanityGeneratorProcess.killed) {
+      vanityGeneratorProcess = null;
       return res.json({ success: true, message: 'Generator not running' });
     }
-    
-    // Kill the process
-    vanityGeneratorProcess.kill('SIGTERM');
-    
-    // Force kill after timeout if still running
-    setTimeout(() => {
-      if (vanityGeneratorProcess && !vanityGeneratorProcess.killed) {
-        vanityGeneratorProcess.kill('SIGKILL');
+
+    const pid = vanityGeneratorProcess.pid;
+    console.log(`[Vanity Generator] Stopping process tree (PID: ${pid})`);
+
+    // On Windows, SIGTERM doesn't propagate to child process trees spawned
+    // via shell:true. Use taskkill /T to kill the entire process tree.
+    if (process.platform === 'win32') {
+      const { execSync } = require('child_process');
+      try {
+        execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+      } catch (e) {
+        // Process may already be dead
       }
-    }, 5000);
-    
+    } else {
+      // Unix: kill the process group
+      try { process.kill(-pid, 'SIGKILL'); } catch (e) {
+        try { vanityGeneratorProcess.kill('SIGKILL'); } catch (e2) {}
+      }
+    }
+
+    vanityGeneratorProcess = null;
     res.json({ success: true, message: 'Vanity generator stopped' });
   } catch (error) {
     console.error('[Vanity Generator Stop] Error:', error);
+    vanityGeneratorProcess = null;
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -2058,43 +2070,45 @@ async function batchFetchBalances(walletKeys, mintAddress) {
   // Prepare all public keys first (NO private keys stored)
   const walletData = walletKeys.map(privateKey => {
     const kp = Keypair.fromSecretKey(base58.decode(privateKey));
-    return { kp, address: kp.publicKey.toBase58() }; // SECURITY: Don't store privateKey
+    return { kp, address: kp.publicKey.toBase58() };
   });
   
   // Batch fetch SOL balances using getMultipleAccountsInfo (single RPC call)
   const publicKeys = walletData.map(w => w.kp.publicKey);
   const solAccountInfos = await connection.getMultipleAccountsInfo(publicKeys);
   
-  // Only fetch token balances if mintAddress is provided
-  let tokenAccountMap = new Map();
-  let tokenAccountAddresses = [];
+  // Fetch token balances per wallet using getParsedTokenAccountsByOwner
+  // This finds tokens regardless of ATA derivation or token program
+  const tokenBalanceByOwner = new Map();
   if (mintAddress) {
-    try {
-      const mintPubkey = new PublicKey(mintAddress);
-      
-      // Get token account addresses for all wallets
-      tokenAccountAddresses = await Promise.all(
-        walletData.map(w => getAssociatedTokenAddress(mintPubkey, w.kp.publicKey, true).catch(() => null))
-      );
-      
-      // Batch fetch token account info (use getParsedAccountInfo in parallel)
-      const validTokenAccounts = tokenAccountAddresses.filter(addr => addr !== null);
-      const tokenAccountPromises = validTokenAccounts.map(addr => 
-        connection.getParsedAccountInfo(addr).catch(() => null)
-      );
-      const tokenAccountInfos = await Promise.all(tokenAccountPromises);
-      
-      // Create a map for quick lookup
-      validTokenAccounts.forEach((addr, idx) => {
-        const accountInfo = tokenAccountInfos[idx];
-        if (accountInfo && accountInfo.value && accountInfo.value.data && accountInfo.value.data.parsed) {
-          tokenAccountMap.set(addr.toBase58(), accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0);
+    const mintPubkey = new PublicKey(mintAddress);
+    console.log(`[Batch Fetch] Fetching token balances for ${walletData.length} wallets, mint=${mintAddress.slice(0, 8)}...`);
+    
+    for (const w of walletData) {
+      try {
+        const resp = await connection.getParsedTokenAccountsByOwner(w.kp.publicKey, { mint: mintPubkey });
+        if (resp.value && resp.value.length > 0) {
+          let total = 0;
+          for (const acct of resp.value) {
+            const ui = acct.account.data.parsed?.info?.tokenAmount?.uiAmount || 0;
+            total += ui;
+          }
+          if (total > 0) {
+            tokenBalanceByOwner.set(w.address, total);
+            console.log(`[Batch Fetch] ${w.address.slice(0, 8)}... has ${total} tokens (${resp.value.length} account(s))`);
+          }
         }
-      });
-    } catch (error) {
-      // If mintAddress is invalid or token fetching fails, just continue with SOL balances
-      console.warn('[Batch Fetch] Could not fetch token balances:', error.message);
+      } catch (err) {
+        const msg = err?.message || String(err);
+        if (!msg.includes('could not find account') && !msg.includes('AccountNotFound')) {
+          console.warn(`[Batch Fetch] Token lookup failed for ${w.address.slice(0, 8)}...: ${msg.slice(0, 120)}`);
+        }
+      }
     }
+    
+    console.log(`[Batch Fetch] Token balances found for ${tokenBalanceByOwner.size}/${walletData.length} wallets`);
+  } else {
+    console.log('[Batch Fetch] No mintAddress provided, skipping token balances');
   }
   
   // Process results
@@ -2103,32 +2117,21 @@ async function batchFetchBalances(walletKeys, mintAddress) {
       const wallet = walletData[i];
       const cacheKey = `${wallet.address}_${mintAddress || 'no-mint'}`;
       
-      // Check cache first (3 second TTL)
       const cached = balanceCache.get(cacheKey);
       if (cached && now - cached.timestamp < CACHE_TTL) {
         wallets.push({
           address: wallet.address,
-          // SECURITY: No private key returned
           solBalance: cached.solBalance,
           tokenBalance: cached.tokenBalance
         });
         continue;
       }
       
-      // Get SOL balance from batch result
       const solBalance = solAccountInfos[i] ? 
         (solAccountInfos[i].lamports || 0) / LAMPORTS_PER_SOL : 0;
       
-      // Get token balance from batch result (only if mintAddress exists)
-      let tokenBalance = 0;
-      if (mintAddress) {
-        const tokenAccountAddr = tokenAccountAddresses[i];
-        if (tokenAccountAddr) {
-          tokenBalance = tokenAccountMap.get(tokenAccountAddr.toBase58()) || 0;
-        }
-      }
+      const tokenBalance = tokenBalanceByOwner.get(wallet.address) || 0;
       
-      // Cache the result
       balanceCache.set(cacheKey, {
         solBalance,
         tokenBalance,
@@ -2137,15 +2140,13 @@ async function batchFetchBalances(walletKeys, mintAddress) {
       
       wallets.push({
         address: wallet.address,
-        // SECURITY: No private key returned
         solBalance,
-        tokenBalance: tokenBalance || 0
+        tokenBalance
       });
     } catch (error) {
       console.error(`Error processing wallet ${i}:`, error);
       wallets.push({
         address: walletData[i].address,
-        // SECURITY: No private key returned
         solBalance: 0,
         tokenBalance: 0
       });
@@ -2237,7 +2238,7 @@ app.get('/api/holder-wallets', async (req, res) => {
       walletTypes.push('dev');
     }
     
-    // Use batch fetching for efficiency (mintAddress can be null - will just fetch SOL balances)
+    console.log(`[Holder Wallets] Loading ${allWalletKeys.length} wallets, mintAddress=${mintAddress || 'NONE'}`);
     const wallets = await batchFetchBalances(allWalletKeys, mintAddress);
     
     // Add wallet type tags and auto-buy/auto-sell status
@@ -3078,8 +3079,18 @@ app.post('/api/command', async (req, res) => {
       'rapid-sell-remaining': 'rapid-sell-remaining',
       'gather': 'gather',
       'gather-new-only': 'gather-new-only',
+      'gather-sol-only': 'gather-sol-only',
       'gather-all': 'gather-all',
+      'gather-warmed': 'gather-warmed',
       'gather-last': 'gather-last',
+      'withdraw-mixers': 'withdraw-mixers',
+      'withdraw-all': 'withdraw-all',
+      'withdraw-preview': 'withdraw-preview',
+      'recover-intermediary': 'recover-intermediary',
+      'recover-evm': 'recover-evm',
+      'recovery': 'recovery',
+      'archive': 'archive',
+      'archive-dry': 'archive-dry',
       'check-balance': 'check-balance',
       'check-bundle': 'check-bundle',
       'status': 'status',
@@ -3113,7 +3124,13 @@ app.post('/api/command', async (req, res) => {
     
     // Execute command in background
     // For long-running commands like gather/gather-all, set a longer timeout
-    const longRunningCommands = ['gather', 'gather-new-only', 'gather-all', 'gather-last', 'rapid-sell', 'rapid-sell-50-percent', 'rapid-sell-remaining'];
+    const longRunningCommands = [
+      'gather', 'gather-new-only', 'gather-sol-only', 'gather-all', 'gather-warmed', 'gather-last',
+      'withdraw-mixers', 'withdraw-all', 'withdraw-preview',
+      'recover-intermediary', 'recover-evm', 'recovery',
+      'archive', 'archive-dry',
+      'rapid-sell', 'rapid-sell-50-percent', 'rapid-sell-remaining'
+    ];
     const timeoutMs = longRunningCommands.includes(command) ? 300000 : 60000; // 5 minutes for gather, 1 minute for others
     
     const childProcess = exec(commandToRun, { 

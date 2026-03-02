@@ -1,4 +1,26 @@
-# Pump.fun Bundler Launcher
+# Pump.fun Bundler Launcher (V1)
+
+> ## ⚠️ This project is now in maintenance mode.
+>
+> **V1 has been updated to work with pump.fun's February 2026 SDK update** — the migration to Token Extensions (`TOKEN_2022_PROGRAM_ID`) and the new V2 program instructions broke most existing bundlers. This repo has been patched so it functions again.
+>
+> **However, all active development is moving to [Trencher Bundler V2](https://trencherbundler.fun)** — a completely rewritten, more streamlined bundler built on the official `@pump-fun/pump-sdk` from the ground up. V2 is faster, cleaner, and has significantly better architecture.
+>
+> **V1 (this repo)** will only receive critical bug fixes going forward. No new features will be added here.
+>
+> ### What's different in V2?
+> - Built natively on `@pump-fun/pump-sdk` (V2 protocol) — not patched on top of the old SDK
+> - Cleaner codebase — full TypeScript frontend and backend
+> - AI token generation (name, symbol, description, image via Google Gemini)
+> - Vanity mint addresses (`...pump` suffix) with multi-threaded generation
+> - Imported wallet vault with custom wallet selection for any launch slot
+> - Improved Jito bundle submission with multi-endpoint racing and RPC fallback
+> - Creator fee collection and scanning across all launches
+> - Better wallet lifecycle — generate, import, archive, gather, close accounts
+>
+> **Get V2:** [trencherbundler.fun](https://trencherbundler.fun) | Twitter: [@trencherbundler_x](https://x.com/trencherbundler_x) | Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
+
+---
 
 **The ONLY Pump.fun bundler with a full web dashboard.** Launch tokens, manage wallets, auto-sell, and track P&L — all from one page.
 
