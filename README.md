@@ -1,4 +1,4 @@
-# Pump.fun Bundler Launcher (V1)
+# Pump.fun Bundler Launcher (V1.2)
 
 > ## ⚠️ This project is now in maintenance mode.
 >
