@@ -1,6 +1,6 @@
 # Pump.fun Bundler Launcher (V1.2)
 
-> ## ⚠️ This project is now in maintenance mode.
+> ## ⚠️ This project is now in maintenance mode, no new features added.
 >
 > **V1 has been updated to work with pump.fun's February 2026 SDK update** — the migration to Token Extensions (`TOKEN_2022_PROGRAM_ID`) and the new V2 program instructions broke most existing bundlers. This repo has been patched so it functions again.
 >
